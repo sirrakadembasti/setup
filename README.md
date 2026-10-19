@@ -7,6 +7,8 @@ Herhangi bir GitHub reposundaki Node.js uygulamasının, karmaşık terminal ad�
 ## Temel Hedef ve Özellikler
 
 - **Tamamen Projeden Bağımsız:** Tek dizinli (`package.json`) uygulamaları, `server/` + `client/` full-stack projeleri ve workspace/monorepo yapılarını otomatik tanır.
+- **Sıfır Bağımlılık:** Yalnız Node.js (>=18) yerleşik modüllerini kullanır; eklentinin kendisi için `npm install` gerekmez.
+- **Kaynak Doğrulamalı Teknoloji Algılama:** `express`, `react`, `vue`, `next` ve `vite` kullanımı yalnız `package.json` bildirimine göre değil, kaynak koddaki `import`/`require` ifadelerine ve script'lerdeki CLI çağrılarına göre doğrulanır (`dependencyUsage` çıktısı).
 - **Çoklu Paket Yöneticisi Desteği:** Hedef repodaki kilit dosyalarına bakarak `npm`, `pnpm`, `yarn` veya `bun` paket yöneticisini otomatik seçer.
 - **Tek Komutla Entegrasyon (`setup init`):** Herhangi bir GitHub reposuna `setup.config.json` yapılandırmasını ve kurulum komutunu saniyeler içinde ekler.
 - **İki Aşamalı Güvenli Web Kurulumu:**
@@ -50,12 +52,13 @@ setup/
 │   ├── setup-api.mjs         # Programatik ESM API
 │   └── *.test.mjs            # Birim, Güvenlik ve E2E test paketi
 ├── wizard/
-│   ├── server.mjs / .ts      # 5050 Web Kurulum Sihirbazı sunucusu
-│   ├── ui.mjs / .ts          # 5 adımlı sihirbaz arayüzü
-│   └── config.mjs / .ts      # Doğrulama şemaları ve .env üreticisi
+│   ├── server.mjs            # 5050 Web Kurulum Sihirbazı sunucusu
+│   ├── ui.mjs                # 5 adımlı sihirbaz arayüzü
+│   ├── ui.ts                 # Sihirbaz HTML şablonu (ui.mjs çalışma anında okur)
+│   └── config.mjs            # Doğrulama şemaları ve .env üreticisi
 ├── utils/
-│   ├── project-paths.mjs / .ts
-│   └── deployment-config.mjs / .ts
+│   ├── project-paths.mjs
+│   └── deployment-config.mjs
 ├── templates/
 │   └── setup.config.json     # Örnek eklenti yapılandırma şablonu
 └── docs/

@@ -15,6 +15,18 @@ Bu komut hedef repoyu tarar ve:
 - Proje yapısını (`node-package`, `node-webapp`, `node-fullstack`, `workspace-fullstack`),
 - Varsa `.env.example` değişkenlerini ve dizin yollarını (`.env` veya `server/.env`) algılayarak hedef dizinde **`setup.config.json`** dosyasını oluşturur ve `package.json` içine `"setup": "setup"` betiğini ekler.
 
+### Teknoloji algılama nasıl çalışır?
+
+`detect` komutu `express`, `react`, `vue`, `next` ve `vite` için iki kanıtı birlikte değerlendirir ve sonucu `dependencyUsage` alanında raporlar:
+
+| Alan | Anlamı |
+|---|---|
+| `declared` | Paket kök, `server/` veya `client/` `package.json` dosyasında bildirilmiş |
+| `used` | Kaynakta `import` / `export from` / `require()` / `import()` ile (alt yollar dahil) kullanılıyor veya bir `package.json` script'inde CLI olarak çağrılıyor |
+| `sourceScanned` | En az bir kaynak dosya (`.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx`, `.vue`, `.svelte` …) tarandı |
+
+Paket, `used` ise **veya** kaynak dosya hiç bulunamadığı için doğrulama yapılamıyor ve `declared` ise kullanılıyor kabul edilir. `node_modules`, `dist`/`build`/`.next` gibi çıktı dizinleri, `data`/`uploads`, test dizinleri ile `*.test.*` / `*.spec.*` dosyaları ve yorum satırları taramaya dahil edilmez.
+
 ## 2. Alt Klasör veya Git Submodule Olarak Ekleme
 
 Hedef GitHub reponuzun içine `tools/setup` olarak ekleyebilirsiniz:

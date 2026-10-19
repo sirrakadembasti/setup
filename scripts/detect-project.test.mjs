@@ -107,3 +107,96 @@ test("kurulum artıkları evidence alanına yazılır ve sürümleme v1.0.0 çal
   assert.equal(bumpSemver("1.0.0", "minor"), "1.1.0");
   assert.equal(bumpSemver("1.0.0", "major"), "2.0.0");
 });
+
+function writeFile(dir, rel, content) {
+  const file = path.join(dir, ...rel.split("/"));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content, "utf8");
+}
+
+test("package.json'da yazan ama kaynakta import edilmeyen express kullanılmıyor sayılır", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  writeFile(dir, "package.json", JSON.stringify({ name: "a", dependencies: { express: "^4.21.0" } }));
+  writeFile(dir, "index.mjs", 'import http from "node:http";\n// import express from "express";\n/* require("express") */\n');
+  // node_modules içindeki kullanım sayılmaz
+  writeFile(dir, "node_modules/x/index.js", 'require("express");\n');
+
+  const d = detectProject(dir);
+  assert.equal(d.stack.express, false);
+  assert.deepEqual(d.dependencyUsage.express, { declared: true, used: false, sourceScanned: true });
+});
+
+test("import, require, dinamik import ve alt yol (subpath) kullanımları algılanır", (t) => {
+  const forms = [
+    'import express from "express";',
+    "const express = require('express');",
+    'const m = await import("express");',
+    'import { Router } from "express/lib/router";',
+    'export { json } from "express";',
+  ];
+  for (const src of forms) {
+    const { dir, cleanup } = mkTemp();
+    try {
+      writeFile(dir, "package.json", JSON.stringify({ name: "a", dependencies: { express: "^4.21.0" } }));
+      writeFile(dir, "server/src/app.ts", `${src}\n`);
+      const d = detectProject(dir);
+      assert.equal(d.stack.express, true, `algılanmadı: ${src}`);
+      assert.equal(d.dependencyUsage.express.used, true);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test("benzer adlı paketler (express-rate-limit, vue-router) yanlış eşleşmez", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  writeFile(
+    dir,
+    "package.json",
+    JSON.stringify({ name: "a", dependencies: { express: "^4", "express-rate-limit": "^7", vue: "^3", "vue-router": "^4" } }),
+  );
+  writeFile(dir, "src/index.js", 'import rl from "express-rate-limit";\nimport { createRouter } from "vue-router";\n');
+  const d = detectProject(dir);
+  assert.equal(d.stack.express, false);
+  assert.equal(d.dependencyUsage.vue.used, false);
+});
+
+test("yalnız CLI üzerinden kullanılan paketler (vite, next) package.json script'lerinden algılanır", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  writeFile(
+    dir,
+    "package.json",
+    JSON.stringify({ name: "a", scripts: { dev: "vite --port 3000", build: "next build" }, devDependencies: { vite: "^5", next: "^14" } }),
+  );
+  writeFile(dir, "src/main.js", 'console.log("merhaba");\n');
+  const d = detectProject(dir);
+  assert.equal(d.stack.vite, true);
+  assert.equal(d.stack.nextjs, true);
+  assert.equal(d.dependencyUsage.vite.used, true);
+});
+
+test("test dosyalarındaki import'lar (*.test.*, *.spec.*, __tests__/, test/) kullanım sayılmaz", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  writeFile(dir, "package.json", JSON.stringify({ name: "a", dependencies: { express: "^4" } }));
+  writeFile(dir, "src/index.mjs", 'import http from "node:http";\n');
+  writeFile(dir, "src/app.test.mjs", 'import express from "express";\n');
+  writeFile(dir, "src/app.spec.ts", 'import express from "express";\n');
+  writeFile(dir, "src/__tests__/a.js", 'require("express");\n');
+  writeFile(dir, "test/e2e.js", 'require("express");\n');
+  const d = detectProject(dir);
+  assert.equal(d.stack.express, false);
+  assert.equal(d.dependencyUsage.express.used, false);
+});
+
+test("kaynak dosya yoksa doğrulama yapılamaz ve package.json bildirimi esas alınır", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  writeFile(dir, "package.json", JSON.stringify({ name: "a", dependencies: { express: "^4" } }));
+  const d = detectProject(dir);
+  assert.equal(d.stack.express, true);
+  assert.deepEqual(d.dependencyUsage.express, { declared: true, used: false, sourceScanned: false });
+});

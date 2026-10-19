@@ -120,10 +120,109 @@ function hasDependency(pkg, depName) {
   );
 }
 
-function detectStack(root) {
+/** Kaynakta kullanımı doğrulanan paketler. */
+const TRACKED_PACKAGES = Object.freeze(["express", "react", "vue", "next", "vite"]);
+const SOURCE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".vue", ".svelte"]);
+const IGNORED_DIRS = new Set([
+  "node_modules", ".git", ".hg", ".svn", "dist", "build", "out", ".next", ".nuxt", ".output",
+  "coverage", ".turbo", ".cache", ".vercel", "vendor", "data", "uploads", "backups",
+  // test kodu ve fikstürleri çalışma zamanı kullanımını yansıtmaz
+  "test", "tests", "__tests__", "__mocks__", "__fixtures__", "fixtures", "e2e",
+]);
+const TEST_FILE_PATTERN = /\.(?:test|spec)\.[^.]+$/i;
+const SCAN_LIMITS = Object.freeze({ maxDepth: 8, maxFiles: 3000, maxFileBytes: 1024 * 1024 });
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** import/export from, yan etkili import, require() ve import() biçimlerini (alt yollar dahil) yakalar. */
+function importPattern(name) {
+  const q = "[\"'`]";
+  return new RegExp(
+    `(?:\\bfrom\\s*|\\bimport\\s*|\\b(?:require|import)\\s*\\(\\s*)${q}${escapeRegExp(name)}(?:/[^"'\`]*)?${q}`,
+  );
+}
+
+function scriptPattern(name) {
+  return new RegExp(`(?:^|[\\s;&|(])${escapeRegExp(name)}(?:$|[\\s;&|)])`);
+}
+
+function stripComments(source) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
+}
+
+function* walkSourceFiles(root) {
+  const stack = [{ dir: root, depth: 0 }];
+  let count = 0;
+  while (stack.length) {
+    const { dir, depth } = stack.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (depth < SCAN_LIMITS.maxDepth && !IGNORED_DIRS.has(entry.name)) stack.push({ dir: full, depth: depth + 1 });
+      } else if (
+        entry.isFile() &&
+        SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase()) &&
+        !TEST_FILE_PATTERN.test(entry.name)
+      ) {
+        if (++count > SCAN_LIMITS.maxFiles) return;
+        yield full;
+      }
+    }
+  }
+}
+
+/**
+ * Paketlerin package.json'da bildirilip bildirilmediğini ve kaynakta gerçekten kullanılıp kullanılmadığını belirler.
+ * Kullanım: kaynak dosyalarda import/require veya package.json script'lerinde CLI çağrısı.
+ */
+export function detectDependencyUsage(root, pkgs = [], names = TRACKED_PACKAGES) {
+  const usage = {};
+  const scripts = pkgs.flatMap((pkg) => Object.values(pkg?.scripts || {})).map(String);
+  const pending = new Map();
+  for (const name of names) {
+    const usedInScripts = scripts.some((s) => scriptPattern(name).test(s));
+    usage[name] = { declared: pkgs.some((pkg) => hasDependency(pkg, name)), used: usedInScripts, sourceScanned: false };
+    if (!usedInScripts) pending.set(name, importPattern(name));
+  }
+
+  let scanned = false;
+  for (const file of walkSourceFiles(root)) {
+    scanned = true;
+    if (!pending.size) break;
+    let source;
+    try {
+      if (fs.statSync(file).size > SCAN_LIMITS.maxFileBytes) continue;
+      source = stripComments(fs.readFileSync(file, "utf8"));
+    } catch {
+      continue;
+    }
+    for (const [name, pattern] of pending) {
+      if (pattern.test(source)) {
+        usage[name].used = true;
+        pending.delete(name);
+      }
+    }
+  }
+  for (const name of names) usage[name].sourceScanned = scanned;
+  return usage;
+}
+
+/** Kullanım kanıtı varsa true; kaynak taranamadıysa package.json bildirimine güvenilir. */
+function isPackageInUse(entry) {
+  return Boolean(entry && (entry.used || (entry.declared && !entry.sourceScanned)));
+}
+
+function detectStack(root, usage) {
   const rootPkg = readJsonSafe(path.join(root, "package.json"));
-  const serverPkg = readJsonSafe(path.join(root, "server", "package.json"));
-  const clientPkg = readJsonSafe(path.join(root, "client", "package.json"));
   const hasServerSubdir =
     exists(root, "server", "package.json") ||
     exists(root, "server", "index.ts") ||
@@ -146,20 +245,18 @@ function detectStack(root) {
     client:
       exists(root, "client", "package.json") ||
       exists(root, "client", "src") ||
-      hasDependency(rootPkg, "react") ||
-      hasDependency(rootPkg, "vue") ||
-      hasDependency(rootPkg, "next") ||
-      hasDependency(clientPkg, "react"),
+      isPackageInUse(usage.react) ||
+      isPackageInUse(usage.vue) ||
+      isPackageInUse(usage.next),
     prisma: exists(root, "server", "prisma", "schema.prisma") || exists(root, "prisma", "schema.prisma"),
     vite:
       exists(root, "client", "vite.config.ts") ||
       exists(root, "client", "vite.config.js") ||
       exists(root, "vite.config.ts") ||
       exists(root, "vite.config.js") ||
-      hasDependency(rootPkg, "vite") ||
-      hasDependency(clientPkg, "vite"),
-    nextjs: hasDependency(rootPkg, "next") || exists(root, "next.config.js") || exists(root, "next.config.mjs"),
-    express: hasDependency(rootPkg, "express") || hasDependency(serverPkg, "express"),
+      isPackageInUse(usage.vite),
+    nextjs: isPackageInUse(usage.next) || exists(root, "next.config.js") || exists(root, "next.config.mjs"),
+    express: isPackageInUse(usage.express),
     docker: exists(root, "docker-compose.yml") || exists(root, "compose.yaml") || exists(root, "Dockerfile"),
   };
 }
@@ -199,7 +296,12 @@ export function detectProject(root = process.cwd()) {
   const validPkg = hasValidPackageJson(resolved);
   const setupConfig = loadSetupConfig(resolved);
   const workspaces = detectWorkspaces(resolved);
-  const stack = detectStack(resolved);
+  const dependencyUsage = detectDependencyUsage(resolved, [
+    readJsonSafe(path.join(resolved, "package.json")),
+    readJsonSafe(path.join(resolved, "server", "package.json")),
+    readJsonSafe(path.join(resolved, "client", "package.json")),
+  ].filter(Boolean));
+  const stack = detectStack(resolved, dependencyUsage);
   const install = detectInstallEvidence(resolved);
   const runtime = detectRuntimeArtifacts(resolved);
 
@@ -229,6 +331,7 @@ export function detectProject(root = process.cwd()) {
     packageJsonExists: exists(resolved, "package.json"),
     workspaces,
     stack,
+    dependencyUsage,
     install,
     runtime,
     setupConfig,
