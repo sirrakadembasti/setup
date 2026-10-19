@@ -401,4 +401,107 @@ test("wizard/server E2E: .env.example değişkenleri, admin.json ve özel sunucu
   assert.match(nginxConf, /proxy_pass http:\/\/127\.0\.0\.1:3000;/);
 });
 
+test("wizard/server E2E: package.json içindeki build ve migrate betikleri gerçekte çalıştırılır ve eksik betikler skipped olarak işaretlenir", async (t) => {
+  // 1. Senaryo: build ve migrate betikleri olan proje
+  const tmpWithScripts = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-scripts-"));
+  t.after(() => fs.rmSync(tmpWithScripts, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(tmpWithScripts, "package.json"),
+    JSON.stringify({
+      name: "scripted-app",
+      scripts: {
+        build: "node -e \"require('fs').writeFileSync('built.txt','ok')\"",
+        migrate: "node -e \"require('fs').writeFileSync('migrated.txt', process.env.DATABASE_URL)\"",
+      },
+    }),
+    "utf8",
+  );
 
+  const token = "wizard_secret_token_scripts_12345678";
+  const server1 = createSetupServer(token, { projectRoot: tmpWithScripts });
+  await new Promise((resolve) => server1.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server1.close(resolve)));
+  const port1 = server1.address().port;
+  const baseUrl1 = `http://127.0.0.1:${port1}`;
+
+  const login1 = await fetch(`${baseUrl1}/setup?token=${token}`, { redirect: "manual" });
+  const cookie1 = login1.headers.get("set-cookie").split(";")[0];
+  const page1 = await fetch(`${baseUrl1}/setup`, { headers: { Cookie: cookie1 } });
+  const csrf1 = JSON.parse((await page1.text()).match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  const apply1 = await fetch(`${baseUrl1}/api/apply`, {
+    method: "POST",
+    headers: {
+      Cookie: cookie1,
+      "X-Setup-CSRF": csrf1,
+      Origin: `http://localhost:${port1}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...VALID_PAYLOAD, buildClient: true }),
+  });
+  assert.equal(apply1.status, 202);
+
+  let status1;
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    const sRes = await fetch(`${baseUrl1}/api/status`, { headers: { Cookie: cookie1 } });
+    status1 = await sRes.json();
+    if (status1.apply.status === "success" || status1.apply.status === "error") break;
+  }
+  assert.equal(status1.apply.status, "success", status1.apply.message);
+  assert.equal(fs.existsSync(path.join(tmpWithScripts, "built.txt")), true, "built.txt oluşturulmalı");
+  assert.equal(fs.readFileSync(path.join(tmpWithScripts, "built.txt"), "utf8"), "ok");
+  assert.equal(fs.existsSync(path.join(tmpWithScripts, "migrated.txt")), true, "migrated.txt oluşturulmalı");
+  assert.equal(fs.readFileSync(path.join(tmpWithScripts, "migrated.txt"), "utf8"), "file:./data/app.db");
+
+  const stepMap1 = Object.fromEntries(status1.apply.steps.map((s) => [s.id, s]));
+  assert.equal(stepMap1.buildServer.status, "done");
+  assert.equal(stepMap1.buildClient.status, "skipped");
+  assert.equal(stepMap1.migrate.status, "done");
+
+  // 2. Senaryo: build ve migrate betikleri olmayan proje -> adımlar skipped olmalı
+  const tmpNoScripts = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-noscripts-"));
+  t.after(() => fs.rmSync(tmpNoScripts, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(tmpNoScripts, "package.json"),
+    JSON.stringify({ name: "no-scripts-app", scripts: {} }),
+    "utf8",
+  );
+
+  const server2 = createSetupServer(token, { projectRoot: tmpNoScripts });
+  await new Promise((resolve) => server2.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server2.close(resolve)));
+  const port2 = server2.address().port;
+  const baseUrl2 = `http://127.0.0.1:${port2}`;
+
+  const login2 = await fetch(`${baseUrl2}/setup?token=${token}`, { redirect: "manual" });
+  const cookie2 = login2.headers.get("set-cookie").split(";")[0];
+  const page2 = await fetch(`${baseUrl2}/setup`, { headers: { Cookie: cookie2 } });
+  const csrf2 = JSON.parse((await page2.text()).match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  const apply2 = await fetch(`${baseUrl2}/api/apply`, {
+    method: "POST",
+    headers: {
+      Cookie: cookie2,
+      "X-Setup-CSRF": csrf2,
+      Origin: `http://localhost:${port2}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...VALID_PAYLOAD, buildClient: true }),
+  });
+  assert.equal(apply2.status, 202);
+
+  let status2;
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    const sRes = await fetch(`${baseUrl2}/api/status`, { headers: { Cookie: cookie2 } });
+    status2 = await sRes.json();
+    if (status2.apply.status === "success" || status2.apply.status === "error") break;
+  }
+  assert.equal(status2.apply.status, "success");
+
+  const stepMap2 = Object.fromEntries(status2.apply.steps.map((s) => [s.id, s]));
+  assert.equal(stepMap2.buildServer.status, "skipped");
+  assert.equal(stepMap2.buildClient.status, "skipped");
+  assert.equal(stepMap2.migrate.status, "skipped");
+});

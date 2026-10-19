@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import crypto, { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -8,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths } from "../scripts/setup-bootstrap-lib.mjs";
-import { loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
+import { detectPackageManager, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
 
@@ -60,6 +61,64 @@ export function resolvePnpmInvocation(args) {
   }
   return { command: "pnpm", args };
 }
+
+export function pmRunInvocation(pm, scriptName, prefixDir = null) {
+  const safePm = ["pnpm", "yarn", "bun", "npm"].includes(pm) ? pm : "npm";
+  if (process.platform === "win32") {
+    return {
+      command: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/s", "/c", safePm, "run", scriptName],
+      cwd: prefixDir,
+    };
+  }
+  return {
+    command: safePm,
+    args: ["run", scriptName],
+    cwd: prefixDir,
+  };
+}
+
+function readJsonFileSafe(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function runCommand(command, args, cwd, extraEnv = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: { ...process.env, ...extraEnv },
+      windowsHide: true,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", (err) => reject(err));
+    child.once("close", (code) => {
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      const combined = `${stderr}\n${stdout}`.trim();
+      const tail = combined ? combined.split(/\r?\n/).slice(-8).join(" | ") : `Çıkış kodu: ${code}`;
+      reject(new Error(`Komut başarısız oldu (${command} ${args.join(" ")}): ${tail}`));
+    });
+  });
+}
+
+const MIGRATE_SCRIPT_CANDIDATES = ["prisma:migrate", "db:migrate", "migrate:deploy", "migrate", "db:push"];
 
 const APPLY_STEPS = [
   { id: "prepare", label: "Kurulum ortamı hazırlanıyor" },
@@ -228,19 +287,76 @@ export function createSetupServer(token, options = {}) {
       fs.writeFileSync(temporaryEnv, envText, { encoding: "utf8", mode: 0o600 });
       markStep("prepare", "done", "Geçici ortam dosyası hazırlandı.");
 
-      if (payload.buildClient && options.runBuildCommands) {
+      const rootPkg = readJsonFileSafe(path.join(projectRoot, "package.json"));
+      const serverPkg = readJsonFileSafe(path.join(projectRoot, "server", "package.json"));
+      const clientPkg = readJsonFileSafe(path.join(projectRoot, "client", "package.json"));
+      const pm = setupConfig?.packageManager || detectPackageManager(projectRoot, rootPkg);
+
+      if (!payload.buildClient) {
+        markStep("buildServer", "skipped", "Üretim derlemesi istenmedi.");
+        markStep("buildClient", "skipped", "Üretim derlemesi istenmedi.");
+      } else if (typeof options.runBuildCommands === "function") {
+        markStep("buildServer", "running");
+        markStep("buildClient", "running");
         await options.runBuildCommands(payload);
         markStep("buildServer", "done");
         markStep("buildClient", "done");
         summary.push("Üretim derlemesi tamamlandı.");
       } else {
-        markStep("buildServer", payload.buildClient ? "done" : "skipped", payload.buildClient ? undefined : "Üretim derlemesi istenmedi.");
-        markStep("buildClient", payload.buildClient ? "done" : "skipped", payload.buildClient ? undefined : "Üretim derlemesi istenmedi.");
+        if (serverPkg?.scripts?.build) {
+          markStep("buildServer", "running");
+          const inv = pmRunInvocation(pm, "build", path.join(projectRoot, "server"));
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot);
+          markStep("buildServer", "done", "server build");
+          summary.push("Sunucu derlemesi tamamlandı.");
+        } else if (!serverPkg && !clientPkg && rootPkg?.scripts?.build) {
+          markStep("buildServer", "running");
+          const inv = pmRunInvocation(pm, "build", projectRoot);
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot);
+          markStep("buildServer", "done", "root build");
+          summary.push("Proje derlemesi tamamlandı.");
+        } else {
+          markStep("buildServer", "skipped", "Derleme betiği yok.");
+        }
+
+        if (clientPkg?.scripts?.build) {
+          markStep("buildClient", "running");
+          const inv = pmRunInvocation(pm, "build", path.join(projectRoot, "client"));
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot);
+          markStep("buildClient", "done", "client build");
+          summary.push("İstemci derlemesi tamamlandı.");
+        } else if (rootPkg?.scripts?.["build:client"]) {
+          markStep("buildClient", "running");
+          const inv = pmRunInvocation(pm, "build:client", projectRoot);
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot);
+          markStep("buildClient", "done", "build:client");
+          summary.push("İstemci derlemesi tamamlandı.");
+        } else {
+          markStep("buildClient", "skipped", "İstemci derleme betiği yok.");
+        }
       }
 
-      markStep("migrate", "running");
-      markStep("migrate", "done");
-      summary.push("Veritabanı migration'ları uygulandı.");
+      if (typeof options.runMigrateCommands === "function") {
+        markStep("migrate", "running");
+        await options.runMigrateCommands(payload);
+        markStep("migrate", "done");
+        summary.push("Veritabanı migration'ları uygulandı.");
+      } else {
+        const serverMigrateScript = MIGRATE_SCRIPT_CANDIDATES.find((name) => Boolean(serverPkg?.scripts?.[name]));
+        const rootMigrateScript = MIGRATE_SCRIPT_CANDIDATES.find((name) => Boolean(rootPkg?.scripts?.[name]));
+        const migrateScript = serverMigrateScript || rootMigrateScript;
+        const migrateDir = serverMigrateScript ? path.join(projectRoot, "server") : projectRoot;
+
+        if (migrateScript) {
+          markStep("migrate", "running", migrateScript);
+          const inv = pmRunInvocation(pm, migrateScript, migrateDir);
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot, { DATABASE_URL: databaseUrl });
+          markStep("migrate", "done", migrateScript);
+          summary.push("Veritabanı migration'ları uygulandı.");
+        } else {
+          markStep("migrate", "skipped", "Migration betiği bulunamadı.");
+        }
+      }
 
       markStep("admin", "running");
       fs.writeFileSync(
