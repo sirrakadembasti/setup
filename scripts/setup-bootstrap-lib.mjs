@@ -22,7 +22,7 @@ function assertInside(parent, target) {
  * Hedef projenin tek dizinli (root) mi yoksa server/ alt dizinli mi olduğunu algılar
  * ve tüm kurulum/veri yollarını güvenli biçimde döndürür.
  */
-export function getSetupPaths(projectRoot) {
+export function getSetupPaths(projectRoot, options = {}) {
   const root = path.resolve(projectRoot);
   let rootSetupConfig = null;
   const rootConfigPath = path.join(root, "setup.config.json");
@@ -44,10 +44,26 @@ export function getSetupPaths(projectRoot) {
   const customEnv = typeof cfgPaths?.env === "string" && cfgPaths.env.trim() ? cfgPaths.env.trim() : null;
   const customLock = typeof cfgPaths?.lockFile === "string" && cfgPaths.lockFile.trim() ? cfgPaths.lockFile.trim() : null;
 
-  const dataRoot = customDataDir ? path.resolve(root, customDataDir) : path.join(baseServiceDir, "data");
+  if (customDataDir) assertInside(root, path.resolve(root, customDataDir));
+  if (customEnv) assertInside(root, path.resolve(root, customEnv));
+  if (customLock) assertInside(root, path.resolve(root, customLock));
+
+  const externalDataDir = options.dataDir || process.env.SETUP_DATA_DIR || null;
+  const resolvedExternalData = externalDataDir ? path.resolve(root, externalDataDir) : null;
+  const isExternalOutsideRoot = Boolean(resolvedExternalData && !isInside(root, resolvedExternalData));
+
+  const dataRoot = resolvedExternalData
+    ? resolvedExternalData
+    : customDataDir
+      ? path.resolve(root, customDataDir)
+      : path.join(baseServiceDir, "data");
   const uploadsRoot = path.join(baseServiceDir, "uploads");
   const backupsRoot = path.join(baseServiceDir, "backups");
-  const env = customEnv ? path.resolve(root, customEnv) : path.join(baseServiceDir, ".env");
+  const env = customEnv
+    ? path.resolve(root, customEnv)
+    : isExternalOutsideRoot
+      ? path.join(resolvedExternalData, ".env")
+      : path.join(baseServiceDir, ".env");
   const lock = customLock ? path.resolve(root, customLock) : path.join(dataRoot, "installation.lock");
   const databaseUrl = hasServerSubdir ? "file:../data/app.db" : "file:./data/app.db";
 
@@ -79,6 +95,9 @@ export function getSetupPaths(projectRoot) {
     pnpmStore: path.join(root, "node_modules", ".pnpm"),
   };
   for (const target of Object.values(values).filter((value) => typeof value === "string" && !value.startsWith("file:"))) {
+    if (resolvedExternalData && isInside(resolvedExternalData, target)) {
+      continue;
+    }
     assertInside(root, target);
   }
   return values;
@@ -105,15 +124,17 @@ function hasNonEmptyNodeModules(dir) {
 
 export function checkDependencies(projectRoot) {
   const paths = getSetupPaths(projectRoot);
-  const rootPackages = hasNonEmptyNodeModules(paths.projectRoot);
+  const hasRootPkg = fs.existsSync(path.join(paths.projectRoot, "package.json"));
   const serverDir = path.join(paths.projectRoot, "server");
   const clientDir = path.join(paths.projectRoot, "client");
   const serverEntry = fs.existsSync(path.join(serverDir, "package.json"));
   const clientEntry = fs.existsSync(path.join(clientDir, "package.json"));
+  const hasAnyPackageJson = hasRootPkg || serverEntry || clientEntry;
+  const rootPackages = hasAnyPackageJson ? hasNonEmptyNodeModules(paths.projectRoot) : true;
   const serverModules = serverEntry ? fs.existsSync(path.join(serverDir, "node_modules")) : true;
   const clientModules = clientEntry ? fs.existsSync(path.join(clientDir, "node_modules")) : true;
 
-  const ready = rootPackages && serverModules && clientModules;
+  const ready = !hasAnyPackageJson ? true : rootPackages && serverModules && clientModules;
   return {
     ready,
     rootPackages,

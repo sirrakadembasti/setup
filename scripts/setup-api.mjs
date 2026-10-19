@@ -70,6 +70,76 @@ export function initProject(root = process.cwd(), options = {}) {
     }
   }
 
+  const exists = (rootDir, ...parts) => fs.existsSync(path.join(rootDir, ...parts));
+  let install = {
+    command: pm,
+    args: installArgs,
+    requireWorkspaces: detection.workspaces.isWorkspace,
+  };
+  let start = null;
+
+  if (detection.kind === "python-server") {
+    install = {
+      command: "pip",
+      args: exists(resolved, "requirements.txt") ? ["install", "-r", "requirements.txt"] : ["install", "-e", "."],
+      requireWorkspaces: false,
+    };
+    start = {
+      command: "python",
+      args: exists(resolved, "manage.py") ? ["manage.py", "runserver", `127.0.0.1:${detection.ports.app}`] : ["app.py"],
+    };
+  } else if (detection.kind === "go-server") {
+    install = {
+      command: "go",
+      args: ["mod", "download"],
+      requireWorkspaces: false,
+    };
+    start = {
+      command: "go",
+      args: ["run", "."],
+    };
+  } else if (detection.kind === "dotnet-server") {
+    install = {
+      command: "dotnet",
+      args: ["restore"],
+      requireWorkspaces: false,
+    };
+    start = {
+      command: "dotnet",
+      args: ["run", "--urls", `http://127.0.0.1:${detection.ports.app}`],
+    };
+  } else if (detection.kind === "php-server") {
+    install = {
+      command: "composer",
+      args: ["install"],
+      requireWorkspaces: false,
+    };
+    start = {
+      command: "php",
+      args: ["-S", `127.0.0.1:${detection.ports.app}`],
+    };
+  } else if (detection.kind === "static-web") {
+    install = {
+      command: null,
+      args: [],
+      requireWorkspaces: false,
+    };
+    start = {
+      command: "static",
+      args: ["."],
+    };
+  } else if (existingPkg?.scripts?.start) {
+    start = {
+      command: pm,
+      args: ["run", "start"],
+    };
+  } else if (existingPkg?.scripts?.preview) {
+    start = {
+      command: pm,
+      args: ["run", "preview"],
+    };
+  }
+
   const config = {
     name: detection.projectName,
     version: "1.0.0",
@@ -80,19 +150,8 @@ export function initProject(root = process.cwd(), options = {}) {
       wizard: detection.ports.wizard,
       app: detection.ports.app,
     },
-    install: {
-      command: pm,
-      args: installArgs,
-      requireWorkspaces: detection.workspaces.isWorkspace,
-    },
-    ...(existingPkg?.scripts?.start
-      ? {
-          start: {
-            command: pm,
-            args: ["run", "start"],
-          },
-        }
-      : {}),
+    install,
+    ...(start ? { start } : {}),
     wizard: {
       enabled: true,
       title: `${detection.projectName} Kurulum Sihirbazı`,

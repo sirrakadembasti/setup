@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { buildInstallPlan, detectPackageManager, detectProject, parseEnvExample } from "./detect-project.mjs";
-import { initProject } from "./setup-api.mjs";
+import { checkDependencies, getSetupPaths, initProject } from "./setup-api.mjs";
 import { bumpSemver, getVersion, parseSemver } from "./version.mjs";
 
 function mkTemp() {
@@ -225,4 +225,184 @@ test("kaynak dosya yoksa doğrulama yapılamaz ve package.json bildirimi esas al
   const d = detectProject(dir);
   assert.equal(d.stack.express, true);
   assert.deepEqual(d.dependencyUsage.express, { declared: true, used: false, sourceScanned: false });
+});
+
+test("statik HTML reposu (package.json olmadan index.html) static-web olarak algılanır ve kurulabilir", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  writeFile(dir, "index.html", "<!doctype html><html><body>Static App</body></html>\n");
+
+  const d = detectProject(dir);
+  const plan = buildInstallPlan(d);
+  const deps = checkDependencies(dir);
+
+  assert.equal(d.kind, "static-web");
+  assert.equal(d.stack.staticHtml, true);
+  assert.equal(d.stack.client, true);
+  assert.equal(plan.canInstall, true);
+  assert.ok(plan.steps.some((s) => s.id === "wizard"));
+  assert.ok(plan.steps.some((s) => s.id === "start"));
+  assert.equal(deps.ready, true);
+
+  const initRes = initProject(dir);
+  assert.equal(initRes.created, true);
+  assert.deepEqual(initRes.config.install, { command: null, args: [], requireWorkspaces: false });
+  assert.deepEqual(initRes.config.start, { command: "static", args: ["."] });
+});
+
+test("Next.js, Nuxt, SvelteKit ve Astro repoları ssr-fullstack olarak algılanır", (t) => {
+  const cases = [
+    {
+      name: "next-app",
+      files: {
+        "package.json": JSON.stringify({ name: "next-app", scripts: { dev: "next dev", start: "next start" }, dependencies: { next: "^14.0.0", react: "^18.0.0" } }),
+        "next.config.mjs": "export default {};\n",
+      },
+      flag: "nextjs",
+    },
+    {
+      name: "nuxt-app",
+      files: {
+        "package.json": JSON.stringify({ name: "nuxt-app", scripts: { dev: "nuxt dev" }, dependencies: { nuxt: "^3.0.0" } }),
+        "nuxt.config.ts": "export default defineNuxtConfig({});\n",
+      },
+      flag: "nuxt",
+    },
+    {
+      name: "sveltekit-app",
+      files: {
+        "package.json": JSON.stringify({ name: "sveltekit-app", devDependencies: { "@sveltejs/kit": "^2.0.0" } }),
+        "svelte.config.js": "export default {};\n",
+      },
+      flag: "sveltekit",
+    },
+    {
+      name: "astro-app",
+      files: {
+        "package.json": JSON.stringify({ name: "astro-app", scripts: { dev: "astro dev" }, dependencies: { astro: "^4.0.0" } }),
+        "astro.config.mjs": "export default {};\n",
+      },
+      flag: "astro",
+    },
+  ];
+
+  for (const c of cases) {
+    const { dir, cleanup } = mkTemp();
+    try {
+      for (const [rel, content] of Object.entries(c.files)) {
+        writeFile(dir, rel, content);
+      }
+      const d = detectProject(dir);
+      assert.equal(d.stack[c.flag], true, `${c.name}: stack.${c.flag} true olmalı`);
+      assert.equal(d.stack.ssrFramework, true, `${c.name}: stack.ssrFramework true olmalı`);
+      assert.equal(d.kind, "ssr-fullstack", `${c.name}: kind ssr-fullstack olmalı`);
+    } finally {
+      cleanup();
+    }
+  }
+});
+
+test("Python ve Go çok dilli (polyglot) sunucu repoları algılanır ve initProject uygun komutları yazar", (t) => {
+  // Python
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "requirements.txt", "flask>=3.0.0\n");
+    writeFile(dir, "app.py", "print('hello')\n");
+
+    const d = detectProject(dir);
+    const plan = buildInstallPlan(d);
+    assert.equal(d.stack.python, true);
+    assert.equal(d.kind, "python-server");
+    assert.equal(plan.canInstall, true);
+    assert.ok(plan.steps.some((s) => s.id === "dependencies" && s.label.includes("Python / pip")));
+    assert.ok(plan.steps.some((s) => s.id === "wizard"));
+
+    const initRes = initProject(dir);
+    assert.equal(initRes.created, true);
+    assert.deepEqual(initRes.config.install, {
+      command: "pip",
+      args: ["install", "-r", "requirements.txt"],
+      requireWorkspaces: false,
+    });
+    assert.deepEqual(initRes.config.start, {
+      command: "python",
+      args: ["app.py"],
+    });
+  }
+
+  // Go
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "go.mod", "module example.com/app\n\ngo 1.22\n");
+    writeFile(dir, "main.go", "package main\nfunc main() {}\n");
+
+    const d = detectProject(dir);
+    const plan = buildInstallPlan(d);
+    assert.equal(d.stack.go, true);
+    assert.equal(d.kind, "go-server");
+    assert.equal(plan.canInstall, true);
+    assert.ok(plan.steps.some((s) => s.id === "dependencies" && s.label.includes("go mod download")));
+
+    const initRes = initProject(dir);
+    assert.equal(initRes.created, true);
+    assert.deepEqual(initRes.config.install, {
+      command: "go",
+      args: ["mod", "download"],
+      requireWorkspaces: false,
+    });
+    assert.deepEqual(initRes.config.start, {
+      command: "go",
+      args: ["run", "."],
+    });
+  }
+});
+
+test("Electron ve Tauri masaüstü projeleri algılanır ve getSetupPaths harici dataDir ile güvenli çalışır", (t) => {
+  // Electron
+  {
+    const { dir, cleanup } = mkTemp();
+    const { dir: externalTempDir, cleanup: cleanupExt } = mkTemp();
+    t.after(() => {
+      cleanup();
+      cleanupExt();
+    });
+
+    writeFile(
+      dir,
+      "package.json",
+      JSON.stringify({ name: "electron-app", main: "main.js", dependencies: { electron: "^30.0.0" } }),
+    );
+    writeFile(dir, "main.js", 'const { app } = require("electron");\n');
+
+    const d = detectProject(dir);
+    assert.equal(d.stack.electron, true);
+    assert.equal(d.kind, "electron-desktop");
+
+    const paths = getSetupPaths(dir, { dataDir: externalTempDir });
+    assert.equal(paths.dataRoot, path.resolve(externalTempDir));
+    assert.equal(paths.env, path.join(path.resolve(externalTempDir), ".env"));
+    assert.equal(paths.lock, path.join(path.resolve(externalTempDir), "installation.lock"));
+
+    // setup.config.json içinden gelen "../outside" yol geçişi (path traversal) hala engellenmeli
+    writeFile(
+      dir,
+      "setup.config.json",
+      JSON.stringify({ name: "electron-app", paths: { env: "../outside/.env" } }),
+    );
+    assert.throws(() => getSetupPaths(dir, { dataDir: externalTempDir }), /Güvenli dizin sınırı ihlali/);
+  }
+
+  // Tauri
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "package.json", JSON.stringify({ name: "tauri-app", dependencies: { "@tauri-apps/api": "^2.0.0" } }));
+    writeFile(dir, "src-tauri/tauri.conf.json", JSON.stringify({ build: { devUrl: "http://localhost:5000" } }));
+
+    const d = detectProject(dir);
+    assert.equal(d.stack.tauri, true);
+    assert.equal(d.kind, "tauri-desktop");
+  }
 });

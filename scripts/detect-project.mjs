@@ -16,6 +16,19 @@ function exists(root, ...parts) {
   return fs.existsSync(path.join(root, ...parts));
 }
 
+function hasFileWithSuffix(root, suffixes) {
+  try {
+    const entries = fs.readdirSync(root, { withFileTypes: true });
+    return entries.some(
+      (entry) =>
+        entry.isFile() &&
+        suffixes.some((suffix) => entry.name.toLowerCase().endsWith(suffix.toLowerCase())),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function hasValidPackageJson(root) {
   return readJsonSafe(path.join(root, "package.json")) !== null;
 }
@@ -121,7 +134,22 @@ function hasDependency(pkg, depName) {
 }
 
 /** Kaynakta kullanımı doğrulanan paketler. */
-const TRACKED_PACKAGES = Object.freeze(["express", "react", "vue", "next", "vite"]);
+const TRACKED_PACKAGES = Object.freeze([
+  "express",
+  "fastify",
+  "koa",
+  "hono",
+  "react",
+  "vue",
+  "next",
+  "nuxt",
+  "@sveltejs/kit",
+  "astro",
+  "vite",
+  "electron",
+  "@tauri-apps/api",
+  "@tauri-apps/cli",
+]);
 const SOURCE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".vue", ".svelte"]);
 const IGNORED_DIRS = new Set([
   "node_modules", ".git", ".hg", ".svn", "dist", "build", "out", ".next", ".nuxt", ".output",
@@ -239,6 +267,14 @@ function detectStack(root, usage) {
     exists(root, "src", "server.ts") ||
     Boolean(rootPkg?.scripts?.start || rootPkg?.scripts?.dev);
 
+  const nextjs = isPackageInUse(usage.next) || exists(root, "next.config.js") || exists(root, "next.config.mjs");
+  const nuxt = isPackageInUse(usage.nuxt) || exists(root, "nuxt.config.ts") || exists(root, "nuxt.config.js");
+  const sveltekit = isPackageInUse(usage["@sveltejs/kit"]) || exists(root, "svelte.config.js");
+  const astro = isPackageInUse(usage.astro) || exists(root, "astro.config.mjs") || exists(root, "astro.config.ts");
+  const ssrFramework = Boolean(nextjs || nuxt || sveltekit || astro);
+  const staticHtml =
+    exists(root, "index.html") || exists(root, "public", "index.html") || exists(root, "dist", "index.html");
+
   return {
     nodeServer: hasServerSubdir || hasRootServerEntry,
     hasServerSubdir,
@@ -247,7 +283,11 @@ function detectStack(root, usage) {
       exists(root, "client", "src") ||
       isPackageInUse(usage.react) ||
       isPackageInUse(usage.vue) ||
-      isPackageInUse(usage.next),
+      isPackageInUse(usage.next) ||
+      nuxt ||
+      sveltekit ||
+      astro ||
+      staticHtml,
     prisma: exists(root, "server", "prisma", "schema.prisma") || exists(root, "prisma", "schema.prisma"),
     vite:
       exists(root, "client", "vite.config.ts") ||
@@ -255,8 +295,35 @@ function detectStack(root, usage) {
       exists(root, "vite.config.ts") ||
       exists(root, "vite.config.js") ||
       isPackageInUse(usage.vite),
-    nextjs: isPackageInUse(usage.next) || exists(root, "next.config.js") || exists(root, "next.config.mjs"),
+    nextjs,
+    nuxt,
+    sveltekit,
+    astro,
+    ssrFramework,
     express: isPackageInUse(usage.express),
+    fastify: isPackageInUse(usage.fastify),
+    koa: isPackageInUse(usage.koa),
+    hono: isPackageInUse(usage.hono),
+    staticHtml,
+    python:
+      exists(root, "pyproject.toml") ||
+      exists(root, "requirements.txt") ||
+      exists(root, "manage.py") ||
+      exists(root, "app.py") ||
+      exists(root, "main.py"),
+    go: exists(root, "go.mod") || exists(root, "main.go"),
+    dotnet: hasFileWithSuffix(root, [".csproj", ".sln"]),
+    php: exists(root, "composer.json") || exists(root, "artisan") || exists(root, "index.php"),
+    electron:
+      isPackageInUse(usage.electron) ||
+      Boolean(rootPkg?.main && isPackageInUse(usage.electron)) ||
+      exists(root, "electron-builder.yml") ||
+      exists(root, "forge.config.js"),
+    tauri:
+      exists(root, "src-tauri", "tauri.conf.json") ||
+      exists(root, "tauri.conf.json") ||
+      isPackageInUse(usage["@tauri-apps/cli"]) ||
+      isPackageInUse(usage["@tauri-apps/api"]),
     docker: exists(root, "docker-compose.yml") || exists(root, "compose.yaml") || exists(root, "Dockerfile"),
   };
 }
@@ -320,13 +387,21 @@ export function detectProject(root = process.cwd()) {
   const runtime = detectRuntimeArtifacts(resolved);
 
   let kind = "unknown";
-  if (workspaces.isWorkspace && stack.nodeServer) kind = "workspace-fullstack";
+  if (stack.electron) kind = "electron-desktop";
+  else if (stack.tauri) kind = "tauri-desktop";
+  else if (workspaces.isWorkspace && stack.nodeServer) kind = "workspace-fullstack";
   else if (workspaces.isWorkspace) kind = "workspace";
   else if (stack.hasServerSubdir && stack.client) kind = "node-fullstack";
+  else if (stack.ssrFramework) kind = "ssr-fullstack";
   else if (stack.nodeServer && stack.client) kind = "node-webapp";
   else if (stack.nodeServer) kind = "node-server";
-  else if (stack.client) kind = "node-client";
+  else if (stack.client && validPkg) kind = "node-client";
   else if (validPkg) kind = "node-package";
+  else if (stack.python) kind = "python-server";
+  else if (stack.go) kind = "go-server";
+  else if (stack.dotnet) kind = "dotnet-server";
+  else if (stack.php) kind = "php-server";
+  else if (stack.staticHtml) kind = "static-web";
   else if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) kind = "directory";
 
   const projectName =
@@ -379,7 +454,13 @@ export function buildInstallPlan(detection) {
     detection.hasPackageJson ||
     detection.stack.nodeServer ||
     detection.stack.client ||
-    detection.workspaces.isWorkspace;
+    detection.workspaces.isWorkspace ||
+    detection.stack.python ||
+    detection.stack.go ||
+    detection.stack.dotnet ||
+    detection.stack.php ||
+    detection.stack.staticHtml ||
+    Boolean(detection.setupConfig?.install?.command);
 
   if (!installable) {
     const reason = detection.packageJsonExists
@@ -401,13 +482,19 @@ export function buildInstallPlan(detection) {
       label: `Bağımlılık kurulumu (${buildInstallCommandLabel(detection)})`,
       required: true,
     });
+  } else if (detection.stack.python) {
+    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (Python / pip)", required: true });
+  } else if (detection.stack.go) {
+    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (go mod download)", required: true });
+  } else if (detection.stack.dotnet) {
+    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (dotnet restore)", required: true });
+  } else if (detection.stack.php) {
+    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (composer install)", required: true });
   }
 
-  if (detection.stack.nodeServer || detection.stack.client || detection.hasPackageJson) {
-    steps.push({ id: "wizard", label: `Web kurulum sihirbazı (${detection.ports?.wizard || 5050})`, optional: false });
-    steps.push({ id: "apply", label: "Yapılandırma (.env) + veri hazırlığı" });
-    steps.push({ id: "start", label: "Uygulamayı başlat ve aç" });
-  }
+  steps.push({ id: "wizard", label: `Web kurulum sihirbazı (${detection.ports?.wizard || 5050})`, optional: false });
+  steps.push({ id: "apply", label: "Yapılandırma (.env) + veri hazırlığı" });
+  steps.push({ id: "start", label: "Uygulamayı başlat ve aç" });
 
   return {
     projectName: detection.projectName,
