@@ -21,6 +21,7 @@
     "./bootstrap": "./scripts/setup-bootstrap.mjs",
     "./lib": "./scripts/setup-bootstrap-lib.mjs",
     "./wizard": "./wizard/server.mjs",
+    "./core": "./wizard/core.mjs",
     "./version": "./scripts/version.mjs",
     "./utils/project-paths": "./utils/project-paths.mjs",
     "./utils/deployment-config": "./utils/deployment-config.mjs"

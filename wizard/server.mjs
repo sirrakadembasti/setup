@@ -308,7 +308,7 @@ export function createSetupServer(token, options = {}) {
     artifactRoot = path.join(dataRoot, "setup-artifacts");
     databaseUrl = "file:./data/app.db";
   } else {
-    const paths = getSetupPaths(projectRoot);
+    const paths = getSetupPaths(projectRoot, { dataDir: options.dataDir });
     serverRoot = paths.serverRoot;
     dataRoot = paths.dataRoot;
     envPath = paths.env;
@@ -461,7 +461,7 @@ export function createSetupServer(token, options = {}) {
       const savedEnvRoot = process.env.SETUP_PROJECT_ROOT;
       process.env.SETUP_PROJECT_ROOT = projectRoot;
       try {
-        const config = saveDeploymentConfig(toDeploymentConfig(payload), "setup-wizard", projectRoot);
+        const config = saveDeploymentConfig(toDeploymentConfig(payload), "setup-wizard", projectRoot, { dataDir: options.dataDir });
         const artifacts = buildDeploymentArtifacts(config, payload.server.port);
         fs.mkdirSync(artifactRoot, { recursive: true });
         fs.writeFileSync(path.join(artifactRoot, "nginx.conf.example"), `${artifacts.nginxText}\n`, "utf8");

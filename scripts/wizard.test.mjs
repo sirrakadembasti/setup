@@ -8,6 +8,13 @@ import { buildServerEnv, hashAdminPassword, setupPayloadSchema, toDeploymentConf
 import { buildDeploymentArtifacts } from "../utils/deployment-config.mjs";
 import { renderSetupPage } from "../wizard/ui.mjs";
 import { createSetupServer, parseDotEnvFile, resolveAppStartInvocation, sameOrigin } from "../wizard/server.mjs";
+import {
+  createSetupWizardCore,
+  mountSetupGuard,
+  parseEnvFile,
+  readSetupRuntimeConfig,
+  verifyAdminCredentials,
+} from "../wizard/core.mjs";
 
 const VALID_PAYLOAD = {
   deployment: {
@@ -640,4 +647,241 @@ test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişk
   assert.equal(startAgainBody.reachable, true);
   assert.equal(startAgainBody.message, "Uygulama zaten çalışıyor.");
 });
+
+test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC + custom dataDir), readSetupRuntimeConfig ve verifyAdminCredentials", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-core-project-"));
+  const externalDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-core-userdata-"));
+  t.after(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(externalDataDir, { recursive: true, force: true });
+  });
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({ name: "desktop-or-nextjs-app", version: "1.0.0" }),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(tmpRoot, ".env.example"),
+    "CUSTOM_FEATURE_FLAG=enabled\n",
+    "utf8",
+  );
+
+  let buildCalled = false;
+  const core = createSetupWizardCore({
+    projectRoot: tmpRoot,
+    dataDir: externalDataDir,
+    runBuildCommands: async () => {
+      buildCalled = true;
+    },
+  });
+
+  // 1. GET /setup HTML döndürmeli
+  const htmlRes = await core.handle({ method: "GET", path: "/setup" });
+  assert.equal(htmlRes.status, 200);
+  assert.match(htmlRes.headers["content-type"], /text\/html/);
+  assert.match(htmlRes.body, /<!doctype html>/i);
+
+  // 2. GET /api/status kurulum öncesi installed: false döndürmeli
+  const statusBefore = await core.handle({ method: "GET", path: "/api/status" });
+  assert.equal(statusBefore.status, 200);
+  assert.equal(statusBefore.body.installed, false);
+  assert.equal(statusBefore.body.apply.status, "idle");
+
+  // 3. POST /api/validate-step adım doğrulaması
+  const badAdminStep = await core.handle({
+    method: "POST",
+    path: "/api/validate-step",
+    body: { step: "admin", data: { name: "A", email: "bad", password: "short" } },
+  });
+  assert.equal(badAdminStep.status, 400);
+  assert.equal(badAdminStep.body.ok, false);
+
+  const goodAdminStep = await core.handle({
+    method: "POST",
+    path: "/api/validate-step",
+    body: { step: "admin", data: VALID_PAYLOAD.admin },
+  });
+  assert.equal(goodAdminStep.status, 200);
+  assert.equal(goodAdminStep.body.ok, true);
+
+  // 4. POST /api/test-smtp doğrulaması
+  const badSmtp = await core.handle({
+    method: "POST",
+    path: "/api/test-smtp",
+    body: { enabled: true, user: "a@yahoo.com", fromEmail: "a@yahoo.com", fromName: "Test", password: "short" },
+  });
+  assert.equal(badSmtp.status, 400);
+  assert.equal(badSmtp.body.ok, false);
+
+  const goodSmtp = await core.handle({
+    method: "POST",
+    path: "/api/test-smtp",
+    body: { enabled: false },
+  });
+  assert.equal(goodSmtp.status, 200);
+  assert.equal(goodSmtp.body.ok, true);
+
+  // 5. POST /api/apply (wait: true ile senkron tamamlanma)
+  const applyRes = await core.handle({
+    method: "POST",
+    path: "/api/apply",
+    body: { ...VALID_PAYLOAD, buildClient: true, wait: true },
+  });
+  assert.equal(applyRes.status, 200);
+  assert.equal(applyRes.body.ok, true);
+  assert.equal(applyRes.body.state.status, "success");
+  assert.equal(buildCalled, true);
+
+  // 6. Harici dataDir altında dosyaların oluştuğunu ve runtime config + admin doğrulamasını kontrol et
+  assert.equal(fs.existsSync(path.join(externalDataDir, "installation.lock")), true);
+  assert.equal(fs.existsSync(path.join(externalDataDir, "admin.json")), true);
+  assert.equal(fs.existsSync(path.join(externalDataDir, "deployment-config.json")), true);
+  assert.equal(fs.existsSync(path.join(externalDataDir, ".env")), true);
+
+  const parsedEnv = parseEnvFile(path.join(externalDataDir, ".env"));
+  assert.equal(parsedEnv.CUSTOM_FEATURE_FLAG, "enabled");
+  assert.equal(parsedEnv.ADMIN_EMAIL, VALID_PAYLOAD.admin.email);
+
+  const runtimeCfg = readSetupRuntimeConfig({ projectRoot: tmpRoot, dataDir: externalDataDir });
+  assert.equal(runtimeCfg.installed, true);
+  assert.equal(runtimeCfg.admin.email, VALID_PAYLOAD.admin.email);
+  assert.equal(runtimeCfg.deployment.mode, "localhost");
+
+  assert.equal(
+    verifyAdminCredentials(
+      { projectRoot: tmpRoot, dataDir: externalDataDir },
+      "ADMIN@kurum.gov.tr",
+      VALID_PAYLOAD.admin.password,
+    ),
+    true,
+  );
+  assert.equal(
+    verifyAdminCredentials(
+      { projectRoot: tmpRoot, dataDir: externalDataDir },
+      VALID_PAYLOAD.admin.email,
+      "Yanlis_Parola_123!",
+    ),
+    false,
+  );
+  assert.equal(core.verifyAdmin(VALID_PAYLOAD.admin.email, VALID_PAYLOAD.admin.password), true);
+});
+
+test("wizard/core: mountSetupGuard kurulum öncesi 302/503 döner, gömülü /api/setup/* uçlarını sunar ve kurulum sonrası next() çağırır", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-guard-e2e-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "express-guarded-app" }), "utf8");
+
+  let mountedMiddleware = null;
+  const fakeApp = {
+    use(fn) {
+      mountedMiddleware = fn;
+    },
+  };
+
+  const mounted = mountSetupGuard(fakeApp, {
+    projectRoot: tmpRoot,
+    embedWizard: true,
+    allowPaths: ["/health"],
+  });
+  assert.equal(typeof mounted.middleware, "function");
+  assert.equal(mountedMiddleware, mounted.middleware);
+
+  function invokeMiddleware(reqOverrides) {
+    return new Promise((resolve, reject) => {
+      const headers = {};
+      const res = {
+        statusCode: 200,
+        headers,
+        body: "",
+        setHeader(k, v) {
+          headers[k.toLowerCase()] = v;
+        },
+        status(code) {
+          this.statusCode = code;
+          return this;
+        },
+        writeHead(code, hdrs = {}) {
+          this.statusCode = code;
+          for (const [k, v] of Object.entries(hdrs)) {
+            headers[k.toLowerCase()] = v;
+          }
+        },
+        end(chunk = "") {
+          this.body = chunk ? String(chunk) : "";
+          resolve({ intercepted: true, statusCode: this.statusCode, headers, body: this.body });
+        },
+      };
+      const req = {
+        method: "GET",
+        url: "/",
+        path: "/",
+        headers: {},
+        ...reqOverrides,
+      };
+      Promise.resolve(
+        mountedMiddleware(req, res, (err) => {
+          if (err) reject(err);
+          else resolve({ intercepted: false });
+        }),
+      ).catch(reject);
+    });
+  }
+
+  // 1. allowPaths (/health) kurulum öncesinde de next() çağırmalı
+  const healthRes = await invokeMiddleware({ path: "/health", url: "/health" });
+  assert.equal(healthRes.intercepted, false);
+
+  // 2. Kurulum öncesi tarayıcı isteği (GET /dashboard) -> 302 /setup
+  const pageRedirect = await invokeMiddleware({
+    path: "/dashboard",
+    url: "/dashboard",
+    headers: { accept: "text/html" },
+  });
+  assert.equal(pageRedirect.intercepted, true);
+  assert.equal(pageRedirect.statusCode, 302);
+  assert.equal(pageRedirect.headers.location, "/setup");
+
+  // 3. Kurulum öncesi API isteği (GET /api/users) -> 503 JSON
+  const apiBlocked = await invokeMiddleware({
+    path: "/api/users",
+    url: "/api/users",
+    headers: { accept: "application/json" },
+  });
+  assert.equal(apiBlocked.intercepted, true);
+  assert.equal(apiBlocked.statusCode, 503);
+  const blockedPayload = JSON.parse(apiBlocked.body);
+  assert.equal(blockedPayload.installed, false);
+  assert.equal(blockedPayload.setupRequired, true);
+  assert.equal(blockedPayload.redirectUrl, "/setup");
+
+  // 4. Gömülü /api/setup/status çalışmalı
+  const embeddedStatus = await invokeMiddleware({
+    method: "GET",
+    path: "/api/setup/status",
+    url: "/api/setup/status",
+  });
+  assert.equal(embeddedStatus.intercepted, true);
+  assert.equal(embeddedStatus.statusCode, 200);
+  assert.equal(JSON.parse(embeddedStatus.body).installed, false);
+
+  // 5. Gömülü /api/setup/apply ile kurulumu tamamla
+  const embeddedApply = await invokeMiddleware({
+    method: "POST",
+    path: "/api/setup/apply",
+    url: "/api/setup/apply",
+    body: { ...VALID_PAYLOAD, wait: true },
+  });
+  assert.equal(embeddedApply.intercepted, true);
+  assert.equal(embeddedApply.statusCode, 200);
+  assert.equal(JSON.parse(embeddedApply.body).ok, true);
+
+  // 6. Kurulum tamamlandıktan sonra /dashboard ve /api/users doğrudan next() çağırmalı
+  const afterDashboard = await invokeMiddleware({ path: "/dashboard", url: "/dashboard" });
+  assert.equal(afterDashboard.intercepted, false);
+
+  const afterApi = await invokeMiddleware({ path: "/api/users", url: "/api/users" });
+  assert.equal(afterApi.intercepted, false);
+});
+
 

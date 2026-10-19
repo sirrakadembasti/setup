@@ -22,6 +22,13 @@ export {
   stopPortProcess,
   validateRuntime,
 } from "./setup-bootstrap-lib.mjs";
+export {
+  createSetupWizardCore,
+  mountSetupGuard,
+  parseEnvFile,
+  readSetupRuntimeConfig,
+  verifyAdminCredentials,
+} from "../wizard/core.mjs";
 
 /**
  * Hızlı kurulum ön kontrolü.

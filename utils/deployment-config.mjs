@@ -72,8 +72,8 @@ export function parseDeploymentConfig(raw) {
   return { mode, publicUrl, basePath, allowedOrigins, trustProxyHops, retention };
 }
 
-export function saveDeploymentConfig(config, updatedBy = "setup-wizard", projectRoot = getProjectRoot()) {
-  const paths = getSetupPaths(projectRoot);
+export function saveDeploymentConfig(config, updatedBy = "setup-wizard", projectRoot = getProjectRoot(), options = {}) {
+  const paths = getSetupPaths(projectRoot, options);
   fs.mkdirSync(paths.dataRoot, { recursive: true });
   const target = paths.deploymentConfig;
   const temp = paths.deploymentConfigTemp;
