@@ -7,6 +7,8 @@ import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, saveDeploymentConfig } from "../utils/deployment-config.mjs";
+import { getSetupPaths } from "../scripts/setup-bootstrap-lib.mjs";
+import { loadSetupConfig } from "../scripts/detect-project.mjs";
 import { buildServerEnv, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
 
@@ -131,16 +133,42 @@ function sendJson(res, status, payload) {
 export function createSetupServer(token, options = {}) {
   if (!token || token.length < 24) throw new Error("SETUP_TOKEN en az 24 karakter olmalıdır.");
   const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
-  const hasServerSubdir =
-    fs.existsSync(path.join(projectRoot, "server", "package.json")) ||
-    fs.existsSync(path.join(projectRoot, "server", "data")) ||
-    options.forceServerSubdir !== false;
-  const serverRoot = hasServerSubdir ? path.join(projectRoot, "server") : projectRoot;
-  const dataRoot = path.join(serverRoot, "data");
-  const envPath = path.join(serverRoot, ".env");
-  const lockPath = path.join(dataRoot, "installation.lock");
-  const pendingPath = path.join(dataRoot, "installation.pending");
-  const artifactRoot = path.join(dataRoot, "setup-artifacts");
+  const setupConfig = loadSetupConfig(projectRoot);
+
+  let serverRoot;
+  let dataRoot;
+  let envPath;
+  let lockPath;
+  let pendingPath;
+  let artifactRoot;
+  let databaseUrl;
+
+  if (options.forceServerSubdir === true) {
+    serverRoot = path.join(projectRoot, "server");
+    dataRoot = path.join(serverRoot, "data");
+    envPath = path.join(serverRoot, ".env");
+    lockPath = path.join(dataRoot, "installation.lock");
+    pendingPath = path.join(dataRoot, "installation.pending");
+    artifactRoot = path.join(dataRoot, "setup-artifacts");
+    databaseUrl = "file:../data/app.db";
+  } else if (options.forceServerSubdir === false) {
+    serverRoot = projectRoot;
+    dataRoot = path.join(projectRoot, "data");
+    envPath = path.join(projectRoot, ".env");
+    lockPath = path.join(dataRoot, "installation.lock");
+    pendingPath = path.join(dataRoot, "installation.pending");
+    artifactRoot = path.join(dataRoot, "setup-artifacts");
+    databaseUrl = "file:./data/app.db";
+  } else {
+    const paths = getSetupPaths(projectRoot);
+    serverRoot = paths.serverRoot;
+    dataRoot = paths.dataRoot;
+    envPath = paths.env;
+    lockPath = paths.lock;
+    pendingPath = paths.pending;
+    artifactRoot = paths.setupArtifacts;
+    databaseUrl = paths.databaseUrl;
+  }
 
   const sessionValue = crypto.createHmac("sha256", token).update("setup-wizard-session").digest("hex");
   const csrfToken = crypto.createHmac("sha256", token).update("setup-wizard-csrf").digest("hex");
@@ -166,6 +194,8 @@ export function createSetupServer(token, options = {}) {
 
   async function applySetup(payload) {
     fs.mkdirSync(dataRoot, { recursive: true });
+    fs.mkdirSync(path.dirname(envPath), { recursive: true });
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     if (fs.existsSync(lockPath)) throw new Error("Kurulum daha önce tamamlanmış. Sihirbaz yeniden çalıştırılamaz.");
     if (fs.existsSync(envPath) && !payload.overwriteExistingEnv) {
       throw new Error(".env zaten var. İçeriğini doğrulayın veya yedekleyerek değiştirme onayını seçin.");
@@ -177,7 +207,6 @@ export function createSetupServer(token, options = {}) {
       throw new Error("Başka bir kurulum işlemi çalışıyor veya önceki işlem yarım kaldı.");
     }
 
-    const databaseUrl = "file:../data/app.db";
     const envText = buildServerEnv(payload, undefined, databaseUrl);
     const temporaryEnv = `${envPath}.setup-${process.pid}`;
     const summary = [];
@@ -214,7 +243,7 @@ export function createSetupServer(token, options = {}) {
       const savedEnvRoot = process.env.SETUP_PROJECT_ROOT;
       process.env.SETUP_PROJECT_ROOT = projectRoot;
       try {
-        const config = saveDeploymentConfig(toDeploymentConfig(payload), "setup-wizard");
+        const config = saveDeploymentConfig(toDeploymentConfig(payload), "setup-wizard", projectRoot);
         const artifacts = buildDeploymentArtifacts(config);
         fs.mkdirSync(artifactRoot, { recursive: true });
         fs.writeFileSync(path.join(artifactRoot, "nginx.conf.example"), `${artifacts.nginxText}\n`, "utf8");
@@ -277,7 +306,7 @@ export function createSetupServer(token, options = {}) {
       }
       setSecurityHeaders(res, "text/html; charset=utf-8");
       res.statusCode = 200;
-      return res.end(renderSetupPage(csrfToken, { title: options.title }));
+      return res.end(renderSetupPage(csrfToken, { title: options.title || setupConfig?.wizard?.title }));
     }
 
     if (reqUrl.pathname.startsWith("/api/")) {
@@ -402,15 +431,15 @@ export function createSetupServer(token, options = {}) {
 
 export function startSetupWizard() {
   const projectRoot = getProjectRoot();
-  const dataRoot = path.join(projectRoot, "server", "data");
-  const lockPath = path.join(dataRoot, "installation.lock");
-  fs.mkdirSync(dataRoot, { recursive: true });
-  if (fs.existsSync(lockPath)) {
+  const paths = getSetupPaths(projectRoot);
+  const setupConfig = loadSetupConfig(projectRoot);
+  fs.mkdirSync(paths.dataRoot, { recursive: true });
+  if (fs.existsSync(paths.lock)) {
     throw new Error("Kurulum kilidi mevcut. Çalışan sistemi yeniden yapılandırmak için önce temiz kurulum adımını kullanın.");
   }
   const token = process.env.SETUP_TOKEN || crypto.randomBytes(24).toString("base64url");
   const host = "127.0.0.1";
-  const port = Math.min(65535, Math.max(1024, Number(process.env.SETUP_PORT) || 5050));
+  const port = Math.min(65535, Math.max(1024, Number(process.env.SETUP_PORT) || Number(setupConfig?.ports?.wizard) || 5050));
   let server;
   server = createSetupServer(token, { projectRoot, onComplete: () => server.close() });
   server.listen(port, host, () => {

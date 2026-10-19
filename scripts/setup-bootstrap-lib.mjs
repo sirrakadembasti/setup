@@ -24,14 +24,33 @@ function assertInside(parent, target) {
  */
 export function getSetupPaths(projectRoot) {
   const root = path.resolve(projectRoot);
+  let rootSetupConfig = null;
+  const rootConfigPath = path.join(root, "setup.config.json");
+  if (fs.existsSync(rootConfigPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(rootConfigPath, "utf8"));
+      if (parsed && typeof parsed === "object") rootSetupConfig = parsed;
+    } catch {
+      rootSetupConfig = null;
+    }
+  }
   const hasServerSubdir =
     fs.existsSync(path.join(root, "server", "package.json")) ||
     fs.existsSync(path.join(root, "server", "data")) ||
     fs.existsSync(path.join(root, "server", ".env"));
   const baseServiceDir = hasServerSubdir ? path.join(root, "server") : root;
-  const dataRoot = path.join(baseServiceDir, "data");
+  const cfgPaths = rootSetupConfig?.paths;
+  const customDataDir = typeof cfgPaths?.dataDir === "string" && cfgPaths.dataDir.trim() ? cfgPaths.dataDir.trim() : null;
+  const customEnv = typeof cfgPaths?.env === "string" && cfgPaths.env.trim() ? cfgPaths.env.trim() : null;
+  const customLock = typeof cfgPaths?.lockFile === "string" && cfgPaths.lockFile.trim() ? cfgPaths.lockFile.trim() : null;
+
+  const dataRoot = customDataDir ? path.resolve(root, customDataDir) : path.join(baseServiceDir, "data");
   const uploadsRoot = path.join(baseServiceDir, "uploads");
   const backupsRoot = path.join(baseServiceDir, "backups");
+  const env = customEnv ? path.resolve(root, customEnv) : path.join(baseServiceDir, ".env");
+  const lock = customLock ? path.resolve(root, customLock) : path.join(dataRoot, "installation.lock");
+  const databaseUrl = hasServerSubdir ? "file:../data/app.db" : "file:./data/app.db";
+
   const values = {
     projectRoot: root,
     hasServerSubdir,
@@ -39,8 +58,9 @@ export function getSetupPaths(projectRoot) {
     dataRoot,
     uploadsRoot,
     backupsRoot,
-    env: path.join(baseServiceDir, ".env"),
+    env,
     rootEnv: path.join(root, ".env"),
+    databaseUrl,
     appDb: path.join(dataRoot, "app.db"),
     appDbWal: path.join(dataRoot, "app.db-wal"),
     appDbShm: path.join(dataRoot, "app.db-shm"),
@@ -49,7 +69,7 @@ export function getSetupPaths(projectRoot) {
     sessionsDbWal: path.join(dataRoot, "sessions.db-wal"),
     sessionsDbShm: path.join(dataRoot, "sessions.db-shm"),
     sessionsDbJournal: path.join(dataRoot, "sessions.db-journal"),
-    lock: path.join(dataRoot, "installation.lock"),
+    lock,
     pending: path.join(dataRoot, "installation.pending"),
     deploymentConfig: path.join(dataRoot, "deployment-config.json"),
     deploymentConfigTemp: path.join(dataRoot, "deployment-config.json.tmp"),
@@ -57,7 +77,7 @@ export function getSetupPaths(projectRoot) {
     nodeModules: path.join(root, "node_modules"),
     pnpmStore: path.join(root, "node_modules", ".pnpm"),
   };
-  for (const target of Object.values(values).filter((value) => typeof value === "string")) {
+  for (const target of Object.values(values).filter((value) => typeof value === "string" && !value.startsWith("file:"))) {
     assertInside(root, target);
   }
   return values;

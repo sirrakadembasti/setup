@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getProjectRoot } from "./project-paths.mjs";
+import { getSetupPaths } from "../scripts/setup-bootstrap-lib.mjs";
 
 export function normalizeBasePath(input = "/") {
   const raw = String(input ?? "/").trim();
@@ -71,12 +72,11 @@ export function parseDeploymentConfig(raw) {
   return { mode, publicUrl, basePath, allowedOrigins, trustProxyHops, retention };
 }
 
-export function saveDeploymentConfig(config, updatedBy = "setup-wizard") {
-  const root = getProjectRoot();
-  const dataDir = path.join(root, "server", "data");
-  fs.mkdirSync(dataDir, { recursive: true });
-  const target = path.join(dataDir, "deployment-config.json");
-  const temp = path.join(dataDir, "deployment-config.json.tmp");
+export function saveDeploymentConfig(config, updatedBy = "setup-wizard", projectRoot = getProjectRoot()) {
+  const paths = getSetupPaths(projectRoot);
+  fs.mkdirSync(paths.dataRoot, { recursive: true });
+  const target = paths.deploymentConfig;
+  const temp = paths.deploymentConfigTemp;
   const record = {
     ...config,
     basePath: normalizeBasePath(config.basePath),
