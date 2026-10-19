@@ -1,0 +1,66 @@
+{
+  "name": "setup",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Herhangi bir GitHub reposundaki Node.js uygulamasını kullanıcı dostu web arayüzüyle kurup çalıştıran bağımsız kurulum eklentisi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sirrakadembasti/setup.git"
+  },
+  "homepage": "https://github.com/sirrakadembasti/setup#readme",
+  "bugs": {
+    "url": "https://github.com/sirrakadembasti/setup/issues"
+  },
+  "type": "module",
+  "bin": {
+    "setup": "bin/setup.mjs"
+  },
+  "exports": {
+    ".": "./scripts/setup-api.mjs",
+    "./detect": "./scripts/detect-project.mjs",
+    "./bootstrap": "./scripts/setup-bootstrap.mjs",
+    "./lib": "./scripts/setup-bootstrap-lib.mjs",
+    "./wizard": "./wizard/server.mjs",
+    "./version": "./scripts/version.mjs",
+    "./utils/project-paths": "./utils/project-paths.mjs",
+    "./utils/deployment-config": "./utils/deployment-config.mjs"
+  },
+  "scripts": {
+    "setup": "node scripts/setup-bootstrap.mjs",
+    "wizard": "node wizard/server.mjs",
+    "detect": "node scripts/detect-project.mjs",
+    "init": "node bin/setup.mjs init",
+    "version:get": "node scripts/version.mjs get",
+    "version:patch": "node scripts/version.mjs bump patch --tag",
+    "version:minor": "node scripts/version.mjs bump minor --tag",
+    "version:major": "node scripts/version.mjs bump major --tag",
+    "test": "node --test scripts/setup-bootstrap.test.mjs scripts/find-port-holder.test.mjs scripts/detect-project.test.mjs scripts/wizard.test.mjs"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "setup",
+    "installer",
+    "bootstrap",
+    "wizard",
+    "github",
+    "plugin"
+  ],
+  "license": "MIT"
+}

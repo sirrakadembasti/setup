@@ -1,0 +1,83 @@
+{
+  "name": "my-app",
+  "version": "1.0.0",
+  "description": "setup.config.json — bağımsız kurulum eklentisi yapılandırması (isteğe bağlı)",
+  "packageManager": "npm",
+  "ports": {
+    "bootstrap": 5049,
+    "wizard": 5050,
+    "app": 5000
+  },
+  "install": {
+    "command": "npm",
+    "args": ["install"],
+    "requireWorkspaces": false
+  },
+  "wizard": {
+    "enabled": true,
+    "title": "Uygulama Kurulum Sihirbazı",
+    "steps": [
+      {
+        "id": "server",
+        "title": "Sunucu ön kontrolü",
+        "fields": []
+      },
+      {
+        "id": "address",
+        "title": "Adres ve kurulum biçimi",
+        "fields": [
+          {
+            "name": "mode",
+            "label": "Kurulum biçimi",
+            "type": "select",
+            "options": ["localhost", "subdomain", "subpath"],
+            "default": "localhost",
+            "help": "Yerel deneme, alt alan adı veya alt yol"
+          },
+          {
+            "name": "publicUrl",
+            "label": "Herkese açık adres",
+            "type": "url",
+            "required": true,
+            "help": "Kullanıcının tarayıcıya yazacağı adres"
+          },
+          {
+            "name": "port",
+            "label": "Uygulama portu",
+            "type": "number",
+            "default": 5000
+          }
+        ]
+      },
+      {
+        "id": "admin",
+        "title": "İlk yönetici",
+        "fields": [
+          {
+            "name": "adminEmail",
+            "label": "Yönetici e-postası",
+            "type": "email",
+            "required": true
+          },
+          {
+            "name": "adminPassword",
+            "label": "Yönetici parolası",
+            "type": "password",
+            "required": true,
+            "minLength": 12
+          }
+        ]
+      },
+      {
+        "id": "apply",
+        "title": "Uygula",
+        "fields": []
+      }
+    ]
+  },
+  "paths": {
+    "env": ".env",
+    "dataDir": "data",
+    "lockFile": "data/installation.lock"
+  }
+}
