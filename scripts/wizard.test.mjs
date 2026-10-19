@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { buildServerEnv, hashAdminPassword, setupPayloadSchema, toDeploymentConfig, verifyAdminPassword } from "../wizard/config.mjs";
 import { buildDeploymentArtifacts } from "../utils/deployment-config.mjs";
 import { renderSetupPage } from "../wizard/ui.mjs";
-import { createSetupServer, sameOrigin } from "../wizard/server.mjs";
+import { createSetupServer, parseDotEnvFile, resolveAppStartInvocation, sameOrigin } from "../wizard/server.mjs";
 
 const VALID_PAYLOAD = {
   deployment: {
@@ -505,3 +506,138 @@ test("wizard/server E2E: package.json içindeki build ve migrate betikleri gerç
   assert.equal(stepMap2.buildClient.status, "skipped");
   assert.equal(stepMap2.migrate.status, "skipped");
 });
+
+test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişkenleriyle başlatır ve port açılana kadar bekler", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-startapp-"));
+
+  // Dinamik boş port bul (>= 1024)
+  const appPort = await new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const p = srv.address().port;
+      srv.close((err) => (err ? reject(err) : resolve(p)));
+    });
+  });
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({
+      name: "real-start-app",
+      scripts: {
+        start: "node index.mjs",
+      },
+    }),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(tmpRoot, "index.mjs"),
+    [
+      'import http from "node:http";',
+      "const port = Number(process.env.PORT || 5000);",
+      "const server = http.createServer((req, res) => {",
+      '  res.writeHead(200, { "Content-Type": "application/json" });',
+      "  res.end(JSON.stringify({ ok: true, port, adminEmail: process.env.ADMIN_EMAIL, db: process.env.DATABASE_URL }));",
+      "});",
+      'server.listen(port, "127.0.0.1");',
+    ].join("\n"),
+    "utf8",
+  );
+
+  // Birim kontrol: resolveAppStartInvocation
+  const inv = resolveAppStartInvocation(tmpRoot, null);
+  assert.ok(inv);
+  assert.equal(inv.cwd, tmpRoot);
+
+  const token = "wizard_secret_token_startapp_1234567";
+  const server = createSetupServer(token, { projectRoot: tmpRoot });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    if (typeof server.stopSpawnedApp === "function") {
+      await server.stopSpawnedApp();
+    }
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  const cookiePair = loginRes.headers.get("set-cookie").split(";")[0];
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const csrf = JSON.parse((await pageRes.text()).match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  const applyPayload = {
+    ...VALID_PAYLOAD,
+    server: { host: "127.0.0.1", port: appPort },
+    buildClient: false,
+  };
+
+  const applyRes = await fetch(`${baseUrl}/api/apply`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(applyPayload),
+  });
+  assert.equal(applyRes.status, 202);
+
+  let statusData;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
+    statusData = await sRes.json();
+    if (statusData.apply.status === "success" || statusData.apply.status === "error") break;
+  }
+  assert.equal(statusData.apply.status, "success");
+
+  // parseDotEnvFile birim kontrolü
+  const parsedEnv = parseDotEnvFile(path.join(tmpRoot, ".env"));
+  assert.equal(parsedEnv.PORT, String(appPort));
+  assert.equal(parsedEnv.ADMIN_EMAIL, VALID_PAYLOAD.admin.email);
+
+  // /api/start-app çağrısı
+  const startRes = await fetch(`${baseUrl}/api/start-app`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  assert.equal(startRes.status, 200);
+  const startBody = await startRes.json();
+  assert.equal(startBody.reachable, true);
+  assert.equal(typeof startBody.pid, "number");
+
+  // Başlatılan uygulamaya gerçek HTTP isteği
+  const appRes = await fetch(`http://127.0.0.1:${appPort}/`);
+  assert.equal(appRes.status, 200);
+  const appData = await appRes.json();
+  assert.equal(appData.ok, true);
+  assert.equal(appData.port, appPort);
+  assert.equal(appData.adminEmail, VALID_PAYLOAD.admin.email);
+  assert.equal(appData.db, "file:./data/app.db");
+
+  // İkinci kez /api/start-app çağrıldığında "Uygulama zaten çalışıyor." dönmeli
+  const startAgainRes = await fetch(`${baseUrl}/api/start-app`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  assert.equal(startAgainRes.status, 200);
+  const startAgainBody = await startAgainRes.json();
+  assert.equal(startAgainBody.reachable, true);
+  assert.equal(startAgainBody.message, "Uygulama zaten çalışıyor.");
+});
+

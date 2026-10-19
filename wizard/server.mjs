@@ -8,7 +8,7 @@ import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, saveDeploymentConfig } from "../utils/deployment-config.mjs";
-import { getSetupPaths } from "../scripts/setup-bootstrap-lib.mjs";
+import { getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
 import { detectPackageManager, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
@@ -86,6 +86,95 @@ function readJsonFileSafe(filePath) {
   } catch {
     return null;
   }
+}
+
+export function parseDotEnvFile(envFilePath) {
+  const vars = {};
+  if (!envFilePath || !fs.existsSync(envFilePath)) return vars;
+  let content = "";
+  try {
+    content = fs.readFileSync(envFilePath, "utf8");
+  } catch {
+    return vars;
+  }
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    const key = match[1];
+    let val = match[2].trim();
+    if (val.startsWith('"') && val.endsWith('"')) {
+      try {
+        val = JSON.parse(val);
+      } catch {
+        val = val.slice(1, -1);
+      }
+    } else if (val.startsWith("'") && val.endsWith("'")) {
+      val = val.slice(1, -1);
+    }
+    vars[key] = String(val);
+  }
+  return vars;
+}
+
+function scriptToInvocation(scriptStr, pm, scriptName, cwd) {
+  const directNodeMatch = String(scriptStr || "").trim().match(/^node\s+([^\s&|;"']+)(?:\s+(.*))?$/);
+  if (directNodeMatch) {
+    const extraArgs = directNodeMatch[2] ? directNodeMatch[2].trim().split(/\s+/).filter(Boolean) : [];
+    return {
+      command: process.execPath,
+      args: [directNodeMatch[1], ...extraArgs],
+      cwd,
+    };
+  }
+  return pmRunInvocation(pm, scriptName, cwd);
+}
+
+export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
+  const root = path.resolve(projectRoot);
+  const cfg = setupConfig ?? loadSetupConfig(root);
+  if (cfg?.start?.command && typeof cfg.start.command === "string") {
+    return {
+      command: cfg.start.command,
+      args: Array.isArray(cfg.start.args) ? cfg.start.args : [],
+      cwd: root,
+    };
+  }
+
+  const rootPkg = readJsonFileSafe(path.join(root, "package.json"));
+  const serverPkg = readJsonFileSafe(path.join(root, "server", "package.json"));
+  const pm = cfg?.packageManager || detectPackageManager(root, rootPkg);
+
+  if (serverPkg?.scripts?.start) {
+    return scriptToInvocation(serverPkg.scripts.start, pm, "start", path.join(root, "server"));
+  }
+  if (rootPkg?.scripts?.start) {
+    return scriptToInvocation(rootPkg.scripts.start, pm, "start", root);
+  }
+  if (rootPkg?.scripts?.dev) {
+    return scriptToInvocation(rootPkg.scripts.dev, pm, "dev", root);
+  }
+
+  const entryCandidates = [
+    "server/index.mjs",
+    "server/index.js",
+    "index.mjs",
+    "index.js",
+    "server.js",
+    "app.js",
+  ];
+  for (const relEntry of entryCandidates) {
+    if (fs.existsSync(path.join(root, relEntry))) {
+      return {
+        command: process.execPath,
+        args: [relEntry],
+        cwd: root,
+      };
+    }
+  }
+
+  return null;
 }
 
 function runCommand(command, args, cwd, extraEnv = {}) {
@@ -232,6 +321,7 @@ export function createSetupServer(token, options = {}) {
   const sessionValue = crypto.createHmac("sha256", token).update("setup-wizard-session").digest("hex");
   const csrfToken = crypto.createHmac("sha256", token).update("setup-wizard-csrf").digest("hex");
   const applyJob = createApplyState();
+  let appChild = null;
 
   const rateBuckets = new Map();
   function checkRateLimit(key, limit, windowMs) {
@@ -494,9 +584,55 @@ export function createSetupServer(token, options = {}) {
         if (applyJob.status !== "success" && !fs.existsSync(lockPath)) {
           return sendJson(res, 409, { message: "Uygulamayı başlatmadan önce kurulum adımlarını tamamlayın." });
         }
+        const appPort = applyJob.appPort || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
+        if (await isPortOpen(appPort)) {
+          return sendJson(res, 200, {
+            message: "Uygulama zaten çalışıyor.",
+            reachable: true,
+            pid: appChild?.pid ?? null,
+            loginUrl: applyJob.loginUrl,
+            publicUrl: applyJob.publicUrl,
+          });
+        }
+
+        if (!appChild || appChild.exitCode !== null || appChild.killed) {
+          const invocation = options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
+          if (!invocation) {
+            return sendJson(res, 409, {
+              message: "Hedef projede başlatma komutu (scripts.start veya giriş dosyası) bulunamadı.",
+              reachable: false,
+            });
+          }
+          const dotEnvVars = parseDotEnvFile(envPath);
+          const childEnv = { ...process.env, ...dotEnvVars, PORT: String(appPort) };
+          appChild = spawn(invocation.command, invocation.args, {
+            cwd: invocation.cwd || projectRoot,
+            env: childEnv,
+            detached: process.platform !== "win32",
+            windowsHide: true,
+            stdio: "ignore",
+          });
+          appChild.on("error", () => {});
+          appChild.unref();
+        }
+
+        for (let i = 0; i < 16; i++) {
+          await new Promise((r) => setTimeout(r, 200));
+          if (await isPortOpen(appPort)) {
+            return sendJson(res, 200, {
+              message: "Uygulama başlatıldı ve bağlantıya hazır.",
+              reachable: true,
+              pid: appChild?.pid ?? null,
+              loginUrl: applyJob.loginUrl,
+              publicUrl: applyJob.publicUrl,
+            });
+          }
+        }
+
         return sendJson(res, 202, {
           message: "Başlatıldı ancak port henüz açılmadı. Birkaç saniye sonra tekrar denetleyin.",
           reachable: false,
+          pid: appChild?.pid ?? null,
           loginUrl: applyJob.loginUrl,
           publicUrl: applyJob.publicUrl,
         });
@@ -553,6 +689,32 @@ export function createSetupServer(token, options = {}) {
 
     return sendJson(res, 404, { message: "Uç nokta bulunamadı." });
   });
+
+  server.stopSpawnedApp = async () => {
+    if (!appChild) return;
+    const child = appChild;
+    const pid = child.pid;
+    appChild = null;
+    const exitPromise =
+      child.exitCode !== null
+        ? Promise.resolve()
+        : new Promise((resolve) => {
+            const timer = setTimeout(resolve, 1500);
+            child.once("exit", () => {
+              clearTimeout(timer);
+              resolve();
+            });
+          });
+    try {
+      child.kill();
+    } catch {}
+    if (process.platform !== "win32" && pid) {
+      try {
+        process.kill(-pid, "SIGTERM");
+      } catch {}
+    }
+    await exitPromise;
+  };
 
   return server;
 }
