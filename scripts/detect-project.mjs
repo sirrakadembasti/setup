@@ -287,6 +287,20 @@ function detectRuntimeArtifacts(root) {
   };
 }
 
+function detectEnvExamplePort(runtime) {
+  const vars = runtime?.envExample?.variables;
+  if (!Array.isArray(vars)) return null;
+  for (const item of vars) {
+    if (item && (item.key === "PORT" || item.key === "APP_PORT")) {
+      const p = Number.parseInt(String(item.defaultValue || "").trim(), 10);
+      if (Number.isInteger(p) && p >= 1024 && p <= 65535) {
+        return p;
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Kurulum eklentisinin çalıştığı kök dizini ve içeriğini analiz eder.
  * @param {string} root - hedef uygulama kök dizini (varsayılan: process.cwd())
@@ -338,7 +352,7 @@ export function detectProject(root = process.cwd()) {
     ports: {
       bootstrap: Number(process.env.SETUP_BOOTSTRAP_PORT) || Number(cfgPorts.bootstrap) || DEFAULT_PORTS.bootstrap,
       wizard: Number(process.env.SETUP_WIZARD_PORT) || Number(cfgPorts.wizard) || DEFAULT_PORTS.wizard,
-      app: Number(process.env.SETUP_APP_PORT) || Number(cfgPorts.app) || DEFAULT_PORTS.app,
+      app: Number(process.env.SETUP_APP_PORT) || Number(cfgPorts.app) || detectEnvExamplePort(runtime) || DEFAULT_PORTS.app,
     },
     confidence: kind === "unknown" || kind === "directory" ? 0 : workspaces.isWorkspace ? 1 : 0.85,
   };

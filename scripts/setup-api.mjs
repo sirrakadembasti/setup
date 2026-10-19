@@ -37,7 +37,7 @@ export async function inspect(root = process.cwd()) {
  * Herhangi bir GitHub reposuna setup.config.json yapılandırmasını ve
  * isteğe bağlı package.json kurulum betiklerini entegre eder.
  * @param {string} root
- * @param {{ overwrite?: boolean, updatePackageJson?: boolean }} options
+ * @param {{ overwrite?: boolean, updatePackageJson?: boolean, setupBin?: string }} options
  */
 export function initProject(root = process.cwd(), options = {}) {
   const resolved = path.resolve(root);
@@ -60,6 +60,16 @@ export function initProject(root = process.cwd(), options = {}) {
   const dataDir = hasServerSubdir ? "server/data" : "data";
   const lockFile = `${dataDir}/installation.lock`;
 
+  const pkgPath = path.join(resolved, "package.json");
+  let existingPkg = null;
+  if (fs.existsSync(pkgPath)) {
+    try {
+      existingPkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    } catch {
+      existingPkg = null;
+    }
+  }
+
   const config = {
     name: detection.projectName,
     version: "1.0.0",
@@ -75,6 +85,14 @@ export function initProject(root = process.cwd(), options = {}) {
       args: installArgs,
       requireWorkspaces: detection.workspaces.isWorkspace,
     },
+    ...(existingPkg?.scripts?.start
+      ? {
+          start: {
+            command: pm,
+            args: ["run", "start"],
+          },
+        }
+      : {}),
     wizard: {
       enabled: true,
       title: `${detection.projectName} Kurulum Sihirbazı`,
@@ -89,15 +107,43 @@ export function initProject(root = process.cwd(), options = {}) {
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
   let packageJsonUpdated = false;
-  const pkgPath = path.join(resolved, "package.json");
-  if (options.updatePackageJson && fs.existsSync(pkgPath)) {
+  if (options.updatePackageJson && existingPkg) {
     try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      const pkg = existingPkg;
       pkg.scripts = pkg.scripts || {};
-      if (!pkg.scripts.setup) {
+      const setupRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1")), "..");
+      const relSetupRoot = path.relative(resolved, setupRoot);
+      const isEmbeddedSubdir =
+        setupRoot !== resolved &&
+        relSetupRoot !== "" &&
+        !relSetupRoot.startsWith("..") &&
+        !path.isAbsolute(relSetupRoot);
+
+      if (typeof options.setupBin === "string" && options.setupBin.trim()) {
+        const binPath = options.setupBin.trim().replaceAll("\\", "/");
+        if (!pkg.scripts.setup) {
+          pkg.scripts.setup = `node ${binPath}`;
+          packageJsonUpdated = true;
+        }
+        if (!pkg.scripts.wizard) {
+          pkg.scripts.wizard = `node ${binPath} wizard`;
+          packageJsonUpdated = true;
+        }
+      } else if (isEmbeddedSubdir) {
+        const relBin = path.relative(resolved, path.join(setupRoot, "bin", "setup.mjs")).replaceAll(path.sep, "/");
+        if (!pkg.scripts.setup) {
+          pkg.scripts.setup = `node ${relBin} setup`;
+          packageJsonUpdated = true;
+        }
+        if (!pkg.scripts.wizard) {
+          pkg.scripts.wizard = `node ${relBin} wizard`;
+          packageJsonUpdated = true;
+        }
+      } else if (!pkg.scripts.setup) {
         pkg.scripts.setup = "setup";
         packageJsonUpdated = true;
       }
+
       if (packageJsonUpdated) {
         fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
       }

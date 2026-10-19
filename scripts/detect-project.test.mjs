@@ -83,11 +83,37 @@ test("tek dizinli GitHub reposu (npm + .env.example) algılanır ve setup init i
   assert.equal(envEx.variables[0].key, "PORT");
   assert.equal(envEx.variables[0].defaultValue, "3000");
 
+  const detected = detectProject(dir);
+  assert.equal(detected.ports.app, 3000);
+
   const initRes = initProject(dir, { updatePackageJson: true });
   assert.equal(initRes.created, true);
   assert.equal(fs.existsSync(path.join(dir, "setup.config.json")), true);
+  const writtenConfig = JSON.parse(fs.readFileSync(path.join(dir, "setup.config.json"), "utf8"));
+  assert.equal(writtenConfig.ports.app, 3000);
+  assert.deepEqual(writtenConfig.start, { command: "npm", args: ["run", "start"] });
   const updatedPkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
   assert.equal(updatedPkg.scripts.setup, "setup");
+});
+
+test("initProject setupBin seçeneği ile gömülü (submodule) kurulum betiklerini yazar", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "embedded-setup-app", scripts: { start: "node index.js" } }),
+    "utf8",
+  );
+
+  const initRes = initProject(dir, {
+    updatePackageJson: true,
+    setupBin: "tools/setup/bin/setup.mjs",
+  });
+  assert.equal(initRes.created, true);
+  assert.equal(initRes.packageJsonUpdated, true);
+  const updatedPkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+  assert.equal(updatedPkg.scripts.setup, "node tools/setup/bin/setup.mjs");
+  assert.equal(updatedPkg.scripts.wizard, "node tools/setup/bin/setup.mjs wizard");
 });
 
 test("kurulum artıkları evidence alanına yazılır ve sürümleme v1.0.0 çalışır", (t) => {

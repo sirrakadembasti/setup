@@ -63,13 +63,32 @@ if errorlevel 1 (
   )
 )
 
-where npm >nul 2>&1
+set "PM_NAME=npm"
+if exist "pnpm-lock.yaml" (
+  set "PM_NAME=pnpm"
+) else if exist "pnpm-workspace.yaml" (
+  set "PM_NAME=pnpm"
+) else if exist "yarn.lock" (
+  set "PM_NAME=yarn"
+) else if exist "bun.lockb" (
+  set "PM_NAME=bun"
+) else if exist "bun.lock" (
+  set "PM_NAME=bun"
+)
+
+where !PM_NAME! >nul 2>&1
 if errorlevel 1 (
-  echo [EKSİK] Paket yöneticisi (npm) bulunamadı.
-  set "HAS_ERROR=1"
+  where npm >nul 2>&1
+  if errorlevel 1 (
+    echo [EKSİK] Paket yöneticisi (!PM_NAME! / npm) bulunamadı.
+    set "HAS_ERROR=1"
+  ) else (
+    for /f "delims=" %%V in ('npm --version 2^>nul') do set "NPM_VERSION=%%V"
+    echo [TAMAM] npm !NPM_VERSION! (!PM_NAME! bulunamadı, npm kullanılacak)
+  )
 ) else (
-  for /f "delims=" %%V in ('npm --version 2^>nul') do set "NPM_VERSION=%%V"
-  echo [TAMAM] npm !NPM_VERSION!
+  for /f "delims=" %%V in ('!PM_NAME! --version 2^>nul') do set "PM_VERSION=%%V"
+  echo [TAMAM] !PM_NAME! !PM_VERSION!
 )
 
 if "%HAS_ERROR%"=="1" goto :requirements
