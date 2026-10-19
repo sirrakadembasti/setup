@@ -73,6 +73,7 @@ export function getSetupPaths(projectRoot) {
     pending: path.join(dataRoot, "installation.pending"),
     deploymentConfig: path.join(dataRoot, "deployment-config.json"),
     deploymentConfigTemp: path.join(dataRoot, "deployment-config.json.tmp"),
+    adminConfig: path.join(dataRoot, "admin.json"),
     setupArtifacts: path.join(dataRoot, "setup-artifacts"),
     nodeModules: path.join(root, "node_modules"),
     pnpmStore: path.join(root, "node_modules", ".pnpm"),
@@ -239,6 +240,7 @@ function backupItems(paths) {
     { source: paths.lock, destination: prefix(path.join("data", "installation.lock")) },
     { source: paths.pending, destination: prefix(path.join("data", "installation.pending")) },
     { source: paths.deploymentConfig, destination: prefix(path.join("data", "deployment-config.json")) },
+    { source: paths.adminConfig, destination: prefix(path.join("data", "admin.json")) },
     { source: paths.setupArtifacts, destination: prefix(path.join("data", "setup-artifacts")) },
     { source: paths.uploadsRoot, destination: prefix("uploads") },
   ];
@@ -351,6 +353,7 @@ export function resetInstallation(projectRoot, options = {}) {
     paths.pending,
     paths.deploymentConfig,
     paths.deploymentConfigTemp,
+    paths.adminConfig,
     paths.setupArtifacts,
   ];
   for (const target of removable) {

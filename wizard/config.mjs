@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { normalizeBasePath, parseDeploymentConfig } from "../utils/deployment-config.mjs";
 
 export class ValidationError extends Error {
@@ -120,7 +120,24 @@ export function createSessionSecret() {
   return randomBytes(64).toString("hex");
 }
 
-export function buildServerEnv(payload, sessionSecret = createSessionSecret(), databaseUrl = "file:../data/app.db") {
+export function hashAdminPassword(password, salt = randomBytes(16).toString("hex")) {
+  const derivedHex = scryptSync(String(password), salt, 64).toString("hex");
+  return `scrypt$${salt}$${derivedHex}`;
+}
+
+export function verifyAdminPassword(password, storedHash) {
+  if (typeof storedHash !== "string") return false;
+  const parts = storedHash.split("$");
+  if (parts.length !== 3 || parts[0] !== "scrypt") return false;
+  const [, salt, expectedHex] = parts;
+  if (!salt || !expectedHex || !/^[0-9a-f]+$/i.test(expectedHex) || expectedHex.length % 2 !== 0) return false;
+  const actualBuf = scryptSync(String(password ?? ""), salt, expectedHex.length / 2);
+  const expectedBuf = Buffer.from(expectedHex, "hex");
+  if (actualBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(actualBuf, expectedBuf);
+}
+
+export function buildServerEnv(payload, sessionSecret = createSessionSecret(), databaseUrl = "file:../data/app.db", extraEnvVars = []) {
   const deployment = payload.deployment;
   const basePath = normalizeBasePath(deployment.basePath);
   const publicAppUrl = `${deployment.publicUrl}${basePath === "/" ? "" : basePath}`;
@@ -131,6 +148,31 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     emailLogDays: 90,
     passwordResetDays: 90,
   };
+  const writtenKeys = new Set([
+    "DATABASE_URL",
+    "SESSION_SECRET",
+    "NODE_ENV",
+    "HOST",
+    "PORT",
+    "FRONTEND_URL",
+    "APP_BASE_PATH",
+    "ALLOWED_ORIGINS",
+    "TRUST_PROXY_HOPS",
+    "ALLOW_RUNTIME_DEPLOYMENT_CHANGES",
+    "RETENTION_ENABLED",
+    "RETENTION_ACTION_LOG_DAYS",
+    "RETENTION_READ_NOTIFICATION_DAYS",
+    "RETENTION_EMAIL_LOG_DAYS",
+    "RETENTION_PASSWORD_RESET_DAYS",
+    "EMAIL_PORT",
+    "EMAIL_USER",
+    "EMAIL_PASS",
+    "EMAIL_FROM",
+    "EMAIL_FROM_NAME",
+    "EMAIL_CONNECTION_TIMEOUT",
+    "EMAIL_GREETING_TIMEOUT",
+    "EMAIL_SOCKET_TIMEOUT",
+  ]);
   const lines = [
     "# setup kurulum sihirbazı tarafından oluşturuldu.",
     "# Gizli değerleri Git'e eklemeyin.",
@@ -149,8 +191,21 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     `RETENTION_READ_NOTIFICATION_DAYS=${retention.readNotificationDays}`,
     `RETENTION_EMAIL_LOG_DAYS=${retention.emailLogDays}`,
     `RETENTION_PASSWORD_RESET_DAYS=${retention.passwordResetDays}`,
-    "EMAIL_PORT=587",
   ];
+
+  if (payload.admin) {
+    const passwordHash = payload.admin.passwordHash || hashAdminPassword(payload.admin.password);
+    lines.push(
+      `ADMIN_NAME=${envValue(payload.admin.name)}`,
+      `ADMIN_EMAIL=${envValue(payload.admin.email)}`,
+      `ADMIN_PASSWORD_HASH=${envValue(passwordHash)}`,
+    );
+    writtenKeys.add("ADMIN_NAME");
+    writtenKeys.add("ADMIN_EMAIL");
+    writtenKeys.add("ADMIN_PASSWORD_HASH");
+  }
+
+  lines.push("EMAIL_PORT=587");
 
   if (payload.email.enabled) {
     lines.push(
@@ -167,6 +222,24 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     "EMAIL_CONNECTION_TIMEOUT=10000",
     "EMAIL_GREETING_TIMEOUT=10000",
     "EMAIL_SOCKET_TIMEOUT=20000",
+  );
+
+  if (Array.isArray(extraEnvVars)) {
+    for (const item of extraEnvVars) {
+      if (!item || typeof item !== "object") continue;
+      const { key, defaultValue, description } = item;
+      if (typeof key !== "string" || writtenKeys.has(key) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        continue;
+      }
+      if (description) {
+        lines.push(`# ${String(description).replace(/[\r\n]+/g, " ")}`);
+      }
+      lines.push(`${key}=${envValue(defaultValue ?? "")}`);
+      writtenKeys.add(key);
+    }
+  }
+
+  lines.push(
     `# Uygulama adresi: ${publicAppUrl}`,
     "",
   );

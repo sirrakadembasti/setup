@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths } from "../scripts/setup-bootstrap-lib.mjs";
-import { loadSetupConfig } from "../scripts/detect-project.mjs";
-import { buildServerEnv, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
+import { loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
+import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
 
 function digest(value) {
@@ -207,7 +207,14 @@ export function createSetupServer(token, options = {}) {
       throw new Error("Başka bir kurulum işlemi çalışıyor veya önceki işlem yarım kaldı.");
     }
 
-    const envText = buildServerEnv(payload, undefined, databaseUrl);
+    const passwordHash = hashAdminPassword(payload.admin.password);
+    const envExample = parseEnvExample(projectRoot);
+    const envText = buildServerEnv(
+      { ...payload, admin: { ...payload.admin, passwordHash } },
+      undefined,
+      databaseUrl,
+      envExample.variables,
+    );
     const temporaryEnv = `${envPath}.setup-${process.pid}`;
     const summary = [];
     const appUrl = publicAppUrl(payload);
@@ -236,6 +243,11 @@ export function createSetupServer(token, options = {}) {
       summary.push("Veritabanı migration'ları uygulandı.");
 
       markStep("admin", "running");
+      fs.writeFileSync(
+        path.join(dataRoot, "admin.json"),
+        `${JSON.stringify({ name: payload.admin.name, email: payload.admin.email, passwordHash, createdAt: new Date().toISOString() }, null, 2)}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
       markStep("admin", "done", payload.admin.email);
       summary.push("İlk yönetici hesabı oluşturuldu.");
 
@@ -244,7 +256,7 @@ export function createSetupServer(token, options = {}) {
       process.env.SETUP_PROJECT_ROOT = projectRoot;
       try {
         const config = saveDeploymentConfig(toDeploymentConfig(payload), "setup-wizard", projectRoot);
-        const artifacts = buildDeploymentArtifacts(config);
+        const artifacts = buildDeploymentArtifacts(config, payload.server.port);
         fs.mkdirSync(artifactRoot, { recursive: true });
         fs.writeFileSync(path.join(artifactRoot, "nginx.conf.example"), `${artifacts.nginxText}\n`, "utf8");
         fs.writeFileSync(path.join(artifactRoot, "deployment.env.example"), `${artifacts.envText}\n`, "utf8");

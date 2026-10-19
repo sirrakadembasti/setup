@@ -88,11 +88,12 @@ export function saveDeploymentConfig(config, updatedBy = "setup-wizard", project
   return record;
 }
 
-export function buildDeploymentArtifacts(config) {
+export function buildDeploymentArtifacts(config, appPort = 5000) {
   const basePath = normalizeBasePath(config.basePath);
   const parsedUrl = new URL(config.publicUrl);
   const serverName = parsedUrl.hostname || "localhost";
   const locationPath = basePath === "/" ? "/" : `${basePath}/`;
+  const port = Number(appPort) || Number(config?.port) || 5000;
   const nginxText = [
     "# Otomatik üretilen örnek Nginx yapılandırması",
     "server {",
@@ -100,7 +101,7 @@ export function buildDeploymentArtifacts(config) {
     `    server_name ${serverName};`,
     "",
     `    location ${locationPath} {`,
-    "        proxy_pass http://127.0.0.1:5000;",
+    `        proxy_pass http://127.0.0.1:${port};`,
     "        proxy_http_version 1.1;",
     "        proxy_set_header Host $host;",
     "        proxy_set_header X-Real-IP $remote_addr;",
