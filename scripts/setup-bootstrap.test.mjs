@@ -225,3 +225,49 @@ test("stopPortProcess dinleyen süreci durdurur", async (t) => {
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.equal(findListeningProcess(port), null);
 });
+
+test("setup-bootstrap --check-only static-web (Senaryo 2) dizininde packagesReady=true döndürür", async (t) => {
+  const { spawnSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-static-web-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "index.html"), "<!doctype html><html><body>Hello</body></html>\n", "utf8");
+
+  const bootstrapScript = path.join(process.cwd(), "scripts", "setup-bootstrap.mjs");
+  const res = spawnSync(process.execPath, [bootstrapScript, "--check-only"], {
+    env: { ...process.env, SETUP_PROJECT_ROOT: root },
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.equal(res.status, 0, res.stderr);
+  const status = JSON.parse(res.stdout);
+  assert.equal(status.kind, "static-web");
+  assert.equal(status.scenario?.number, 2);
+  assert.equal(status.packagesReady, true);
+  assert.equal(status.installation?.dependencies?.ready, true);
+});
+
+test("setup-bootstrap --check-only python-server (Senaryo 4) dizininde senaryo ve Python kurulum planını döndürür", async (t) => {
+  const { spawnSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-python-srv-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "requirements.txt"), "fastapi==0.115.0\n", "utf8");
+  fs.writeFileSync(path.join(root, "app.py"), "print('ok')\n", "utf8");
+
+  const bootstrapScript = path.join(process.cwd(), "scripts", "setup-bootstrap.mjs");
+  const res = spawnSync(process.execPath, [bootstrapScript, "--check-only"], {
+    env: { ...process.env, SETUP_PROJECT_ROOT: root },
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.equal(res.status, 0, res.stderr);
+  const status = JSON.parse(res.stdout);
+  assert.equal(status.kind, "python-server");
+  assert.equal(status.scenario?.number, 4);
+  assert.equal(status.packagesReady, false);
+  assert.ok(Array.isArray(status.plan?.steps), "plan.steps dizi olmalı");
+  assert.ok(
+    status.plan.steps.some((step) => step.id === "dependencies" && /Python|pip/i.test(step.label)),
+    "plan.steps Python bağımlılık adımını içermeli",
+  );
+});
+
