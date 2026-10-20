@@ -10,6 +10,7 @@
  *   node bin/setup.mjs version      # sürüm bilgisini göster (v1.0.0)
  *   node bin/setup.mjs --root PATH  # hedef dizin
  */
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -21,7 +22,7 @@ const VALID_COMMANDS = new Set(["detect", "plan", "setup", "wizard", "init", "ve
 const PASSTHROUGH_FLAGS = new Set(["--no-open", "--check-only", "--force"]);
 
 export function parseArgs(argv) {
-  const args = { command: "setup", root: process.cwd(), force: false, port: null, dataDir: null, error: null };
+  const args = { command: "setup", root: process.cwd(), force: false, launchers: false, port: null, dataDir: null, error: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--root") {
@@ -47,6 +48,8 @@ export function parseArgs(argv) {
         return args;
       }
       args.dataDir = path.resolve(argv[++i]);
+    } else if (a === "--launchers") {
+      args.launchers = true;
     } else if (a === "--help" || a === "-h") {
       args.command = "help";
     } else if (a === "--version" || a === "-v") {
@@ -112,7 +115,7 @@ function main() {
     return;
   }
   if (args.command === "init") {
-    const res = initProject(args.root, { overwrite: args.force, updatePackageJson: true });
+    const res = initProject(args.root, { overwrite: args.force, updatePackageJson: true, createLaunchers: args.launchers });
     console.log(`[setup] ${res.message}`);
     process.exit(res.created ? 0 : 1);
     return;
@@ -129,6 +132,13 @@ function main() {
 
   console.log(`[setup v${getVersion()}] Proje: ${detection.projectName} (${detection.kind}, paket yöneticisi: ${detection.packageManager})`);
   console.log(`[setup] Kök: ${detection.root}`);
+  if (plan.canInstall && !fs.existsSync(path.join(detection.root, "setup.config.json"))) {
+    initProject(detection.root, { overwrite: false, updatePackageJson: false });
+    console.log(`[setup] Otomatik tanı: ${detection.scenario.label}`);
+    console.log("[setup] setup.config.json otomatik oluşturuldu.");
+  } else {
+    console.log(`[setup] Algılanan Mimari: ${detection.scenario.label}`);
+  }
   console.log("[setup] Plan:");
   for (const step of plan.steps) {
     console.log(`  - ${step.label}`);

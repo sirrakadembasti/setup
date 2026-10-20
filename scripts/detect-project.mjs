@@ -368,6 +368,85 @@ function detectEnvExamplePort(runtime) {
   return null;
 }
 
+export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
+  if (kind === "electron-desktop" || kind === "tauri-desktop" || stack.electron || stack.tauri) {
+    return {
+      id: "scenario-5-desktop",
+      number: 5,
+      label: "Senaryo 5: Masaüstü Uygulaması (Electron / Tauri)",
+      summary: "Masaüstü uygulama ortamı, yerel veri dizini ve IPC/Sidecar kurulumu.",
+      requiresDependencies: true,
+      requiresDatabase: Boolean(stack.prisma || stack.hasServerSubdir),
+      requiresAdmin: false,
+      isStaticOnly: false,
+      isDesktop: true,
+    };
+  }
+  if (
+    ["python-server", "go-server", "dotnet-server", "php-server"].includes(kind) ||
+    stack.fastify ||
+    stack.koa ||
+    stack.hono
+  ) {
+    return {
+      id: "scenario-4-polyglot",
+      number: 4,
+      label: "Senaryo 4: Çoklu Dil / Özel Sunucu Uygulaması (Python / Go / .NET / PHP / Fastify / Koa / Hono)",
+      summary: "Dile özgü bağımlılık kurulumu, .env ve yönetici yapılandırması ve servis başlatma.",
+      requiresDependencies: true,
+      requiresDatabase: true,
+      requiresAdmin: true,
+      isStaticOnly: false,
+      isDesktop: false,
+    };
+  }
+  if (
+    ["workspace-fullstack", "node-fullstack", "ssr-fullstack"].includes(kind) ||
+    stack.ssrFramework ||
+    (workspaces?.isWorkspace && stack.nodeServer)
+  ) {
+    return {
+      id: "scenario-3-fullstack",
+      number: 3,
+      label: "Senaryo 3: Full-Stack / SSR veya Monorepo Uygulaması (Next.js / Nuxt / SvelteKit / Astro / Workspace)",
+      summary: "Bağımlılık kurulumu, veritabanı migration, istemci/sunucu üretim derlemesi ve tam yığın başlatma.",
+      requiresDependencies: true,
+      requiresDatabase: true,
+      requiresAdmin: true,
+      isStaticOnly: false,
+      isDesktop: false,
+    };
+  }
+  if (
+    kind === "static-web" ||
+    kind === "node-client" ||
+    (!stack.nodeServer && (stack.client || stack.vite || stack.staticHtml))
+  ) {
+    return {
+      id: "scenario-2-spa-static",
+      number: 2,
+      label: "Senaryo 2: Tek Sayfalık (SPA) ve Statik Web Uygulaması (React / Vue / Vite / HTML)",
+      summary: "Tarayıcıda çalışan statik/SPA uygulama; gizli anahtar sızdırmadan runtime-config.json üretimi ve önizleme sunucusu.",
+      requiresDependencies: kind !== "static-web",
+      requiresDatabase: false,
+      requiresAdmin: false,
+      isStaticOnly: true,
+      isDesktop: false,
+    };
+  }
+  return {
+    id: "scenario-1-node-server",
+    number: 1,
+    label: "Senaryo 1: Express.js / Node.js Sunucu Uygulaması",
+    summary: "Node.js sunucu bağımlılıkları, .env ve veritabanı hazırlığı, ilk yönetici hesabı ve sunucu başlatma.",
+    requiresDependencies: true,
+    requiresDatabase: true,
+    requiresAdmin: true,
+    isStaticOnly: false,
+    isDesktop: false,
+  };
+}
+
 /**
  * Kurulum eklentisinin çalıştığı kök dizini ve içeriğini analiz eder.
  * @param {string} root - hedef uygulama kök dizini (varsayılan: process.cwd())
@@ -410,11 +489,13 @@ export function detectProject(root = process.cwd()) {
     path.basename(resolved).toLowerCase().replace(/[^a-z0-9._-]+/g, "-") ||
     "app";
 
+  const scenario = detectScenarioProfile(kind, stack, workspaces);
   const cfgPorts = setupConfig?.ports || {};
   return {
     root: resolved,
     projectName,
     kind,
+    scenario,
     packageManager: workspaces.packageManager,
     hasPackageJson: validPkg,
     packageJsonExists: exists(resolved, "package.json"),

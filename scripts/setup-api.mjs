@@ -4,10 +4,10 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { buildInstallPlan, detectPackageManager, detectProject, DEFAULT_PORTS, loadSetupConfig, parseEnvExample } from "./detect-project.mjs";
+import { buildInstallPlan, detectPackageManager, detectProject, detectScenarioProfile, DEFAULT_PORTS, loadSetupConfig, parseEnvExample } from "./detect-project.mjs";
 import { getVersion, parseSemver } from "./version.mjs";
 
-export { buildInstallPlan, detectPackageManager, detectProject, DEFAULT_PORTS, loadSetupConfig, parseEnvExample };
+export { buildInstallPlan, detectPackageManager, detectProject, detectScenarioProfile, DEFAULT_PORTS, loadSetupConfig, parseEnvExample };
 export { getVersion, parseSemver };
 export {
   CLEAN_INSTALL_CONFIRMATION,
@@ -151,6 +151,11 @@ export function initProject(root = process.cwd(), options = {}) {
     name: detection.projectName,
     version: "1.0.0",
     description: `${detection.projectName} otomatik kurulum yapılandırması`,
+    scenario: {
+      id: detection.scenario.id,
+      number: detection.scenario.number,
+      label: detection.scenario.label,
+    },
     packageManager: pm,
     ports: {
       bootstrap: detection.ports.bootstrap,
@@ -218,10 +223,57 @@ export function initProject(root = process.cwd(), options = {}) {
     }
   }
 
+  let launchersCreated = false;
+  if (options.createLaunchers === true) {
+    const batPath = path.join(resolved, "kurulum.bat");
+    const shPath = path.join(resolved, "kurulum.sh");
+    if (!fs.existsSync(batPath) || options.overwrite) {
+      const batContent = [
+        "@echo off",
+        "setlocal EnableExtensions",
+        "chcp 65001 >nul",
+        "cd /d \"%~dp0\"",
+        "if exist \"tools\\setup\\bin\\setup.mjs\" (",
+        "  node \"tools\\setup\\bin\\setup.mjs\" %*",
+        ") else if exist \"node_modules\\setup\\bin\\setup.mjs\" (",
+        "  node \"node_modules\\setup\\bin\\setup.mjs\" %*",
+        ") else (",
+        "  npx --yes github:sirrakadembasti/setup %*",
+        ")",
+        "",
+      ].join("\r\n");
+      fs.writeFileSync(batPath, batContent, "utf8");
+      launchersCreated = true;
+    }
+    if (!fs.existsSync(shPath) || options.overwrite) {
+      const shContent = [
+        "#!/usr/bin/env sh",
+        "set -u",
+        "cd \"$(dirname \"$0\")\" || exit 1",
+        "if [ -f \"tools/setup/bin/setup.mjs\" ]; then",
+        "  exec node \"tools/setup/bin/setup.mjs\" \"$@\"",
+        "elif [ -f \"node_modules/setup/bin/setup.mjs\" ]; then",
+        "  exec node \"node_modules/setup/bin/setup.mjs\" \"$@\"",
+        "else",
+        "  exec npx --yes github:sirrakadembasti/setup \"$@\"",
+        "fi",
+        "",
+      ].join("\n");
+      fs.writeFileSync(shPath, shContent, { encoding: "utf8", mode: 0o755 });
+      try {
+        fs.chmodSync(shPath, 0o755);
+      } catch {
+        /* Windows'ta chmod göz ardı edilir */
+      }
+      launchersCreated = true;
+    }
+  }
+
   return {
     created: true,
     configPath,
     packageJsonUpdated,
+    launchersCreated,
     config,
     detection,
     message: `setup.config.json oluşturuldu (${configPath}).`,

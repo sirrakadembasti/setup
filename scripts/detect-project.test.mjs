@@ -406,3 +406,73 @@ test("Electron ve Tauri masaüstü projeleri algılanır ve getSetupPaths harici
     assert.equal(d.kind, "tauri-desktop");
   }
 });
+
+test("detectScenarioProfile 5 senaryoyu doğru sınıflandırır ve initProject createLaunchers ile kurulum.bat/sh üretir", (t) => {
+  // Senaryo 1: Express Node Sunucu
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "package.json", JSON.stringify({ name: "s1-app", dependencies: { express: "^4.0.0" } }));
+    writeFile(dir, "index.js", 'import express from "express";\n');
+    const d = detectProject(dir);
+    assert.equal(d.scenario.number, 1);
+    assert.equal(d.scenario.id, "scenario-1-node-server");
+    assert.equal(d.scenario.requiresAdmin, true);
+    assert.equal(d.scenario.isStaticOnly, false);
+  }
+
+  // Senaryo 2: SPA / Statik Web
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "index.html", "<!doctype html><html><body>SPA</body></html>\n");
+    const d = detectProject(dir);
+    assert.equal(d.scenario.number, 2);
+    assert.equal(d.scenario.id, "scenario-2-spa-static");
+    assert.equal(d.scenario.isStaticOnly, true);
+    assert.equal(d.scenario.requiresAdmin, false);
+    assert.equal(d.scenario.requiresDependencies, false);
+  }
+
+  // Senaryo 3: Next.js SSR Full-Stack
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "package.json", JSON.stringify({ name: "s3-app", dependencies: { next: "^14.0.0" } }));
+    writeFile(dir, "next.config.mjs", "export default {};\n");
+    const d = detectProject(dir);
+    assert.equal(d.scenario.number, 3);
+    assert.equal(d.scenario.id, "scenario-3-fullstack");
+    assert.equal(d.scenario.requiresDatabase, true);
+  }
+
+  // Senaryo 4: Python / Polyglot
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "requirements.txt", "fastapi\nuvicorn\n");
+    writeFile(dir, "app.py", "print('ok')\n");
+    const d = detectProject(dir);
+    assert.equal(d.scenario.number, 4);
+    assert.equal(d.scenario.id, "scenario-4-polyglot");
+  }
+
+  // Senaryo 5: Masaüstü + createLaunchers
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "package.json", JSON.stringify({ name: "s5-app", dependencies: { "@tauri-apps/api": "^2.0.0" } }));
+    writeFile(dir, "src-tauri/tauri.conf.json", "{}");
+    const d = detectProject(dir);
+    assert.equal(d.scenario.number, 5);
+    assert.equal(d.scenario.id, "scenario-5-desktop");
+    assert.equal(d.scenario.isDesktop, true);
+
+    const initRes = initProject(dir, { createLaunchers: true });
+    assert.equal(initRes.created, true);
+    assert.equal(initRes.launchersCreated, true);
+    assert.equal(initRes.config.scenario.number, 5);
+    assert.equal(fs.existsSync(path.join(dir, "kurulum.bat")), true);
+    assert.equal(fs.existsSync(path.join(dir, "kurulum.sh")), true);
+  }
+});
