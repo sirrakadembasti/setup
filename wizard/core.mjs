@@ -17,7 +17,7 @@ import {
   verifyAdminPassword,
 } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
-import { equalSecret, pmRunInvocation } from "./server.mjs";
+import { equalSecret, pmRunInvocation, writePublicFrontendArtifacts } from "./server.mjs";
 
 function readJsonFileSafe(filePath) {
   try {
@@ -392,6 +392,7 @@ export function createSetupWizardCore(options = {}) {
       fs.mkdirSync(artifactRoot, { recursive: true });
       fs.writeFileSync(path.join(artifactRoot, "nginx.conf.example"), `${artifacts.nginxText}\n`, "utf8");
       fs.writeFileSync(path.join(artifactRoot, "deployment.env.example"), `${artifacts.envText}\n`, "utf8");
+      writePublicFrontendArtifacts(projectRoot, dataRoot, payload, envExample.variables);
       markStep("artifacts", "done", "setup-artifacts");
       summary.push("Nginx örneği setup-artifacts altında üretildi.");
 

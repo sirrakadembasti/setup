@@ -7,7 +7,7 @@ import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
-import { buildDeploymentArtifacts, saveDeploymentConfig } from "../utils/deployment-config.mjs";
+import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
 import { detectPackageManager, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
@@ -37,11 +37,28 @@ function writable(target) {
   }
 }
 
-export function sameOrigin(req, expectedPort) {
+function normalizeAllowedOrigins(raw) {
+  if (Array.isArray(raw)) {
+    return raw.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    return raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+export function sameOrigin(req, expectedPort, allowedOrigins = []) {
   try {
     const origin = req.headers.origin;
     if (!origin) return false;
-    const parsed = new URL(String(origin));
+    const originStr = String(origin).trim();
+    if (Array.isArray(allowedOrigins) && allowedOrigins.includes(originStr)) {
+      return true;
+    }
+    const parsed = new URL(originStr);
     if (!["http:", "https:"].includes(parsed.protocol)) return false;
     if (!["127.0.0.1", "localhost"].includes(parsed.hostname)) return false;
     if (expectedPort && Number(parsed.port || 80) !== expectedPort) return false;
@@ -49,6 +66,104 @@ export function sameOrigin(req, expectedPort) {
   } catch {
     return false;
   }
+}
+
+export function buildPublicFrontendConfig(payload, extraEnvVars = []) {
+  const publicEnvObject = {};
+  const entries = Array.isArray(extraEnvVars)
+    ? extraEnvVars
+    : extraEnvVars && typeof extraEnvVars === "object"
+      ? Object.entries(extraEnvVars).map(([key, value]) => ({ key, value }))
+      : [];
+  for (const item of entries) {
+    if (!item || typeof item.key !== "string") continue;
+    const key = item.key.trim();
+    if (!/^(VITE_|PUBLIC_|NEXT_PUBLIC_|REACT_APP_)[A-Za-z0-9_]*$/.test(key)) continue;
+    publicEnvObject[key] = String(item.value ?? item.defaultValue ?? "");
+  }
+  const dep = payload?.deployment || {};
+  const normalizedUrl = dep.publicUrl ? publicAppUrl(payload) : String(dep.publicUrl || "");
+  return {
+    deployment: {
+      mode: dep.mode || "localhost",
+      publicUrl: normalizedUrl,
+      basePath: dep.basePath || "/",
+    },
+    env: publicEnvObject,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function writePublicFrontendArtifacts(projectRoot, dataRoot, payload, extraEnvVars = []) {
+  const configObj = buildPublicFrontendConfig(payload, extraEnvVars);
+  const jsonText = `${JSON.stringify(configObj, null, 2)}\n`;
+  const jsText = `window.__SETUP_CONFIG__ = ${JSON.stringify(configObj, null, 2)};\n`;
+  const artifactDir = path.join(dataRoot, "setup-artifacts");
+  fs.mkdirSync(artifactDir, { recursive: true });
+  fs.writeFileSync(path.join(artifactDir, "runtime-config.json"), jsonText, "utf8");
+  fs.writeFileSync(path.join(artifactDir, "env-config.js"), jsText, "utf8");
+
+  if (projectRoot) {
+    const root = path.resolve(projectRoot);
+    for (const rel of ["dist", "build", "public", "."]) {
+      const candidateDir = path.resolve(root, rel);
+      if (fs.existsSync(path.join(candidateDir, "index.html"))) {
+        fs.writeFileSync(path.join(candidateDir, "runtime-config.json"), jsonText, "utf8");
+        fs.writeFileSync(path.join(candidateDir, "env-config.js"), jsText, "utf8");
+      }
+    }
+  }
+  return configObj;
+}
+
+const STATIC_MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".txt": "text/plain; charset=utf-8",
+};
+
+export function createStaticAppServer(staticDir) {
+  const rootDir = path.resolve(staticDir);
+  return http.createServer((req, res) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.statusCode = 405;
+      return res.end("Method Not Allowed");
+    }
+    const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
+    let relPath = decodeURIComponent(reqUrl.pathname || "/").replace(/^\/+/, "");
+    if (!relPath || relPath.endsWith("/")) {
+      relPath = path.join(relPath, "index.html");
+    }
+    const resolvedPath = path.resolve(rootDir, relPath);
+    const relCheck = path.relative(rootDir, resolvedPath);
+    if (relCheck.startsWith("..") || path.isAbsolute(relCheck)) {
+      res.statusCode = 403;
+      return res.end("Forbidden");
+    }
+    let targetFile = resolvedPath;
+    if (!fs.existsSync(targetFile) || !fs.statSync(targetFile).isFile()) {
+      const ext = path.extname(relPath);
+      const fallbackIndex = path.join(rootDir, "index.html");
+      if (!ext && fs.existsSync(fallbackIndex) && fs.statSync(fallbackIndex).isFile()) {
+        targetFile = fallbackIndex;
+      } else {
+        res.statusCode = 404;
+        return res.end("Not Found");
+      }
+    }
+    const ext = path.extname(targetFile).toLowerCase();
+    res.setHeader("Content-Type", STATIC_MIME_TYPES[ext] || "application/octet-stream");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.statusCode = 200;
+    if (req.method === "HEAD") return res.end();
+    res.end(fs.readFileSync(targetFile));
+  });
 }
 
 export function resolvePnpmInvocation(args) {
@@ -135,6 +250,12 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
   const root = path.resolve(projectRoot);
   const cfg = setupConfig ?? loadSetupConfig(root);
   if (cfg?.start?.command && typeof cfg.start.command === "string") {
+    if (cfg.start.command === "static") {
+      return {
+        type: "static",
+        staticDir: path.resolve(root, cfg.start.args?.[0] || "."),
+      };
+    }
     return {
       command: cfg.start.command,
       args: Array.isArray(cfg.start.args) ? cfg.start.args : [],
@@ -151,6 +272,9 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
   }
   if (rootPkg?.scripts?.start) {
     return scriptToInvocation(rootPkg.scripts.start, pm, "start", root);
+  }
+  if (rootPkg?.scripts?.preview) {
+    return scriptToInvocation(rootPkg.scripts.preview, pm, "preview", root);
   }
   if (rootPkg?.scripts?.dev) {
     return scriptToInvocation(rootPkg.scripts.dev, pm, "dev", root);
@@ -170,6 +294,16 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
         command: process.execPath,
         args: [relEntry],
         cwd: root,
+      };
+    }
+  }
+
+  for (const relStatic of ["dist", "build", "public", "."]) {
+    const candidateDir = path.resolve(root, relStatic);
+    if (fs.existsSync(path.join(candidateDir, "index.html"))) {
+      return {
+        type: "static",
+        staticDir: candidateDir,
       };
     }
   }
@@ -320,8 +454,10 @@ export function createSetupServer(token, options = {}) {
 
   const sessionValue = crypto.createHmac("sha256", token).update("setup-wizard-session").digest("hex");
   const csrfToken = crypto.createHmac("sha256", token).update("setup-wizard-csrf").digest("hex");
+  const allowedOrigins = normalizeAllowedOrigins(options.allowedOrigins ?? process.env.SETUP_ALLOWED_ORIGINS);
   const applyJob = createApplyState();
   let appChild = null;
+  let spawnedStaticServer = null;
 
   const rateBuckets = new Map();
   function checkRateLimit(key, limit, windowMs) {
@@ -466,6 +602,7 @@ export function createSetupServer(token, options = {}) {
         fs.mkdirSync(artifactRoot, { recursive: true });
         fs.writeFileSync(path.join(artifactRoot, "nginx.conf.example"), `${artifacts.nginxText}\n`, "utf8");
         fs.writeFileSync(path.join(artifactRoot, "deployment.env.example"), `${artifacts.envText}\n`, "utf8");
+        writePublicFrontendArtifacts(projectRoot, dataRoot, payload, envExample.variables);
       } finally {
         if (savedEnvRoot === undefined) delete process.env.SETUP_PROJECT_ROOT;
         else process.env.SETUP_PROJECT_ROOT = savedEnvRoot;
@@ -497,9 +634,92 @@ export function createSetupServer(token, options = {}) {
     }
   }
 
+  function validateStepPayload(step, data) {
+    const issues = [];
+    const raw = data && typeof data === "object" ? data : {};
+    if (step === "deployment") {
+      try {
+        parseDeploymentConfig(raw);
+      } catch (err) {
+        issues.push({ code: "custom", message: err.message, path: ["deployment"] });
+      }
+    } else if (step === "server") {
+      const host = raw.host;
+      const port = Number(raw.port);
+      if (!["127.0.0.1", "0.0.0.0"].includes(host)) {
+        issues.push({ code: "invalid_enum_value", message: "Sunucu adresi 127.0.0.1 veya 0.0.0.0 olmalıdır.", path: ["server", "host"] });
+      }
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        issues.push({ code: "invalid_port", message: "Sunucu portu 1024-65535 aralığında olmalıdır.", path: ["server", "port"] });
+      }
+    } else if (step === "admin") {
+      const name = String(raw.name ?? "").trim();
+      const email = String(raw.email ?? "").trim();
+      const password = String(raw.password ?? "");
+      if (name.length < 2 || name.length > 100 || /[\r\n\0]/.test(name)) {
+        issues.push({ code: "invalid_string", message: "admin.name 2-100 karakter aralığında olmalıdır.", path: ["admin.name"] });
+      }
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || /[\r\n\0]/.test(email)) {
+        issues.push({ code: "invalid_email", message: "Geçerli bir e-posta adresi girin.", path: ["admin.email"] });
+      }
+      if (password.length < 12 || password.length > 128) {
+        issues.push({ code: "too_small", message: "Parola en az 12, en fazla 128 karakter olmalıdır.", path: ["admin", "password"] });
+      } else {
+        if (!(/[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password))) {
+          issues.push({ code: "custom", message: "Parola büyük/küçük harf ve rakam içermelidir.", path: ["admin", "password"] });
+        }
+        if (/password|123456|qwerty|admin123/i.test(password)) {
+          issues.push({ code: "custom", message: "Kolay tahmin edilen parola kullanılamaz.", path: ["admin", "password"] });
+        }
+      }
+    } else if (step === "email") {
+      if (raw.enabled === true) {
+        const user = String(raw.user ?? "").trim();
+        const fromEmail = String(raw.fromEmail ?? "").trim();
+        const fromName = String(raw.fromName ?? "").trim();
+        const password = String(raw.password ?? "").replace(/\s/g, "");
+        if (!/@gmail\.com$/i.test(user)) {
+          issues.push({ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: ["email.user"] });
+        }
+        if (!/@gmail\.com$/i.test(fromEmail)) {
+          issues.push({ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: ["email.fromEmail"] });
+        }
+        if (!fromName || fromName.length > 100 || /[\r\n\0]/.test(fromName)) {
+          issues.push({ code: "invalid_string", message: "email.fromName 1-100 karakter aralığında olmalıdır.", path: ["email.fromName"] });
+        }
+        if (password.length < 16 || password.length > 128) {
+          issues.push({ code: "custom", message: "Geçerli Gmail uygulama parolası girin.", path: ["email", "password"] });
+        }
+      }
+    } else {
+      try {
+        setupPayloadSchema.parse(raw);
+      } catch (err) {
+        if (err instanceof ValidationError) {
+          issues.push(...err.issues);
+        } else {
+          issues.push({ code: "custom", message: err.message, path: [] });
+        }
+      }
+    }
+    return issues;
+  }
+
   const server = http.createServer(async (req, res) => {
     const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
     const clientIp = req.socket?.remoteAddress || "127.0.0.1";
+    const reqOrigin = req.headers.origin ? String(req.headers.origin).trim() : "";
+
+    if (reqOrigin && allowedOrigins.includes(reqOrigin)) {
+      res.setHeader("Access-Control-Allow-Origin", reqOrigin);
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Setup-CSRF, Authorization");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      if (req.method === "OPTIONS") {
+        res.statusCode = 204;
+        return res.end();
+      }
+    }
 
     if (req.method === "GET" && reqUrl.pathname === "/setup") {
       if (reqUrl.searchParams.has("token")) {
@@ -528,15 +748,33 @@ export function createSetupServer(token, options = {}) {
     }
 
     if (reqUrl.pathname.startsWith("/api/")) {
-      if (!equalSecret(cookieValue(req, "setup.wizard"), sessionValue)) {
+      const bearerToken = String(req.headers["x-setup-token"] || req.headers.authorization?.replace(/^Bearer\s+/i, "") || "");
+      const hasValidSession = equalSecret(cookieValue(req, "setup.wizard"), sessionValue) || equalSecret(bearerToken, token);
+      if (!hasValidSession) {
         return sendJson(res, 401, { message: "Kurulum oturumu geçersiz." });
       }
       if (req.method !== "GET") {
         if (!checkRateLimit(`api-mut:${clientIp}`, 30, 15 * 60_000)) {
           return sendJson(res, 429, { message: "İstek sınırı aşıldı." });
         }
-        if (!sameOrigin(req) || !equalSecret(String(req.headers["x-setup-csrf"] || ""), csrfToken)) {
+        const validCsrf = equalSecret(String(req.headers["x-setup-csrf"] || ""), csrfToken) || equalSecret(bearerToken, token);
+        if (!sameOrigin(req, undefined, allowedOrigins) || !validCsrf) {
           return sendJson(res, 403, { message: "Kurulum isteği güvenlik doğrulamasından geçmedi." });
+        }
+      }
+
+      if (req.method === "POST" && reqUrl.pathname === "/api/validate-step") {
+        try {
+          const rawBody = await readJson(req);
+          const step = rawBody?.step || "all";
+          const data = rawBody?.data ?? rawBody;
+          const issues = validateStepPayload(step, data);
+          if (issues.length > 0) {
+            return sendJson(res, 400, { ok: false, errors: issues.map((i) => i.message), issues });
+          }
+          return sendJson(res, 200, { ok: true });
+        } catch (error) {
+          return sendJson(res, 400, { ok: false, message: error instanceof Error ? error.message : "Geçersiz istek." });
         }
       }
 
@@ -589,18 +827,33 @@ export function createSetupServer(token, options = {}) {
           return sendJson(res, 200, {
             message: "Uygulama zaten çalışıyor.",
             reachable: true,
-            pid: appChild?.pid ?? null,
+            pid: appChild?.pid ?? process.pid,
             loginUrl: applyJob.loginUrl,
             publicUrl: applyJob.publicUrl,
           });
         }
 
-        if (!appChild || appChild.exitCode !== null || appChild.killed) {
+        if ((!appChild || appChild.exitCode !== null || appChild.killed) && !spawnedStaticServer) {
           const invocation = options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
           if (!invocation) {
             return sendJson(res, 409, {
               message: "Hedef projede başlatma komutu (scripts.start veya giriş dosyası) bulunamadı.",
               reachable: false,
+            });
+          }
+          if (invocation.type === "static") {
+            const staticSrv = createStaticAppServer(invocation.staticDir);
+            await new Promise((resolve, reject) => {
+              staticSrv.once("error", reject);
+              staticSrv.listen(appPort, "127.0.0.1", resolve);
+            });
+            spawnedStaticServer = staticSrv;
+            return sendJson(res, 200, {
+              message: "Yerleşik statik dosya sunucusu başlatıldı ve bağlantıya hazır.",
+              reachable: true,
+              pid: process.pid,
+              loginUrl: applyJob.loginUrl,
+              publicUrl: applyJob.publicUrl,
             });
           }
           const dotEnvVars = parseDotEnvFile(envPath);
@@ -691,6 +944,11 @@ export function createSetupServer(token, options = {}) {
   });
 
   server.stopSpawnedApp = async () => {
+    if (spawnedStaticServer) {
+      const srv = spawnedStaticServer;
+      spawnedStaticServer = null;
+      await new Promise((resolve) => srv.close(() => resolve()));
+    }
     if (!appChild) return;
     const child = appChild;
     const pid = child.pid;

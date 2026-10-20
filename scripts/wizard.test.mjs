@@ -7,7 +7,16 @@ import test from "node:test";
 import { buildServerEnv, hashAdminPassword, setupPayloadSchema, toDeploymentConfig, verifyAdminPassword } from "../wizard/config.mjs";
 import { buildDeploymentArtifacts } from "../utils/deployment-config.mjs";
 import { renderSetupPage } from "../wizard/ui.mjs";
-import { createSetupServer, parseDotEnvFile, resolveAppStartInvocation, sameOrigin } from "../wizard/server.mjs";
+import {
+  buildPublicFrontendConfig,
+  createSetupServer,
+  createStaticAppServer,
+  parseDotEnvFile,
+  resolveAppStartInvocation,
+  sameOrigin,
+  writePublicFrontendArtifacts,
+} from "../wizard/server.mjs";
+import { parseArgs } from "../bin/setup.mjs";
 import {
   createSetupWizardCore,
   mountSetupGuard,
@@ -883,5 +892,191 @@ test("wizard/core: mountSetupGuard kurulum öncesi 302/503 döner, gömülü /ap
   const afterApi = await invokeMiddleware({ path: "/api/users", url: "/api/users" });
   assert.equal(afterApi.intercepted, false);
 });
+
+test("SPA / Static Web repo: runtime-config.json ve env-config.js gizli anahtarları sızdırmadan üretilir ve yerleşik statik sunucu ile sunulur", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-spa-static-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "index.html"),
+    "<!doctype html><html><head><script src=\"/env-config.js\"></script></head><body><h1>SPA App</h1></body></html>\n",
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(tmpRoot, ".env.example"),
+    [
+      "VITE_API_URL=https://api.example.com",
+      "PUBLIC_APP_TITLE=Kurumsal SPA",
+      "SECRET_TOKEN=hidden_secret_value",
+      "DATABASE_URL=postgres://secret",
+    ].join("\n"),
+    "utf8",
+  );
+
+  // Serbest bir port bul
+  const appPort = await new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const p = srv.address().port;
+      srv.close(() => resolve(p));
+    });
+    srv.on("error", reject);
+  });
+
+  const token = "wizard_secret_token_spastatic_123456";
+  const server = createSetupServer(token, { projectRoot: tmpRoot });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    if (typeof server.stopSpawnedApp === "function") {
+      await server.stopSpawnedApp();
+    }
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  const cookiePair = loginRes.headers.get("set-cookie").split(";")[0];
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const html = await pageRes.text();
+  const csrf = JSON.parse(html.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  const customPayload = {
+    ...VALID_PAYLOAD,
+    deployment: {
+      ...VALID_PAYLOAD.deployment,
+      publicUrl: `http://localhost:${appPort}/`,
+    },
+    server: { host: "127.0.0.1", port: appPort },
+  };
+
+  const applyRes = await fetch(`${baseUrl}/api/apply`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(customPayload),
+  });
+  assert.equal(applyRes.status, 202);
+
+  let statusData;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
+    statusData = await sRes.json();
+    if (statusData.apply.status === "success" || statusData.apply.status === "error") break;
+  }
+  assert.equal(statusData.apply.status, "success");
+
+  // runtime-config.json ve env-config.js hem setup-artifacts hem de proje kökünde üretilmeli
+  const rootRuntimeCfgPath = path.join(tmpRoot, "runtime-config.json");
+  const rootEnvCfgJsPath = path.join(tmpRoot, "env-config.js");
+  const artifactRuntimeCfgPath = path.join(tmpRoot, "data", "setup-artifacts", "runtime-config.json");
+  assert.equal(fs.existsSync(rootRuntimeCfgPath), true);
+  assert.equal(fs.existsSync(rootEnvCfgJsPath), true);
+  assert.equal(fs.existsSync(artifactRuntimeCfgPath), true);
+
+  const runtimeCfg = JSON.parse(fs.readFileSync(rootRuntimeCfgPath, "utf8"));
+  assert.equal(runtimeCfg.deployment.mode, "localhost");
+  assert.equal(runtimeCfg.deployment.publicUrl, `http://localhost:${appPort}`);
+  assert.equal(runtimeCfg.env.VITE_API_URL, "https://api.example.com");
+  assert.equal(runtimeCfg.env.PUBLIC_APP_TITLE, "Kurumsal SPA");
+  assert.equal("SECRET_TOKEN" in runtimeCfg.env, false);
+  assert.equal("DATABASE_URL" in runtimeCfg.env, false);
+  assert.equal("SESSION_SECRET" in runtimeCfg.env, false);
+
+  const envConfigJs = fs.readFileSync(rootEnvCfgJsPath, "utf8");
+  assert.match(envConfigJs, /^window\.__SETUP_CONFIG__\s*=/);
+  assert.equal(envConfigJs.includes("hidden_secret_value"), false);
+
+  // /api/start-app yerleşik statik dosya sunucusunu başlatmalı
+  const startRes = await fetch(`${baseUrl}/api/start-app`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: "{}",
+  });
+  assert.equal(startRes.status, 200);
+  const startBody = await startRes.json();
+  assert.equal(startBody.reachable, true);
+
+  // Statik sunucu üzerinden index.html, runtime-config.json ve SPA fallback kontrolü
+  const indexRes = await fetch(`http://127.0.0.1:${appPort}/`);
+  assert.equal(indexRes.status, 200);
+  assert.match(indexRes.headers.get("content-type"), /text\/html/);
+  assert.match(await indexRes.text(), /<h1>SPA App<\/h1>/);
+
+  const cfgRes = await fetch(`http://127.0.0.1:${appPort}/runtime-config.json`);
+  assert.equal(cfgRes.status, 200);
+  const servedCfg = await cfgRes.json();
+  assert.equal(servedCfg.env.VITE_API_URL, "https://api.example.com");
+
+  const spaRouteRes = await fetch(`http://127.0.0.1:${appPort}/dashboard/settings`);
+  assert.equal(spaRouteRes.status, 200);
+  assert.match(await spaRouteRes.text(), /<h1>SPA App<\/h1>/);
+});
+
+test("SETUP_ALLOWED_ORIGINS (Tauri/Sidecar CORS + Origin izni) ve CLI --port / --data-dir bayrakları", async (t) => {
+  const parsedCli = parseArgs(["wizard", "--port", "5099", "--data-dir", "./custom-data"]);
+  assert.equal(parsedCli.command, "wizard");
+  assert.equal(parsedCli.port, 5099);
+  assert.equal(parsedCli.dataDir, path.resolve("./custom-data"));
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-cors-sidecar-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "sidecar-app" }), "utf8");
+
+  const token = "wizard_secret_token_sidecar_12345678";
+  const server = createSetupServer(token, {
+    projectRoot: tmpRoot,
+    allowedOrigins: ["tauri://localhost"],
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  // 1. OPTIONS preflight isteği tauri://localhost için 204 ve CORS başlıkları dönmeli
+  const preflightRes = await fetch(`${baseUrl}/api/validate-step`, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "tauri://localhost",
+      "Access-Control-Request-Method": "POST",
+    },
+  });
+  assert.equal(preflightRes.status, 204);
+  assert.equal(preflightRes.headers.get("access-control-allow-origin"), "tauri://localhost");
+  assert.equal(preflightRes.headers.get("access-control-allow-credentials"), "true");
+
+  // 2. Oturum aç ve tauri://localhost Origin'i ile POST /api/validate-step çağır
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  const cookiePair = loginRes.headers.get("set-cookie").split(";")[0];
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const html = await pageRes.text();
+  const csrf = JSON.parse(html.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  const validateRes = await fetch(`${baseUrl}/api/validate-step`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: "tauri://localhost",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ step: "admin", data: VALID_PAYLOAD.admin }),
+  });
+  assert.equal(validateRes.status, 200);
+  assert.equal(validateRes.headers.get("access-control-allow-origin"), "tauri://localhost");
+  const validateBody = await validateRes.json();
+  assert.equal(validateBody.ok, true);
+});
+
 
 

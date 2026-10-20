@@ -12,6 +12,7 @@
  */
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { buildInstallPlan, detectProject } from "../scripts/detect-project.mjs";
 import { initProject } from "../scripts/setup-api.mjs";
 import { getVersion, parseSemver } from "../scripts/version.mjs";
@@ -20,7 +21,7 @@ const VALID_COMMANDS = new Set(["detect", "plan", "setup", "wizard", "init", "ve
 const PASSTHROUGH_FLAGS = new Set(["--no-open", "--check-only", "--force"]);
 
 export function parseArgs(argv) {
-  const args = { command: "setup", root: process.cwd(), force: false, error: null };
+  const args = { command: "setup", root: process.cwd(), force: false, port: null, dataDir: null, error: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--root") {
@@ -30,6 +31,22 @@ export function parseArgs(argv) {
         return args;
       }
       args.root = path.resolve(argv[++i]);
+    } else if (a === "--port") {
+      const next = argv[i + 1];
+      const portNum = Number(next);
+      if (!next || next.startsWith("-") || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+        args.error = "--port seçeneği için geçerli bir port numarası (1-65535) belirtilmelidir.";
+        return args;
+      }
+      args.port = portNum;
+      i += 1;
+    } else if (a === "--data-dir") {
+      const next = argv[i + 1];
+      if (!next || next.startsWith("-")) {
+        args.error = "--data-dir seçeneği için geçerli bir dizin yolu belirtilmelidir.";
+        return args;
+      }
+      args.dataDir = path.resolve(argv[++i]);
     } else if (a === "--help" || a === "-h") {
       args.command = "help";
     } else if (a === "--version" || a === "-v") {
@@ -63,10 +80,12 @@ Komutlar:
   help     Bu yardım mesajını göster
 
 Seçenekler:
-  --root <yol>   Hedef uygulama kök dizini (varsayılan: cwd)
-  --force, -f    init sırasında mevcut setup.config.json dosyasının üzerine yaz
-  --no-open      Tarayıcıyı otomatik açma
-  --check-only   Yalnız durum JSON çıktısını ver ve çık
+  --root <yol>       Hedef uygulama kök dizini (varsayılan: cwd)
+  --port <numara>    Sihirbaz veya başlatıcı portunu özelleştir
+  --data-dir <yol>   Kurulum verileri ve .env için harici dizin belirt
+  --force, -f        init sırasında mevcut setup.config.json dosyasının üzerine yaz
+  --no-open          Tarayıcıyı otomatik açma
+  --check-only       Yalnız durum JSON çıktısını ver ve çık
 
 Örnek:
   node bin/setup.mjs init --root /path/to/github-repo
@@ -121,6 +140,17 @@ function main() {
 
   process.env.SETUP_PROJECT_ROOT = detection.root;
   process.env.SETUP_PROJECT_NAME = detection.projectName;
+  if (args.dataDir) {
+    process.env.SETUP_DATA_DIR = args.dataDir;
+  }
+  if (args.port) {
+    if (args.command === "wizard") {
+      process.env.SETUP_WIZARD_PORT = String(args.port);
+      process.env.SETUP_PORT = String(args.port);
+    } else {
+      process.env.SETUP_BOOTSTRAP_PORT = String(args.port);
+    }
+  }
 
   if (args.command === "wizard") {
     console.log("[setup] Web kurulum sihirbazı açılıyor...");
@@ -138,4 +168,6 @@ function main() {
   });
 }
 
-main();
+if (import.meta.url && process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+  main();
+}
