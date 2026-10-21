@@ -3,21 +3,20 @@ setlocal EnableExtensions EnableDelayedExpansion
 chcp 65001 >nul
 title setup v1.0 — Otomatik Kurulum Ön Kontrolü
 
+set "INVOKE_DIR=%CD%"
 set "SCRIPT_DIR=%~dp0"
-if exist "%SCRIPT_DIR%package.json" (
-  if exist "%SCRIPT_DIR%scripts" (
-    set "SETUP_ROOT=%SCRIPT_DIR%"
-  ) else (
-    for %%I in ("%SCRIPT_DIR%..") do set "SETUP_ROOT=%%~fI\"
-  )
+rem setup paketinin kökü (bin içinden veya doğrudan kökten çalıştırılabilir)
+if exist "%SCRIPT_DIR%bin\setup.mjs" (
+  set "SETUP_ROOT=%SCRIPT_DIR%"
 ) else (
   for %%I in ("%SCRIPT_DIR%..") do set "SETUP_ROOT=%%~fI\"
 )
 
+rem Hedef proje: SETUP_PROJECT_ROOT, yoksa betiğin çağrıldığı dizin (eklentinin kendi dizini değil)
 if defined SETUP_PROJECT_ROOT (
   set "PROJECT_ROOT=%SETUP_PROJECT_ROOT%"
 ) else (
-  set "PROJECT_ROOT=%SETUP_ROOT%"
+  set "PROJECT_ROOT=%INVOKE_DIR%"
 )
 
 pushd "%PROJECT_ROOT%" >nul 2>&1
@@ -34,10 +33,9 @@ echo ============================================================
 echo Proje dizini: %PROJECT_ROOT%
 echo.
 
-if not exist "package.json" (
-  echo [HATA] package.json bulunamadı. Bu dosyayı uygulama ana dizininden çalıştırın.
-  goto :failed
-)
+rem package.json zorunlu değildir (Python, Go, .NET, Rust ve statik projeler)
+set "HAS_PACKAGE_JSON=0"
+if exist "package.json" set "HAS_PACKAGE_JSON=1"
 
 set "HAS_ERROR=0"
 set "NODE_VERSION="
@@ -76,6 +74,10 @@ if exist "pnpm-lock.yaml" (
   set "PM_NAME=bun"
 )
 
+if "%HAS_PACKAGE_JSON%"=="0" (
+  echo [ATLANDI] package.json yok; Node paket yöneticisi denetimi gerekmiyor.
+  goto :pm_done
+)
 where !PM_NAME! >nul 2>&1
 if errorlevel 1 (
   where npm >nul 2>&1
@@ -90,6 +92,7 @@ if errorlevel 1 (
   for /f "delims=" %%V in ('!PM_NAME! --version 2^>nul') do set "PM_VERSION=%%V"
   echo [TAMAM] !PM_NAME! !PM_VERSION!
 )
+:pm_done
 
 if "%HAS_ERROR%"=="1" goto :requirements
 
@@ -132,7 +135,8 @@ echo [TAMAM] Gerekli çalışma ortamı hazır.
 echo Web kurulum başlangıcı açılıyor...
 echo.
 set "SETUP_PROJECT_ROOT=%PROJECT_ROOT%"
-node "%SETUP_ROOT%scripts\setup-bootstrap.mjs"
+rem setup.mjs: proje algılama + setup.config.json otomatik oluşturma + başlatıcı
+node "%SETUP_ROOT%bin\setup.mjs" --root "%PROJECT_ROOT%" %*
 set "SETUP_EXIT=%ERRORLEVEL%"
 if not "%SETUP_EXIT%"=="0" (
   echo.

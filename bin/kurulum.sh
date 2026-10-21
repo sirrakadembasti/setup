@@ -2,13 +2,15 @@
 set -u
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-if [ -f "$SCRIPT_DIR/package.json" ] && [ -d "$SCRIPT_DIR/scripts" ]; then
+# setup paketinin kökü (bin/ içinden veya doğrudan kökten çalıştırılabilir)
+if [ -f "$SCRIPT_DIR/bin/setup.mjs" ]; then
   SETUP_ROOT="$SCRIPT_DIR"
 else
   SETUP_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 fi
 
-PROJECT_ROOT="${SETUP_PROJECT_ROOT:-$SETUP_ROOT}"
+# Hedef proje: SETUP_PROJECT_ROOT, yoksa betiğin çağrıldığı dizin (eklentinin kendi dizini değil)
+PROJECT_ROOT="${SETUP_PROJECT_ROOT:-$(pwd)}"
 cd "$PROJECT_ROOT" || exit 1
 
 printf '\n%s\n' '============================================================'
@@ -16,14 +18,13 @@ printf '%s\n' '  setup v1.0 — Otomatik Kurulum Ön Kontrolü'
 printf '%s\n' '============================================================'
 printf 'Proje dizini: %s\n\n' "$PROJECT_ROOT"
 
-if [ ! -f package.json ]; then
-  printf '%s\n' '[HATA] Bu dizinde package.json bulunamadı.' >&2
-  exit 1
-fi
+# package.json zorunlu değildir (Python, Go, .NET, Rust ve statik projeler); varsa geçerli JSON olmalı
+HAS_PACKAGE_JSON=0
+[ -f package.json ] && HAS_PACKAGE_JSON=1
 
 has_error=0
 if command -v node >/dev/null 2>&1; then
-  if ! node -e 'JSON.parse(require("fs").readFileSync("package.json","utf8"))' >/dev/null 2>&1; then
+  if [ "$HAS_PACKAGE_JSON" -eq 1 ] && ! node -e 'JSON.parse(require("fs").readFileSync("package.json","utf8"))' >/dev/null 2>&1; then
     printf '%s\n' '[HATA] package.json geçerli bir JSON dosyası değil.' >&2
     exit 1
   fi
@@ -47,7 +48,9 @@ elif [ -f "bun.lockb" ] || [ -f "bun.lock" ]; then
   PM_NAME="bun"
 fi
 
-if command -v "$PM_NAME" >/dev/null 2>&1; then
+if [ "$HAS_PACKAGE_JSON" -eq 0 ]; then
+  printf '%s\n' '[ATLANDI] package.json yok; Node paket yöneticisi denetimi gerekmiyor.'
+elif command -v "$PM_NAME" >/dev/null 2>&1; then
   pm_version=$("$PM_NAME" --version 2>/dev/null || true)
   printf '[TAMAM] %s %s\n' "$PM_NAME" "$pm_version"
 elif command -v npm >/dev/null 2>&1; then
@@ -139,7 +142,8 @@ printf '%s\n' 'Bu terminali sihirbaz bitene kadar KAPATMAYIN; sihirbaz bu sürec
 printf '%s\n' 'Portlar: başlatıcı '"$CHECK_PORT"' · sihirbaz '"$WIZARD_PORT"
 printf '\n'
 export SETUP_PROJECT_ROOT="$PROJECT_ROOT"
-node "$SETUP_ROOT/scripts/setup-bootstrap.mjs"
+# setup.mjs: proje algılama + setup.config.json otomatik oluşturma + başlatıcı
+node "$SETUP_ROOT/bin/setup.mjs" --root "$PROJECT_ROOT" "$@"
 setup_exit=$?
 if [ "$setup_exit" -ne 0 ]; then
   cat <<EOF
