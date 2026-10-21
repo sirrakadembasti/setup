@@ -14,24 +14,43 @@ Herhangi bir GitHub reposundaki Node.js, SPA/statik web, full-stack, çoklu dil 
 - **Çoklu Paket Yöneticisi Desteği:** Hedef repodaki kilit dosyalarına bakarak `npm`, `pnpm`, `yarn` veya `bun` paket yöneticisini otomatik seçer.
 - **Tek Komutla Entegrasyon (`setup init`):** Herhangi bir GitHub reposuna `setup.config.json` yapılandırmasını ve kurulum komutunu saniyeler içinde ekler.
 - **İki Aşamalı Güvenli Web Kurulumu:**
-  - **Kurulum Başlatıcısı (`127.0.0.1:5049`):** Ortam ön kontrolü, bağımlılık kurulumu, port çakışması çözümü ve SHA-256 doğrulamalı yedekleme/temiz kurulum.
-  - **Web Kurulum Sihirbazı (`127.0.0.1:5050`):** 5 adımlı görsel yapılandırma (Sunucu kontrolü, Adres/Proxy, Veri/Saklama, İlk Yönetici/E-posta, `.env` ve Nginx üretimi).
+  - **Kurulum Başlatıcısı (`127.0.0.1:5049`):** Projenin 5 senaryosuna göre dinamik başlık ve rozet gösterir. Node.js (`npm`/`pnpm`/`yarn`/`bun`), Python (`pip`), Go (`go mod`), C# (`dotnet restore`) ve PHP (`composer install`) bağımlılıklarını tek tıkla kurar; saf statik web (Senaryo 2) projelerinde bağımlılık adımını otomatik tamamlanmış sayarak sihirbaza aktarır.
+  - **Web Kurulum Sihirbazı (`127.0.0.1:5050`):** Algılanan mimari kartı (`#scenarioInfo`) gösterir. Hedef repodaki `.env.example` içinde bulunan özel değişkenleri dinamik form alanları (`#customEnvSection`) olarak kullanıcıya sunar; Senaryo 2 (SPA/Statik Web) ve Senaryo 5 (Masaüstü) mimarilerinde yerel yönetici hesabı oluşturmayı isteğe bağlı yapar ve kurulum tamamlandığında doğrudan uygulamanın kendi portuna yönlendirir.
 - **Yerleşik Sürümleme (`scripts/version.mjs`):** `VERSION`, `package.json`, `CHANGELOG.md` ve Git etiketlerini (`v1.0`, `v1.0.0`) tek komutla yönetir.
 
 ## Hızlı Başlangıç
 
-```bash
-# 1. Herhangi bir GitHub reposuna setup yapılandırmasını entegre edin
-node /path/to/setup/bin/setup.mjs init --root /path/to/github-repo
+### 1. Son Kullanıcı Deneyimi (İndirilen Herhangi Bir GitHub Reposunda Tek Komutla Kurulum)
 
-# 2. Hedef repoyu analiz edin ve kurulum planını görün
-node /path/to/setup/bin/setup.mjs detect --root /path/to/github-repo
+GitHub'dan indirdiğiniz veya klonladığınız herhangi bir projenin kök dizininde sadece aşağıdaki komutu çalıştırın (ayrı bir `init` komutuna veya `setup.config.json` hazırlamaya gerek yoktur):
+
+```bash
+# Herhangi bir projenin ana klasöründe:
+npx github:sirrakadembasti/setup
+```
+
+Eğer repoya daha önce başlatıcı entegre edilmişse doğrudan çift tıklayabilirsiniz:
+- **Windows:** `kurulum.bat`
+- **Linux / macOS:** `./kurulum.sh`
+
+`setup` projenin hangi senaryoya (1: Node/Express Sunucu, 2: SPA/Statik Web, 3: Next/Nuxt Full-Stack, 4: Python/Go/C#/PHP Sunucu, 5: Electron/Tauri Masaüstü) ait olduğunu otomatik algılar, bellekte/diskte yapılandırır ve tarayıcınızda Web Kurulum Arayüzünü açar.
+
+---
+
+### 2. Geliştirici ve Entegratör Kullanımı
+
+```bash
+# 1. Hedef repoya çift tıklanabilir başlatıcıları (kurulum.bat / kurulum.sh) ve setup.config.json'ı ekleyin
+npx github:sirrakadembasti/setup init --root /path/to/github-repo
+
+# 2. Hedef repoyu analiz edin ve 5 senaryolu algılama profilini görün
+node bin/setup.mjs detect --root /path/to/github-repo
 
 # 3. Web kurulum başlatıcısını (5049) açın
-node /path/to/setup/bin/setup.mjs --root /path/to/github-repo
+node bin/setup.mjs --root /path/to/github-repo
 
 # 4. Doğrudan 5 adımlı kurulum sihirbazını (5050) özelleştirilmiş port ve veri diziniyle açın
-node /path/to/setup/bin/setup.mjs wizard --root /path/to/github-repo --port 5050 --data-dir /path/to/data
+node bin/setup.mjs wizard --root /path/to/github-repo --port 5050 --data-dir /path/to/data
 ```
 
 ## Entegrasyon Senaryoları (5 Mimari)
