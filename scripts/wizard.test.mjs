@@ -1455,3 +1455,27 @@ test("wizard/ui: sayfadaki satır içi betik geçerli JavaScript'tir (kaçış d
     assert.equal(joined.includes(String.raw`.join('\n')`), true);
   }
 });
+
+test("wizard/config: .env senaryoya göre sadeleşir; isteğe bağlı gruplar yalnızca etkinse/bildirildiyse yazılır", () => {
+  const parsed = setupPayloadSchema.parse({
+    ...VALID_PAYLOAD,
+    deployment: { ...VALID_PAYLOAD.deployment, retention: { ...VALID_PAYLOAD.deployment.retention, enabled: false } },
+    email: { ...VALID_PAYLOAD.email, enabled: false },
+  });
+  const server = { isStaticOnly: false, isDesktop: false, requiresDatabase: true };
+  const lean = buildServerEnv(parsed, "s", "file:../data/app.db", [], server);
+  assert.match(lean, /SESSION_SECRET=/);
+  assert.match(lean, /PORT=/);
+  assert.doesNotMatch(lean, /RETENTION_|EMAIL_|TRUST_PROXY_HOPS|ALLOW_RUNTIME/);
+
+  const declared = buildServerEnv(parsed, "s", "file:../data/app.db", [{ key: "RETENTION_ENABLED", defaultValue: "" }, { key: "FOO", defaultValue: "bar" }], server);
+  assert.match(declared, /RETENTION_ENABLED=false/);
+  assert.match(declared, /FOO="?bar"?/);
+
+  const spa = buildServerEnv(parsed, "s", "x", [{ key: "VITE_API_URL", defaultValue: "/api" }], { isStaticOnly: true, requiresDatabase: false });
+  assert.doesNotMatch(spa, /SESSION_SECRET|DATABASE_URL|HOST=|PORT=|NODE_ENV/);
+  assert.match(spa, /VITE_API_URL=/);
+
+  const desktop = buildServerEnv(parsed, "s", "file:./app.db", [], { isDesktop: true, requiresDatabase: false });
+  assert.doesNotMatch(desktop, /SESSION_SECRET|FRONTEND_URL|ALLOWED_ORIGINS|DATABASE_URL/);
+});

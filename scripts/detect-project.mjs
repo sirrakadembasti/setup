@@ -378,6 +378,61 @@ function detectEnvExamplePort(runtime) {
   return null;
 }
 
+function validPort(value) {
+  const p = Number.parseInt(String(value ?? "").trim(), 10);
+  return Number.isInteger(p) && p >= 1 && p <= 65535 ? p : null;
+}
+
+/** "/auth", "auth/" ve "" gibi girdileri "/auth" veya "" (uygulama kökü) biçimine getirir. */
+export function normalizeLoginPath(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "/") return "";
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("//")) return "";
+  const cleaned = `/${raw.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+  return /^[\w\-./~%]*$/.test(cleaned) ? cleaned : "";
+}
+
+/** Uygulama adresine yapılandırılmış/algılanmış giriş yolunu ekler. */
+export function buildLoginUrl(baseUrl, loginPath) {
+  return `${String(baseUrl ?? "").replace(/\/+$/, "")}${normalizeLoginPath(loginPath)}`;
+}
+
+/** Ayrı bir geliştirme (ön yüz) sunucusunun portunu `--port`, `-p` veya `server.port` ayarından bulur. */
+function detectDevServerPort(root) {
+  const dirs = [root, path.join(root, "client"), path.join(root, "frontend"), path.join(root, "web")];
+  for (const dir of dirs) {
+    const pkg = readJsonSafe(path.join(dir, "package.json"));
+    const script = String(pkg?.scripts?.dev || pkg?.scripts?.start || "");
+    const fromScript = script.match(/(?:--port(?:=|\s+)|\s-p\s+)(\d{2,5})\b/);
+    if (fromScript && validPort(fromScript[1])) return validPort(fromScript[1]);
+    for (const name of ["vite.config.js", "vite.config.mjs", "vite.config.ts", "vite.config.mts"]) {
+      try {
+        const source = stripComments(fs.readFileSync(path.join(dir, name), "utf8"));
+        const fromConfig = source.match(/\bport\s*:\s*(\d{2,5})\b/);
+        if (fromConfig && validPort(fromConfig[1])) return validPort(fromConfig[1]);
+      } catch {
+        // dosya yok
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Giriş yolu ve (varsa) ayrı geliştirme sunucusu portu. Sabit varsayım yok:
+ * `SETUP_LOGIN_PATH` / `setup.config.json` (`app.loginPath`) ve `SETUP_DEV_PORT` /
+ * `ports.dev` öncelikli, aksi halde proje dosyalarından algılanır; bulunamazsa
+ * giriş yolu uygulama köküdür ve ayrı bir dev portu yoktur (`null`).
+ */
+export function detectAppRoutes(root, scenario = {}, setupConfig = null) {
+  const loginRaw = process.env.SETUP_LOGIN_PATH ?? setupConfig?.app?.loginPath ?? setupConfig?.loginPath;
+  const loginPath = scenario.isStaticOnly || scenario.isDesktop ? "" : normalizeLoginPath(loginRaw);
+  const devPort = scenario.isDesktop
+    ? null
+    : validPort(process.env.SETUP_DEV_PORT) || validPort(setupConfig?.ports?.dev) || (scenario.requiresDatabase ? detectDevServerPort(root) : null);
+  return { loginPath, devPort };
+}
+
 export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
   if (kind === "electron-desktop" || kind === "tauri-desktop" || stack.electron || stack.tauri) {
     return {
@@ -515,6 +570,7 @@ export function detectProject(root = process.cwd()) {
     install,
     runtime,
     setupConfig,
+    routes: detectAppRoutes(resolved, scenario, setupConfig),
     ports: {
       bootstrap: Number(process.env.SETUP_BOOTSTRAP_PORT) || Number(cfgPorts.bootstrap) || DEFAULT_PORTS.bootstrap,
       wizard: Number(process.env.SETUP_WIZARD_PORT) || Number(cfgPorts.wizard) || DEFAULT_PORTS.wizard,

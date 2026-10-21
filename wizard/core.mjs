@@ -6,7 +6,7 @@ import path from "node:path";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
-import { detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
+import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
 import {
   buildServerEnv,
   hashAdminPassword,
@@ -310,12 +310,16 @@ export function createSetupWizardCore(options = {}) {
       undefined,
       databaseUrl,
       envExample.variables,
+      detection.scenario,
     );
     const temporaryEnv = `${envPath}.setup-${process.pid}`;
     const summary = [];
     const appUrl = publicAppUrl(payload);
     applyJob.publicUrl = appUrl;
-    applyJob.loginUrl = detection.scenario.isStaticOnly || options.embedded ? appUrl : `${appUrl.replace(/\/$/, "")}/auth`;
+    const loginPath = detection.scenario.isStaticOnly || options.embedded ? "" : detection.routes.loginPath;
+    applyJob.appUrl = appUrl;
+    applyJob.loginPath = loginPath;
+    applyJob.loginUrl = buildLoginUrl(appUrl, loginPath);
     applyJob.appPort = payload.server.port;
     applyJob.mode = payload.deployment.mode;
     applyJob.isDesktop = Boolean(detection.scenario.isDesktop);

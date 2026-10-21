@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "../bin/setup.mjs";
-import { buildInstallPlan, detectPackageManager, detectProject, parseEnvExample } from "./detect-project.mjs";
+import { buildInstallPlan, buildLoginUrl, detectAppRoutes, detectPackageManager, detectProject, normalizeLoginPath, parseEnvExample } from "./detect-project.mjs";
 import { checkDependencies, getSetupPaths, initProject } from "./setup-api.mjs";
 import { resolveLanguageProfile } from "./polyglot.mjs";
 import { runSteps } from "./run-steps.mjs";
@@ -737,4 +737,34 @@ test("run-steps: adımları sırayla çalıştırır, skipIfExists'i atlar, ilk 
   assert.equal(fail.ok, false);
   assert.equal(fail.code, 3);
   assert.equal(fs.existsSync(path.join(dir, "b.txt")), false);
+});
+
+test("rotalar: giriş yolu ve dev portu sabit değil; yapılandırma/algılamadan gelir", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  fs.mkdirSync(path.join(dir, "client"));
+  fs.mkdirSync(path.join(dir, "server"));
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "x", scripts: { start: "node server/index.js" } }), "utf8");
+  fs.writeFileSync(path.join(dir, "server", "package.json"), JSON.stringify({ name: "s", dependencies: { express: "^4" } }), "utf8");
+  fs.writeFileSync(path.join(dir, "client", "package.json"), JSON.stringify({ name: "c", scripts: { dev: "vite --port 4321" }, dependencies: { react: "^18" } }), "utf8");
+  const d = detectProject(dir);
+  assert.equal(d.routes.devPort, 4321, "dev portu client script'inden algılanır");
+  assert.equal(d.routes.loginPath, "", "yapılandırma yoksa giriş yolu uygulama köküdür");
+
+  fs.writeFileSync(path.join(dir, "setup.config.json"), JSON.stringify({ app: { loginPath: "giris/" }, ports: { dev: 3001 } }), "utf8");
+  const configured = detectProject(dir);
+  assert.equal(configured.routes.loginPath, "/giris");
+  assert.equal(configured.routes.devPort, 3001);
+});
+
+test("rotalar: statik ve masaüstü senaryolarında dev portu/giriş yolu yoktur; yardımcılar güvenli", () => {
+  const routes = detectAppRoutes(os.tmpdir(), { isStaticOnly: true }, { app: { loginPath: "/auth" }, ports: { dev: 5173 } });
+  assert.deepEqual(routes, { loginPath: "", devPort: 5173 });
+  const desktop = detectAppRoutes(os.tmpdir(), { isDesktop: true }, { app: { loginPath: "/auth" }, ports: { dev: 5173 } });
+  assert.deepEqual(desktop, { loginPath: "", devPort: null });
+  assert.equal(normalizeLoginPath("https://evil.example/x"), "");
+  assert.equal(normalizeLoginPath("//evil.example"), "");
+  assert.equal(normalizeLoginPath("/"), "");
+  assert.equal(buildLoginUrl("http://localhost:5000/", "login"), "http://localhost:5000/login");
+  assert.equal(buildLoginUrl("http://localhost:5000", ""), "http://localhost:5000");
 });

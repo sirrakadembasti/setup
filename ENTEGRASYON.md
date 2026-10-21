@@ -755,3 +755,19 @@ Hedef reponun kök dizinindeki `setup.config.json` üzerinden portları, kurulum
 - **Kriptografik Oturum, CSRF ve Beyaz Liste CORS:** Her oturumda 24 baytlık tek kullanımlık token üretilir, `HttpOnly` + `SameSite=Strict` çerezleri (`setup.bootstrap`, `setup.wizard`) ve `crypto.timingSafeEqual` doğrulaması kullanılır. Yalnızca `SETUP_ALLOWED_ORIGINS` ile açıkça izin verilen masaüstü/SPA kökenlerine CORS yanıtı dönülür.
 - **SPA Gizli Bilgi İzolasyonu:** Statik ve SPA projelerinde üretilen `runtime-config.json` ve `env-config.js` dosyalarına yalnız `VITE_`, `PUBLIC_`, `NEXT_PUBLIC_` ve `REACT_APP_` önekli değişkenler dahil edilir; `SESSION_SECRET`, `ADMIN_PASSWORD_HASH`, `EMAIL_PASS` ve `DATABASE_URL` kesinlikle dışarıda bırakılır.
 - **Doğrulanmış Yedekleme:** Temiz kurulum öncesinde mevcut `.env`, veritabanı ve yüklenen dosyalar SHA-256 özetleriyle `backups/reinstall-<tarih>/manifest.json` altına yedeklenir.
+
+
+## Giriş yolu, dev portu ve `.env` kapsamı
+
+Sihirbaz sabit adres varsaymaz. İsteğe bağlı ayarlar (`setup.config.json`):
+
+```json
+{
+  "app": { "loginPath": "/login" },
+  "ports": { "app": 3000, "dev": 5173 }
+}
+```
+
+- `app.loginPath` (veya `SETUP_LOGIN_PATH`): kurulum sonrası açılacak giriş yolu. Verilmezse uygulama köküdür. Statik ve masaüstü senaryolarında yok sayılır.
+- `ports.dev` (veya `SETUP_DEV_PORT`): ayrı bir ön yüz dev sunucusu varsa portu. Verilmezse client `--port` script'inden veya `vite.config` `server.port` değerinden algılanır; bulunamazsa yalnız uygulama portu denetlenir.
+- Üretilen `.env` senaryoya göre sadedir: çekirdek ayarlar + `.env.example` değişkenleri. `TRUST_PROXY_HOPS`, `RETENTION_*`, `EMAIL_*` yalnızca etkinleştirilirse veya `.env.example` içinde varsa yazılır.

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
-import { detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
+import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
 import { resolveStepCommand } from "../scripts/polyglot.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
@@ -519,12 +519,16 @@ export function createSetupServer(token, options = {}) {
       undefined,
       databaseUrl,
       envExample.variables,
+      detection.scenario,
     );
     const temporaryEnv = `${envPath}.setup-${process.pid}`;
     const summary = [];
     const appUrl = publicAppUrl(payload);
     applyJob.publicUrl = appUrl;
-    applyJob.loginUrl = detection.scenario.isStaticOnly ? appUrl : `${appUrl.replace(/\/$/, "")}/auth`;
+    const loginPath = detection.scenario.isStaticOnly ? "" : detection.routes.loginPath;
+    applyJob.appUrl = appUrl;
+    applyJob.loginPath = loginPath;
+    applyJob.loginUrl = buildLoginUrl(appUrl, loginPath);
     applyJob.appPort = payload.server.port;
     applyJob.mode = payload.deployment.mode;
     applyJob.isDesktop = isDesktop;
@@ -853,13 +857,15 @@ export function createSetupServer(token, options = {}) {
       if (req.method === "GET" && reqUrl.pathname === "/api/app-health") {
         const mode = applyJob.mode ?? "localhost";
         const appPort = applyJob.appPort ?? 5000;
-        const devPort = 5173;
+        // Ayrı bir ön yüz dev sunucusu yalnızca algılandıysa/yapılandırıldıysa denetlenir (sabit port yok).
+        const devPort = detection.routes.devPort;
         const isLocal = mode === "localhost";
-        const uiPort = isLocal ? devPort : appPort;
+        const hasDevUi = isLocal && Boolean(devPort) && devPort !== appPort;
+        const uiPort = hasDevUi ? devPort : appPort;
         const apiReachable = await isPortOpen(appPort);
-        const uiReachable = isLocal ? await isPortOpen(uiPort) : apiReachable;
-        const reachable = isLocal ? uiReachable : apiReachable;
-        const loginUrl = isLocal && uiReachable && !detection.scenario.isStaticOnly ? `http://127.0.0.1:${devPort}/auth` : applyJob.loginUrl;
+        const uiReachable = hasDevUi ? await isPortOpen(uiPort) : apiReachable;
+        const reachable = hasDevUi ? uiReachable : apiReachable;
+        const loginUrl = hasDevUi && uiReachable && !detection.scenario.isStaticOnly ? buildLoginUrl(`http://127.0.0.1:${devPort}`, detection.routes.loginPath) : applyJob.loginUrl;
         return sendJson(res, 200, {
           reachable,
           apiReachable,

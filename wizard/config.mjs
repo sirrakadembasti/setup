@@ -173,7 +173,15 @@ export function verifyAdminPassword(password, storedHash) {
   return timingSafeEqual(actualBuf, expectedBuf);
 }
 
-export function buildServerEnv(payload, sessionSecret = createSessionSecret(), databaseUrl = "file:../data/app.db", extraEnvVars = []) {
+/**
+ * Senaryoya göre sade `.env` üretir. Her zaman yazılanlar: algılanan senaryonun gerektirdiği
+ * çekirdek ayarlar. İsteğe bağlı gruplar (TRUST_PROXY_HOPS, RETENTION_*, EMAIL_*,
+ * ALLOW_RUNTIME_DEPLOYMENT_CHANGES) yalnızca kullanıcı etkinleştirdiyse veya
+ * `.env.example` içinde bildirildiyse yazılır. `.env.example` değişkenleri ve
+ * `customEnv` değerleri her senaryoda eklenir.
+ * @param {object} [scenario] detectProject().scenario (verilmezse eski tam sunucu şablonu).
+ */
+export function buildServerEnv(payload, sessionSecret = createSessionSecret(), databaseUrl = "file:../data/app.db", extraEnvVars = [], scenario = null) {
   const deployment = payload.deployment;
   const basePath = normalizeBasePath(deployment.basePath);
   const publicAppUrl = `${deployment.publicUrl}${basePath === "/" ? "" : basePath}`;
@@ -184,81 +192,74 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     emailLogDays: 90,
     passwordResetDays: 90,
   };
-  const writtenKeys = new Set([
-    "DATABASE_URL",
-    "SESSION_SECRET",
-    "NODE_ENV",
-    "HOST",
-    "PORT",
-    "FRONTEND_URL",
-    "APP_BASE_PATH",
-    "ALLOWED_ORIGINS",
-    "TRUST_PROXY_HOPS",
-    "ALLOW_RUNTIME_DEPLOYMENT_CHANGES",
-    "RETENTION_ENABLED",
-    "RETENTION_ACTION_LOG_DAYS",
-    "RETENTION_READ_NOTIFICATION_DAYS",
-    "RETENTION_EMAIL_LOG_DAYS",
-    "RETENTION_PASSWORD_RESET_DAYS",
-    "EMAIL_PORT",
-    "EMAIL_USER",
-    "EMAIL_PASS",
-    "EMAIL_FROM",
-    "EMAIL_FROM_NAME",
-    "EMAIL_CONNECTION_TIMEOUT",
-    "EMAIL_GREETING_TIMEOUT",
-    "EMAIL_SOCKET_TIMEOUT",
-  ]);
+  const declared = new Set(
+    (Array.isArray(extraEnvVars) ? extraEnvVars : [])
+      .map((item) => (item && typeof item.key === "string" ? item.key : null))
+      .filter(Boolean),
+  );
+  const declaredAny = (prefix) => [...declared].some((key) => key === prefix || key.startsWith(prefix));
+
+  const isStatic = Boolean(scenario?.isStaticOnly);
+  const isDesktop = Boolean(scenario?.isDesktop);
+  // Tarayıcıda çalışan statik uygulamada sunucu sırrı/oturum anahtarı yoktur; masaüstünde sunucu ayarları gerekmez.
+  const needsServerCore = !isStatic && !isDesktop;
+  const needsDatabase = scenario ? Boolean(scenario.requiresDatabase) : true;
+
+  const writtenKeys = new Set();
   const lines = [
     "# setup kurulum sihirbazı tarafından oluşturuldu.",
     "# Gizli değerleri Git'e eklemeyin.",
-    `DATABASE_URL=${envValue(databaseUrl)}`,
-    `SESSION_SECRET=${envValue(sessionSecret)}`,
-    "NODE_ENV=production",
-    `HOST=${envValue(payload.server.host)}`,
-    `PORT=${payload.server.port}`,
-    `FRONTEND_URL=${envValue(deployment.publicUrl)}`,
-    `APP_BASE_PATH=${envValue(basePath)}`,
-    `ALLOWED_ORIGINS=${envValue(deployment.allowedOrigins.join(","))}`,
-    `TRUST_PROXY_HOPS=${deployment.trustProxyHops}`,
-    "ALLOW_RUNTIME_DEPLOYMENT_CHANGES=false",
-    `RETENTION_ENABLED=${retention.enabled ? "true" : "false"}`,
-    `RETENTION_ACTION_LOG_DAYS=${retention.actionLogDays}`,
-    `RETENTION_READ_NOTIFICATION_DAYS=${retention.readNotificationDays}`,
-    `RETENTION_EMAIL_LOG_DAYS=${retention.emailLogDays}`,
-    `RETENTION_PASSWORD_RESET_DAYS=${retention.passwordResetDays}`,
   ];
+  const put = (key, value) => {
+    lines.push(`${key}=${value}`);
+    writtenKeys.add(key);
+  };
+
+  if (needsDatabase) put("DATABASE_URL", envValue(databaseUrl));
+  if (needsServerCore) {
+    put("SESSION_SECRET", envValue(sessionSecret));
+    put("NODE_ENV", "production");
+    put("HOST", envValue(payload.server.host));
+    put("PORT", String(payload.server.port));
+    put("FRONTEND_URL", envValue(deployment.publicUrl));
+    put("APP_BASE_PATH", envValue(basePath));
+    put("ALLOWED_ORIGINS", envValue(deployment.allowedOrigins.join(",")));
+    if (deployment.trustProxyHops > 0 || declared.has("TRUST_PROXY_HOPS")) {
+      put("TRUST_PROXY_HOPS", String(deployment.trustProxyHops));
+    }
+    if (declared.has("ALLOW_RUNTIME_DEPLOYMENT_CHANGES")) put("ALLOW_RUNTIME_DEPLOYMENT_CHANGES", "false");
+    if (retention.enabled || declaredAny("RETENTION_")) {
+      put("RETENTION_ENABLED", retention.enabled ? "true" : "false");
+      put("RETENTION_ACTION_LOG_DAYS", String(retention.actionLogDays));
+      put("RETENTION_READ_NOTIFICATION_DAYS", String(retention.readNotificationDays));
+      put("RETENTION_EMAIL_LOG_DAYS", String(retention.emailLogDays));
+      put("RETENTION_PASSWORD_RESET_DAYS", String(retention.passwordResetDays));
+    }
+  } else if (isDesktop && declared.has("PORT")) {
+    put("PORT", String(payload.server.port));
+  }
 
   if (payload.admin && payload.admin.email) {
     const passwordHash = payload.admin.passwordHash || hashAdminPassword(payload.admin.password);
-    lines.push(
-      `ADMIN_NAME=${envValue(payload.admin.name)}`,
-      `ADMIN_EMAIL=${envValue(payload.admin.email)}`,
-      `ADMIN_PASSWORD_HASH=${envValue(passwordHash)}`,
-    );
-    writtenKeys.add("ADMIN_NAME");
-    writtenKeys.add("ADMIN_EMAIL");
-    writtenKeys.add("ADMIN_PASSWORD_HASH");
+    put("ADMIN_NAME", envValue(payload.admin.name));
+    put("ADMIN_EMAIL", envValue(payload.admin.email));
+    put("ADMIN_PASSWORD_HASH", envValue(passwordHash));
   }
 
-  lines.push("EMAIL_PORT=587");
-
-  if (payload.email.enabled) {
-    lines.push(
-      `EMAIL_USER=${envValue(payload.email.user)}`,
-      `EMAIL_PASS=${envValue(payload.email.password)}`,
-      `EMAIL_FROM=${envValue(payload.email.fromEmail)}`,
-      `EMAIL_FROM_NAME=${envValue(payload.email.fromName)}`,
-    );
-  } else {
-    lines.push("# Gmail gönderimi kurulum sırasında etkinleştirilmedi.");
+  if (needsServerCore && (payload.email?.enabled || declaredAny("EMAIL_"))) {
+    put("EMAIL_PORT", "587");
+    if (payload.email?.enabled) {
+      put("EMAIL_USER", envValue(payload.email.user));
+      put("EMAIL_PASS", envValue(payload.email.password));
+      put("EMAIL_FROM", envValue(payload.email.fromEmail));
+      put("EMAIL_FROM_NAME", envValue(payload.email.fromName));
+      put("EMAIL_CONNECTION_TIMEOUT", "10000");
+      put("EMAIL_GREETING_TIMEOUT", "10000");
+      put("EMAIL_SOCKET_TIMEOUT", "20000");
+    } else {
+      lines.push("# Gmail gönderimi kurulum sırasında etkinleştirilmedi.");
+    }
   }
-
-  lines.push(
-    "EMAIL_CONNECTION_TIMEOUT=10000",
-    "EMAIL_GREETING_TIMEOUT=10000",
-    "EMAIL_SOCKET_TIMEOUT=20000",
-  );
 
   const customEnv = payload.customEnv && typeof payload.customEnv === "object" ? payload.customEnv : {};
 

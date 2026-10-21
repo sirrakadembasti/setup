@@ -552,7 +552,7 @@ function finishApplySuccess(applyJob){
   };
   if(goApp)goApp.onclick=()=>{
     note.textContent='Adres açılıyor…';
-    location.href=isLocal?(loginUrl.replace(/\\/auth$/,'')):(publicUrl||loginUrl);
+    const lp=applyJob.loginPath||'';location.href=isLocal?((lp&&loginUrl.endsWith(lp))?loginUrl.slice(0,-lp.length):loginUrl):(publicUrl||loginUrl);
   };
   note.textContent=isLocal
     ? 'Kurulum tamam. “Uygulamayı başlat (dev)” ile uygulamayı arka planda açın; ardından giriş yapılabilir.'
