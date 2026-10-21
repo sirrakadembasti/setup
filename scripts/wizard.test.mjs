@@ -17,6 +17,7 @@ import {
   writePublicFrontendArtifacts,
 } from "../wizard/server.mjs";
 import { parseArgs } from "../bin/setup.mjs";
+import { resolveDesktopDataDir } from "../wizard/app-process.mjs";
 import {
   createSetupWizardCore,
   mountSetupGuard,
@@ -1312,6 +1313,15 @@ test("gömülü arayüz: mountSetupGuard sayfası /api/setup tabanını ve embed
 
 async function startDesktopFixture(t, appSource) {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-desktop-"));
+  // Masaüstü veri dizini varsayılanı gerçek AppData yerine geçici dizine yönlendirilir.
+  const userHome = fs.mkdtempSync(path.join(os.tmpdir(), "setup-desktop-userdata-"));
+  const prevUserHome = process.env.SETUP_USER_DATA_HOME;
+  process.env.SETUP_USER_DATA_HOME = userHome;
+  t.after(() => {
+    if (prevUserHome === undefined) delete process.env.SETUP_USER_DATA_HOME;
+    else process.env.SETUP_USER_DATA_HOME = prevUserHome;
+    fs.rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
   fs.writeFileSync(
     path.join(tmpRoot, "package.json"),
     JSON.stringify({ name: "desk-app", main: "main.js", scripts: { start: "node app.mjs" }, devDependencies: { electron: "^30.0.0" } }),
@@ -1351,7 +1361,7 @@ async function startDesktopFixture(t, appSource) {
     if (status.apply.status !== "running") break;
   }
   assert.equal(status.apply.status, "success", JSON.stringify(status.apply));
-  return { post, get, status };
+  return { post, get, status, tmpRoot, userHome };
 }
 
 test("masaüstü (Electron): start-app port yerine süreç denetler, app-health PID bildirir, kapanınca ayakta değil der", async (t) => {
@@ -1502,4 +1512,105 @@ test("wizard/config: sunucu senaryolarında SQLite DATABASE_URL, SESSION_SECRET 
   const nodeEnv = buildServerEnv(parsed, "s", "file:../data/app.db", [], node);
   assert.match(nodeEnv, /DATABASE_URL="file:\.\.\/data\/app\.db"/);
   assert.match(nodeEnv, /NODE_ENV=production/);
+});
+
+test("masaüstü: veri dizini varsayılanı kullanıcı verisi dizinidir; SETUP_DATA_DIR uygulamaya iletilir", async (t) => {
+  const { post, status, tmpRoot, userHome } = await startDesktopFixture(
+    t,
+    'import fs from "node:fs";\nfs.writeFileSync("seen.txt", process.env.SETUP_DATA_DIR || "none");\nsetInterval(() => {}, 1000);\n',
+  );
+  const dataDir = path.join(userHome, "desk-app");
+  assert.equal(fs.existsSync(path.join(dataDir, "installation.lock")), true, "kilit kullanıcı verisi dizinine yazılır");
+  assert.equal(fs.existsSync(path.join(tmpRoot, "data")), false, "proje dizinine veri yazılmaz");
+  assert.equal(status.apply.isDesktop, true);
+  const start = await post("/api/start-app", { mode: "desktop" });
+  assert.equal(start.status, 200);
+  for (let i = 0; i < 20 && !fs.existsSync(path.join(tmpRoot, "seen.txt")); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(fs.readFileSync(path.join(tmpRoot, "seen.txt"), "utf8"), dataDir);
+});
+
+test("resolveDesktopDataDir: yalnızca masaüstünde ve açık ayar yokken kullanıcı verisi dizinini seçer", () => {
+  const desktop = { scenario: { isDesktop: true }, projectName: "My App" };
+  const env = { APPDATA: "C:\\Users\\u\\AppData\\Roaming" };
+  assert.equal(resolveDesktopDataDir({ detection: desktop, env, platform: "win32" }), path.join("C:\\Users\\u\\AppData\\Roaming", "my-app"));
+  assert.equal(resolveDesktopDataDir({ detection: desktop, env: {}, platform: "darwin", homedir: "/Users/u" }), path.join("/Users/u", "Library", "Application Support", "my-app"));
+  assert.equal(resolveDesktopDataDir({ detection: desktop, env: { XDG_CONFIG_HOME: "/x" }, platform: "linux" }), path.join("/x", "my-app"));
+  assert.equal(resolveDesktopDataDir({ detection: desktop, env: { SETUP_USER_DATA_HOME: "/h" }, platform: "linux" }), path.resolve("/h", "my-app"));
+  // açık ayarlar önceliklidir
+  assert.equal(resolveDesktopDataDir({ detection: desktop, explicit: "/ext", env }), "/ext");
+  assert.equal(resolveDesktopDataDir({ detection: desktop, env: { SETUP_DATA_DIR: "/e" } }), null);
+  assert.equal(resolveDesktopDataDir({ detection: desktop, setupConfig: { paths: { dataDir: "data" } }, env }), null);
+  // masaüstü olmayan senaryo
+  assert.equal(resolveDesktopDataDir({ detection: { scenario: { isDesktop: false } }, env }), null);
+  assert.equal(resolveDesktopDataDir({ detection: { scenario: {} }, explicit: "/ext", env }), "/ext");
+});
+
+test("masaüstü IPC: core start-app süreci denetler, app-health PID verir, kilit sonrası da çalışır ve stopApp kapatır", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-ipc-start-"));
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "setup-ipc-start-data-"));
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({ name: "ipc-start", main: "main.js", scripts: { start: "node app.mjs" }, devDependencies: { electron: "^30.0.0" } }),
+    "utf8",
+  );
+  fs.writeFileSync(path.join(tmpRoot, "main.js"), "require('electron');\n", "utf8");
+  fs.writeFileSync(path.join(tmpRoot, "app.mjs"), "setInterval(() => {}, 1000);\n", "utf8");
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, dataDir: userData, ipcMode: true, syncApply: true, desktopGraceMs: 800, runBuildCommands: async () => {} });
+  t.after(async () => {
+    await core.stopApp();
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    fs.rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  const early = await core.handle({ method: "POST", path: "/api/start-app", body: {} });
+  assert.equal(early.status, 409, "kurulumdan önce başlatılamaz");
+  const before = await core.handle({ method: "GET", path: "/api/app-health" });
+  assert.equal(before.body.desktop, true);
+  assert.equal(before.body.reachable, false);
+
+  const apply = await core.handle({ method: "POST", path: "/api/apply", body: { ...VALID_PAYLOAD, admin: { name: "", email: "", password: "" }, wait: true } });
+  assert.equal(apply.status, 200, JSON.stringify(apply.body));
+  assert.equal(fs.existsSync(path.join(userData, "installation.lock")), true);
+
+  const start = await core.handle({ method: "POST", path: "/api/start-app", body: {} });
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  assert.equal(start.body.desktop, true);
+  assert.ok(start.body.pid > 0);
+  const health = await core.handle({ method: "GET", path: "/api/app-health" });
+  assert.equal(health.body.reachable, true);
+  assert.equal(health.body.pid, start.body.pid);
+
+  await core.stopApp();
+  const after = await core.handle({ method: "GET", path: "/api/app-health" });
+  assert.equal(after.body.reachable, false);
+});
+
+test("masaüstü IPC: core hemen kapanan uygulama için 409 döner; masaüstü olmayan projede uçlar yoktur", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-ipc-exit-"));
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "setup-ipc-exit-data-"));
+  t.after(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    fs.rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({ name: "ipc-exit", main: "main.js", scripts: { start: "node app.mjs" }, devDependencies: { electron: "^30.0.0" } }),
+    "utf8",
+  );
+  fs.writeFileSync(path.join(tmpRoot, "main.js"), "require('electron');\n", "utf8");
+  fs.writeFileSync(path.join(tmpRoot, "app.mjs"), "process.exit(3);\n", "utf8");
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, dataDir: userData, ipcMode: true, syncApply: true, desktopGraceMs: 1500, runBuildCommands: async () => {} });
+  await core.handle({ method: "POST", path: "/api/apply", body: { ...VALID_PAYLOAD, admin: { name: "", email: "", password: "" }, wait: true } });
+  const start = await core.handle({ method: "POST", path: "/api/start-app", body: {} });
+  assert.equal(start.status, 409);
+  assert.match(start.body.message, /hemen kapand/);
+  const health = await core.handle({ method: "GET", path: "/api/app-health" });
+  assert.equal(health.body.exitCode, 3);
+
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), "setup-ipc-plain-"));
+  t.after(() => fs.rmSync(plain, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(plain, "package.json"), JSON.stringify({ name: "plain", scripts: { start: "node x.js" } }), "utf8");
+  const other = createSetupWizardCore({ projectRoot: plain, dataDir: path.join(plain, "d"), ipcMode: true });
+  const res = await other.handle({ method: "GET", path: "/api/app-health" });
+  assert.equal(res.status, 404);
 });

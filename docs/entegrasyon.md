@@ -771,3 +771,9 @@ Sihirbaz sabit adres varsaymaz. İsteğe bağlı ayarlar (`setup.config.json`):
 - `app.loginPath` (veya `SETUP_LOGIN_PATH`): kurulum sonrası açılacak giriş yolu. Verilmezse uygulama köküdür. Statik ve masaüstü senaryolarında yok sayılır.
 - `ports.dev` (veya `SETUP_DEV_PORT`): ayrı bir ön yüz dev sunucusu varsa portu. Verilmezse client `--port` script'inden veya `vite.config` `server.port` değerinden algılanır; bulunamazsa yalnız uygulama portu denetlenir.
 - Üretilen `.env` senaryoya göre sadedir: çekirdek ayarlar + `.env.example` değişkenleri. `TRUST_PROXY_HOPS`, `RETENTION_*`, `EMAIL_*` yalnızca etkinleştirilirse veya `.env.example` içinde varsa yazılır.
+
+
+## Masaüstü (Electron/Tauri): IPC, veri dizini ve süreç denetimi
+
+- `createSetupWizardCore({ ipcMode: true })` masaüstü projesini algılar. `dataDir` vermezseniz (ve `SETUP_DATA_DIR` / `paths.dataDir` yoksa) veri **kullanıcı veri dizinine** yazılır: Windows `%APPDATA%\<proje>`, macOS `~/Library/Application Support/<proje>`, Linux `$XDG_CONFIG_HOME|~/.config/<proje>`. Proje dizinine veri yazılmaz.
+- `core.handle({ method: "POST", path: "/api/start-app" })` uygulamayı ayrı süreç olarak başlatır ve **portu değil süreci** denetler; `GET /api/app-health` PID ve çıkış kodunu verir. `await core.stopApp()` süreci kapatır. Başlatılan uygulamaya `SETUP_DATA_DIR` ve `.env` değişkenleri iletilir; uygulamanız yapılandırmayı `readSetupRuntimeConfig({ projectRoot, dataDir: core.dataDir })` ile okuyabilir.

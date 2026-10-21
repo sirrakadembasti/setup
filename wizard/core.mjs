@@ -17,6 +17,7 @@ import {
   verifyAdminPassword,
 } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
+import { createDesktopAppController, resolveDesktopDataDir } from "./app-process.mjs";
 import { equalSecret, pmRunInvocation, writePublicFrontendArtifacts } from "./server.mjs";
 
 function readJsonFileSafe(filePath) {
@@ -263,7 +264,6 @@ function validateStepData(step, data, options = {}) {
 
 export function createSetupWizardCore(options = {}) {
   const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
-  const dataDir = options.dataDir || null;
   // Tahmin edilebilir sabit anahtar yok: verilmezse işlem başına rastgele üretilir.
   // Sunucusuz (serverless) ortamlarda örnekler arası tutarlılık için `token` seçeneğini verin.
   const token = options.token || crypto.randomBytes(24).toString("base64url");
@@ -272,8 +272,19 @@ export function createSetupWizardCore(options = {}) {
   const enforceCsrf = !options.ipcMode && options.enforceCsrf !== false;
   const allowedOrigins = [].concat(options.allowedOrigins || []).map((o) => String(o).trim()).filter(Boolean);
   const setupConfig = loadSetupConfig(projectRoot);
-  const paths = getSetupPaths(projectRoot, { dataDir });
   const detection = detectProject(projectRoot);
+  // Masaüstü senaryosunda açık bir veri dizini yoksa kullanıcı veri dizini (AppData vb.) kullanılır.
+  const dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: options.dataDir });
+  const paths = getSetupPaths(projectRoot, { dataDir });
+  const isDesktop = Boolean(detection.scenario.isDesktop);
+  const desktopApp = createDesktopAppController({
+    projectRoot,
+    setupConfig,
+    getEnvPath: () => getSetupPaths(projectRoot, { dataDir }).env,
+    dataDir,
+    graceMs: Number(options.desktopGraceMs ?? 3000),
+    startInvocation: options.startAppInvocation || null,
+  });
 
   const csrfToken = crypto.createHmac("sha256", token).update("setup-wizard-csrf").digest("hex");
   const applyJob = createApplyState();
@@ -505,7 +516,8 @@ export function createSetupWizardCore(options = {}) {
     const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
 
     // Kurulum tamamlandıktan sonra sihirbaz kapanır: yalnız sade durum bilgisi (sır içermez) sunulur.
-    if (fs.existsSync(getSetupPaths(projectRoot, { dataDir }).lock)) {
+    const isDesktopAppRoute = isDesktop && ((method === "GET" && pathname === "/api/app-health") || (method === "POST" && pathname === "/api/start-app"));
+    if (!isDesktopAppRoute && fs.existsSync(getSetupPaths(projectRoot, { dataDir }).lock)) {
       if (method === "GET" && pathname === "/api/status") {
         return { status: 200, headers: jsonHeaders, body: { installed: true, title, apply: applyJob } };
       }
@@ -527,6 +539,20 @@ export function createSetupWizardCore(options = {}) {
       if (!originOk || !equalSecret(csrf, csrfToken)) {
         return { status: 403, headers: jsonHeaders, body: { ok: false, message: "Kurulum isteği güvenlik doğrulamasından geçmedi." } };
       }
+    }
+
+    // Masaüstü (Electron/Tauri): port yerine süreç denetlenir. Kurulum kilidi sonrası da erişilebilir.
+    if (isDesktop && method === "GET" && pathname === "/api/app-health") {
+      const result = desktopApp.health();
+      return { status: result.status, headers: jsonHeaders, body: result.body };
+    }
+
+    if (isDesktop && method === "POST" && pathname === "/api/start-app") {
+      if (applyJob.status !== "success" && !fs.existsSync(getSetupPaths(projectRoot, { dataDir }).lock)) {
+        return { status: 409, headers: jsonHeaders, body: { message: "Uygulamayı başlatmadan önce kurulum adımlarını tamamlayın." } };
+      }
+      const result = await desktopApp.start();
+      return { status: result.status, headers: jsonHeaders, body: result.body };
     }
 
     if (method === "GET" && (pathname === "/" || pathname === "/setup")) {
@@ -746,6 +772,8 @@ export function createSetupWizardCore(options = {}) {
     paths,
     csrfToken,
     handle,
+    stopApp: () => desktopApp.stop(),
+    dataDir,
     waitForApply,
     getRuntimeConfig,
     verifyAdmin,

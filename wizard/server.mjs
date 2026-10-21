@@ -13,6 +13,9 @@ import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, pa
 import { resolveStepCommand } from "../scripts/polyglot.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
+import { createDesktopAppController, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveAppStartInvocation, resolveDesktopDataDir } from "./app-process.mjs";
+// Geriye uyumluluk: bu yardımcılar eskiden bu modülden dışa aktarılıyordu.
+export { parseDotEnvFile, pmRunInvocation, resolveAppStartInvocation, resolvePnpmInvocation, wrapShimCommand } from "./app-process.mjs";
 
 function digest(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest();
@@ -172,162 +175,6 @@ export function createStaticAppServer(staticDir) {
   });
 }
 
-export function resolvePnpmInvocation(args) {
-  const pnpmScript = process.env.npm_execpath;
-  if (pnpmScript && /pnpm(?:\.c?js)?$/i.test(pnpmScript)) {
-    return { command: process.execPath, args: [pnpmScript, ...args] };
-  }
-  if (process.platform === "win32") {
-    return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", "pnpm", ...args] };
-  }
-  return { command: "pnpm", args };
-}
-
-export function pmRunInvocation(pm, scriptName, prefixDir = null) {
-  const safePm = ["pnpm", "yarn", "bun", "npm"].includes(pm) ? pm : "npm";
-  if (process.platform === "win32") {
-    return {
-      command: process.env.ComSpec || "cmd.exe",
-      args: ["/d", "/s", "/c", safePm, "run", scriptName],
-      cwd: prefixDir,
-    };
-  }
-  return {
-    command: safePm,
-    args: ["run", scriptName],
-    cwd: prefixDir,
-  };
-}
-
-function readJsonFileSafe(filePath) {
-  try {
-    if (!fs.existsSync(filePath)) return null;
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-export function parseDotEnvFile(envFilePath) {
-  const vars = {};
-  if (!envFilePath || !fs.existsSync(envFilePath)) return vars;
-  let content = "";
-  try {
-    content = fs.readFileSync(envFilePath, "utf8");
-  } catch {
-    return vars;
-  }
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!match) continue;
-    const key = match[1];
-    let val = match[2].trim();
-    if (val.startsWith('"') && val.endsWith('"')) {
-      try {
-        val = JSON.parse(val);
-      } catch {
-        val = val.slice(1, -1);
-      }
-    } else if (val.startsWith("'") && val.endsWith("'")) {
-      val = val.slice(1, -1);
-    }
-    vars[key] = String(val);
-  }
-  return vars;
-}
-
-function scriptToInvocation(scriptStr, pm, scriptName, cwd) {
-  const directNodeMatch = String(scriptStr || "").trim().match(/^node\s+([^\s&|;"']+)(?:\s+(.*))?$/);
-  if (directNodeMatch) {
-    const extraArgs = directNodeMatch[2] ? directNodeMatch[2].trim().split(/\s+/).filter(Boolean) : [];
-    return {
-      command: process.execPath,
-      args: [directNodeMatch[1], ...extraArgs],
-      cwd,
-    };
-  }
-  return pmRunInvocation(pm, scriptName, cwd);
-}
-
-const WINDOWS_CMD_SHIMS = new Set(["npm", "npx", "pnpm", "yarn", "bun", "bunx"]);
-
-/** Windows'ta npm/pnpm/yarn/bun/npx birer .cmd olduğundan doğrudan spawn edilemez (ENOENT). */
-export function wrapShimCommand(command, args = [], cwd) {
-  if (process.platform === "win32" && WINDOWS_CMD_SHIMS.has(String(command).toLowerCase())) {
-    return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", command, ...args], cwd };
-  }
-  return { command, args, cwd };
-}
-
-export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
-  const root = path.resolve(projectRoot);
-  const cfg = setupConfig ?? loadSetupConfig(root);
-  if (cfg?.start?.command && typeof cfg.start.command === "string") {
-    if (cfg.start.command === "static") {
-      return {
-        type: "static",
-        staticDir: path.resolve(root, cfg.start.args?.[0] || "."),
-      };
-    }
-    // python için proje içi .venv varsa onun yorumlayıcısı kullanılır
-    return wrapShimCommand(
-      resolveStepCommand(root, cfg.start),
-      Array.isArray(cfg.start.args) ? cfg.start.args : [],
-      root,
-    );
-  }
-
-  const rootPkg = readJsonFileSafe(path.join(root, "package.json"));
-  const serverPkg = readJsonFileSafe(path.join(root, "server", "package.json"));
-  const pm = cfg?.packageManager || detectPackageManager(root, rootPkg);
-
-  if (serverPkg?.scripts?.start) {
-    return scriptToInvocation(serverPkg.scripts.start, pm, "start", path.join(root, "server"));
-  }
-  if (rootPkg?.scripts?.start) {
-    return scriptToInvocation(rootPkg.scripts.start, pm, "start", root);
-  }
-  if (rootPkg?.scripts?.preview) {
-    return scriptToInvocation(rootPkg.scripts.preview, pm, "preview", root);
-  }
-  if (rootPkg?.scripts?.dev) {
-    return scriptToInvocation(rootPkg.scripts.dev, pm, "dev", root);
-  }
-
-  const entryCandidates = [
-    "server/index.mjs",
-    "server/index.js",
-    "index.mjs",
-    "index.js",
-    "server.js",
-    "app.js",
-  ];
-  for (const relEntry of entryCandidates) {
-    if (fs.existsSync(path.join(root, relEntry))) {
-      return {
-        command: process.execPath,
-        args: [relEntry],
-        cwd: root,
-      };
-    }
-  }
-
-  for (const relStatic of ["dist", "build", "public", "."]) {
-    const candidateDir = path.resolve(root, relStatic);
-    if (fs.existsSync(path.join(candidateDir, "index.html"))) {
-      return {
-        type: "static",
-        staticDir: candidateDir,
-      };
-    }
-  }
-
-  return null;
-}
-
 function runCommand(command, args, cwd, extraEnv = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
@@ -435,6 +282,9 @@ export function createSetupServer(token, options = {}) {
   const setupConfig = loadSetupConfig(projectRoot);
   const detection = detectProject(projectRoot);
 
+  // Masaüstü senaryosunda açık bir veri dizini yoksa kullanıcı veri dizini (AppData vb.) kullanılır.
+  const dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: options.dataDir });
+
   let serverRoot;
   let dataRoot;
   let envPath;
@@ -460,7 +310,7 @@ export function createSetupServer(token, options = {}) {
     artifactRoot = path.join(dataRoot, "setup-artifacts");
     databaseUrl = "file:./data/app.db";
   } else {
-    const paths = getSetupPaths(projectRoot, { dataDir: options.dataDir });
+    const paths = getSetupPaths(projectRoot, { dataDir });
     serverRoot = paths.serverRoot;
     dataRoot = paths.dataRoot;
     envPath = paths.env;
@@ -475,10 +325,16 @@ export function createSetupServer(token, options = {}) {
   const allowedOrigins = normalizeAllowedOrigins(options.allowedOrigins ?? process.env.SETUP_ALLOWED_ORIGINS);
   const applyJob = createApplyState();
   let appChild = null;
-  let appExit = null;
   let spawnedStaticServer = null;
   const isDesktop = Boolean(detection.scenario.isDesktop);
-  const childAlive = () => Boolean(appChild && appChild.exitCode === null && appChild.signalCode === null);
+  const desktopApp = createDesktopAppController({
+    projectRoot,
+    setupConfig,
+    getEnvPath: () => envPath,
+    dataDir,
+    graceMs: Number(options.desktopGraceMs ?? 3000),
+    startInvocation: options.startAppInvocation || null,
+  });
 
   const rateBuckets = new Map();
   function checkRateLimit(key, limit, windowMs) {
@@ -627,7 +483,7 @@ export function createSetupServer(token, options = {}) {
       const savedEnvRoot = process.env.SETUP_PROJECT_ROOT;
       process.env.SETUP_PROJECT_ROOT = projectRoot;
       try {
-        const config = saveDeploymentConfig(toDeploymentConfig(payload), "setup-wizard", projectRoot, { dataDir: options.dataDir });
+        const config = saveDeploymentConfig(toDeploymentConfig(payload), "setup-wizard", projectRoot, { dataDir });
         const artifacts = buildDeploymentArtifacts(config, payload.server.port);
         fs.mkdirSync(artifactRoot, { recursive: true });
         fs.writeFileSync(path.join(artifactRoot, "nginx.conf.example"), `${artifacts.nginxText}\n`, "utf8");
@@ -840,18 +696,8 @@ export function createSetupServer(token, options = {}) {
       }
 
       if (req.method === "GET" && reqUrl.pathname === "/api/app-health" && isDesktop) {
-        const alive = childAlive();
-        return sendJson(res, 200, {
-          desktop: true,
-          reachable: alive,
-          pid: alive ? appChild.pid : null,
-          exitCode: appExit?.code ?? null,
-          hint: alive
-            ? "Masaüstü uygulaması çalışıyor."
-            : appExit
-              ? `Masaüstü uygulaması kapandı (çıkış kodu: ${appExit.code ?? appExit.signal}).`
-              : "Masaüstü uygulaması henüz başlatılmadı.",
-        });
+        const result = desktopApp.health();
+        return sendJson(res, result.status, result.body);
       }
 
       if (req.method === "GET" && reqUrl.pathname === "/api/app-health") {
@@ -886,54 +732,8 @@ export function createSetupServer(token, options = {}) {
           return sendJson(res, 409, { message: "Uygulamayı başlatmadan önce kurulum adımlarını tamamlayın." });
         }
         if (isDesktop) {
-          if (childAlive()) {
-            return sendJson(res, 200, { message: "Masaüstü uygulaması zaten çalışıyor.", reachable: true, desktop: true, pid: appChild.pid });
-          }
-          const invocation = options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
-          if (!invocation || invocation.type === "static") {
-            return sendJson(res, 409, {
-              message: "Masaüstü uygulaması için başlatma komutu bulunamadı (setup.config.json start veya scripts.start).",
-              reachable: false,
-              desktop: true,
-            });
-          }
-          appExit = null;
-          const dotEnvVars = parseDotEnvFile(envPath);
-          let spawnError = null;
-          appChild = spawn(invocation.command, invocation.args, {
-            cwd: invocation.cwd || projectRoot,
-            env: { ...process.env, ...dotEnvVars },
-            detached: process.platform !== "win32",
-            windowsHide: false,
-            stdio: "ignore",
-          });
-          appChild.on("error", (err) => {
-            spawnError = err;
-          });
-          appChild.on("exit", (code, signal) => {
-            appExit = { code, signal };
-          });
-          appChild.unref();
-          // Masaüstü uygulamaları port açmaz: kısa bir süre ayakta kalıyorsa başlamış sayılır.
-          const graceMs = Number(options.desktopGraceMs ?? 3000);
-          const startedAt = Date.now();
-          while (Date.now() - startedAt < graceMs && !spawnError && childAlive()) {
-            await new Promise((r) => setTimeout(r, 100));
-          }
-          if (spawnError || !childAlive()) {
-            const reason = spawnError ? spawnError.message : `çıkış kodu ${appExit?.code ?? appExit?.signal ?? "bilinmiyor"}`;
-            return sendJson(res, 409, {
-              message: `Masaüstü uygulaması başlatılamadı veya hemen kapandı (${reason}).`,
-              reachable: false,
-              desktop: true,
-            });
-          }
-          return sendJson(res, 200, {
-            message: "Masaüstü uygulaması başlatıldı.",
-            reachable: true,
-            desktop: true,
-            pid: appChild.pid,
-          });
+          const result = await desktopApp.start();
+          return sendJson(res, result.status, result.body);
         }
 
         const appPort = applyJob.appPort || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
@@ -1063,6 +863,7 @@ export function createSetupServer(token, options = {}) {
       spawnedStaticServer = null;
       await new Promise((resolve) => srv.close(() => resolve()));
     }
+    await desktopApp.stop();
     if (!appChild) return;
     const child = appChild;
     const pid = child.pid;
