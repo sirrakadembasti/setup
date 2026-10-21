@@ -21,6 +21,7 @@ import {
   detectProject,
   loadSetupConfig,
 } from "./detect-project.mjs";
+import { resolveLanguageProfile } from "./polyglot.mjs";
 
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
 const setupRoot = path.resolve(scriptRoot, "..");
@@ -113,6 +114,15 @@ function pmInvocation(pm, args) {
   return { command: pm, args };
 }
 
+/** Çok adımlı (Python/Go/.NET/Rust) kurulum: adımlar scripts/run-steps.mjs ile sırayla çalışır. */
+function stepsInvocation(steps) {
+  return {
+    command: process.execPath,
+    args: [path.join(setupRoot, "scripts", "run-steps.mjs"), projectRoot],
+    env: { SETUP_STEPS: JSON.stringify(steps) },
+  };
+}
+
 function resolveWizardInvocation() {
   const serverPkgPath = path.join(projectRoot, "server", "package.json");
   if (fs.existsSync(serverPkgPath)) {
@@ -158,6 +168,9 @@ const hasNodePackageJson =
   fs.existsSync(path.join(projectRoot, "client", "package.json"));
 
 function resolveDefaultInstallCommand() {
+  if (Array.isArray(setupConfig?.install?.steps) && setupConfig.install.steps.length > 0) {
+    return { steps: setupConfig.install.steps };
+  }
   if (setupConfig?.install && Object.prototype.hasOwnProperty.call(setupConfig.install, "command")) {
     return {
       command: setupConfig.install.command,
@@ -167,12 +180,8 @@ function resolveDefaultInstallCommand() {
   if (!detection.scenario.requiresDependencies) {
     return { command: null, args: [] };
   }
-  if (!hasNodePackageJson) {
-    if (detection.kind === "python-server") return { command: "pip", args: ["install", "-r", "requirements.txt"] };
-    if (detection.kind === "go-server") return { command: "go", args: ["mod", "download"] };
-    if (detection.kind === "dotnet-server") return { command: "dotnet", args: ["restore"] };
-    if (detection.kind === "php-server") return { command: "composer", args: ["install"] };
-  }
+  const languageProfile = !hasNodePackageJson ? resolveLanguageProfile(projectRoot, detection.kind, detection.ports.app) : null;
+  if (languageProfile) return { steps: languageProfile.steps };
   return { command: activePackageManager, args: ["install"] };
 }
 
@@ -212,6 +221,7 @@ function startSubprocessJob(type, invocation, successMessage) {
 
   const childEnv = {
     ...process.env,
+    ...(invocation.env || {}),
     FORCE_COLOR: "0",
     SETUP_PROJECT_ROOT: projectRoot,
     SETUP_PROJECT_NAME: displayProjectName,
@@ -462,7 +472,11 @@ async function handler(req, res) {
         job.message = "Statik proje için paket kurulumu gerekmiyor; sihirbaza geçebilirsiniz.";
         return json(res, 200, { message: job.message });
       }
-      startSubprocessJob("dependencies", pmInvocation(installCmd.command, installCmd.args), "Paket ve kütüphane kurulumu tamamlandı.");
+      if (installCmd.steps) {
+        startSubprocessJob("dependencies", stepsInvocation(installCmd.steps), "Bağımlılık kurulumu ve doğrulaması tamamlandı.");
+      } else {
+        startSubprocessJob("dependencies", pmInvocation(installCmd.command, installCmd.args), "Paket ve kütüphane kurulumu tamamlandı.");
+      }
       return json(res, 202, { message: "Paket kurulumu başlatıldı." });
     }
     if (requestUrl.pathname === "/api/wizard") {

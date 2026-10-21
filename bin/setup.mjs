@@ -22,7 +22,7 @@ const VALID_COMMANDS = new Set(["detect", "plan", "setup", "wizard", "init", "ve
 const PASSTHROUGH_FLAGS = new Set(["--no-open", "--check-only", "--force"]);
 
 export function parseArgs(argv) {
-  const args = { command: "setup", root: process.cwd(), force: false, launchers: false, port: null, dataDir: null, error: null };
+  const args = { command: "setup", root: process.cwd(), force: false, launchers: true, updatePackageJson: false, port: null, dataDir: null, error: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--root") {
@@ -50,6 +50,10 @@ export function parseArgs(argv) {
       args.dataDir = path.resolve(argv[++i]);
     } else if (a === "--launchers") {
       args.launchers = true;
+    } else if (a === "--no-launchers") {
+      args.launchers = false;
+    } else if (a === "--update-package-json") {
+      args.updatePackageJson = true;
     } else if (a === "--help" || a === "-h") {
       args.command = "help";
     } else if (a === "--version" || a === "-v") {
@@ -76,7 +80,7 @@ setup ${v.fullTag} (${v.shortTag}) — Bağımsız GitHub Uygulama Kurulum Eklen
 Komutlar:
   setup    Kurulum başlatıcı arayüzünü aç (varsayılan, port 5049)
   wizard   Doğrudan web kurulum sihirbazını aç (port 5050)
-  init     Hedef GitHub reposuna setup.config.json yapılandırmasını entegre et
+  init     Hedef repoya setup.config.json ve kurulum.bat / kurulum.sh başlatıcılarını ekle
   detect   Dizini ve içeriği analiz et, kurulum planını JSON olarak yaz
   plan     detect ile aynı
   version  Sürüm bilgisini göster
@@ -86,7 +90,9 @@ Seçenekler:
   --root <yol>       Hedef uygulama kök dizini (varsayılan: cwd)
   --port <numara>    Sihirbaz veya başlatıcı portunu özelleştir
   --data-dir <yol>   Kurulum verileri ve .env için harici dizin belirt
-  --force, -f        init sırasında mevcut setup.config.json dosyasının üzerine yaz
+  --force, -f        init sırasında mevcut setup.config.json ve başlatıcıların üzerine yaz
+  --no-launchers     init sırasında kurulum.bat / kurulum.sh üretme
+  --update-package-json  init sırasında package.json'a "setup" script'i ekle (varsayılan: dokunma)
   --no-open          Tarayıcıyı otomatik açma
   --check-only       Yalnız durum JSON çıktısını ver ve çık
 
@@ -115,9 +121,11 @@ function main() {
     return;
   }
   if (args.command === "init") {
-    const res = initProject(args.root, { overwrite: args.force, updatePackageJson: true, createLaunchers: args.launchers });
+    const res = initProject(args.root, { overwrite: args.force, updatePackageJson: args.updatePackageJson, createLaunchers: args.launchers });
     console.log(`[setup] ${res.message}`);
-    process.exit(res.created ? 0 : 1);
+    if (res.launchersCreated) console.log("[setup] Başlatıcılar: kurulum.bat (Windows) / kurulum.sh (Linux/macOS)");
+    if (res.packageJsonUpdated) console.log("[setup] package.json içine \"setup\" script'i eklendi.");
+    process.exit(res.created || res.launchersCreated ? 0 : 1);
     return;
   }
 
@@ -133,7 +141,7 @@ function main() {
   console.log(`[setup v${getVersion()}] Proje: ${detection.projectName} (${detection.kind}, paket yöneticisi: ${detection.packageManager})`);
   console.log(`[setup] Kök: ${detection.root}`);
   if (plan.canInstall && !fs.existsSync(path.join(detection.root, "setup.config.json"))) {
-    initProject(detection.root, { overwrite: false, updatePackageJson: false });
+    initProject(detection.root, { overwrite: false, updatePackageJson: false, createLaunchers: false });
     console.log(`[setup] Otomatik tanı: ${detection.scenario.label}`);
     console.log("[setup] setup.config.json otomatik oluşturuldu.");
   } else {

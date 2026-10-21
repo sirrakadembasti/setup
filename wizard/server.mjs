@@ -10,6 +10,7 @@ import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
 import { detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
+import { resolveStepCommand } from "../scripts/polyglot.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
 
@@ -251,6 +252,16 @@ function scriptToInvocation(scriptStr, pm, scriptName, cwd) {
   return pmRunInvocation(pm, scriptName, cwd);
 }
 
+const WINDOWS_CMD_SHIMS = new Set(["npm", "npx", "pnpm", "yarn", "bun", "bunx"]);
+
+/** Windows'ta npm/pnpm/yarn/bun/npx birer .cmd olduğundan doğrudan spawn edilemez (ENOENT). */
+export function wrapShimCommand(command, args = [], cwd) {
+  if (process.platform === "win32" && WINDOWS_CMD_SHIMS.has(String(command).toLowerCase())) {
+    return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", command, ...args], cwd };
+  }
+  return { command, args, cwd };
+}
+
 export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
   const root = path.resolve(projectRoot);
   const cfg = setupConfig ?? loadSetupConfig(root);
@@ -261,11 +272,12 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
         staticDir: path.resolve(root, cfg.start.args?.[0] || "."),
       };
     }
-    return {
-      command: cfg.start.command,
-      args: Array.isArray(cfg.start.args) ? cfg.start.args : [],
-      cwd: root,
-    };
+    // python için proje içi .venv varsa onun yorumlayıcısı kullanılır
+    return wrapShimCommand(
+      resolveStepCommand(root, cfg.start),
+      Array.isArray(cfg.start.args) ? cfg.start.args : [],
+      root,
+    );
   }
 
   const rootPkg = readJsonFileSafe(path.join(root, "package.json"));
@@ -463,7 +475,10 @@ export function createSetupServer(token, options = {}) {
   const allowedOrigins = normalizeAllowedOrigins(options.allowedOrigins ?? process.env.SETUP_ALLOWED_ORIGINS);
   const applyJob = createApplyState();
   let appChild = null;
+  let appExit = null;
   let spawnedStaticServer = null;
+  const isDesktop = Boolean(detection.scenario.isDesktop);
+  const childAlive = () => Boolean(appChild && appChild.exitCode === null && appChild.signalCode === null);
 
   const rateBuckets = new Map();
   function checkRateLimit(key, limit, windowMs) {
@@ -512,6 +527,7 @@ export function createSetupServer(token, options = {}) {
     applyJob.loginUrl = detection.scenario.isStaticOnly ? appUrl : `${appUrl.replace(/\/$/, "")}/auth`;
     applyJob.appPort = payload.server.port;
     applyJob.mode = payload.deployment.mode;
+    applyJob.isDesktop = isDesktop;
 
     try {
       markStep("prepare", "running");
@@ -819,6 +835,21 @@ export function createSetupServer(token, options = {}) {
         });
       }
 
+      if (req.method === "GET" && reqUrl.pathname === "/api/app-health" && isDesktop) {
+        const alive = childAlive();
+        return sendJson(res, 200, {
+          desktop: true,
+          reachable: alive,
+          pid: alive ? appChild.pid : null,
+          exitCode: appExit?.code ?? null,
+          hint: alive
+            ? "Masaüstü uygulaması çalışıyor."
+            : appExit
+              ? `Masaüstü uygulaması kapandı (çıkış kodu: ${appExit.code ?? appExit.signal}).`
+              : "Masaüstü uygulaması henüz başlatılmadı.",
+        });
+      }
+
       if (req.method === "GET" && reqUrl.pathname === "/api/app-health") {
         const mode = applyJob.mode ?? "localhost";
         const appPort = applyJob.appPort ?? 5000;
@@ -848,6 +879,57 @@ export function createSetupServer(token, options = {}) {
         if (applyJob.status !== "success" && !fs.existsSync(lockPath)) {
           return sendJson(res, 409, { message: "Uygulamayı başlatmadan önce kurulum adımlarını tamamlayın." });
         }
+        if (isDesktop) {
+          if (childAlive()) {
+            return sendJson(res, 200, { message: "Masaüstü uygulaması zaten çalışıyor.", reachable: true, desktop: true, pid: appChild.pid });
+          }
+          const invocation = options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
+          if (!invocation || invocation.type === "static") {
+            return sendJson(res, 409, {
+              message: "Masaüstü uygulaması için başlatma komutu bulunamadı (setup.config.json start veya scripts.start).",
+              reachable: false,
+              desktop: true,
+            });
+          }
+          appExit = null;
+          const dotEnvVars = parseDotEnvFile(envPath);
+          let spawnError = null;
+          appChild = spawn(invocation.command, invocation.args, {
+            cwd: invocation.cwd || projectRoot,
+            env: { ...process.env, ...dotEnvVars },
+            detached: process.platform !== "win32",
+            windowsHide: false,
+            stdio: "ignore",
+          });
+          appChild.on("error", (err) => {
+            spawnError = err;
+          });
+          appChild.on("exit", (code, signal) => {
+            appExit = { code, signal };
+          });
+          appChild.unref();
+          // Masaüstü uygulamaları port açmaz: kısa bir süre ayakta kalıyorsa başlamış sayılır.
+          const graceMs = Number(options.desktopGraceMs ?? 3000);
+          const startedAt = Date.now();
+          while (Date.now() - startedAt < graceMs && !spawnError && childAlive()) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          if (spawnError || !childAlive()) {
+            const reason = spawnError ? spawnError.message : `çıkış kodu ${appExit?.code ?? appExit?.signal ?? "bilinmiyor"}`;
+            return sendJson(res, 409, {
+              message: `Masaüstü uygulaması başlatılamadı veya hemen kapandı (${reason}).`,
+              reachable: false,
+              desktop: true,
+            });
+          }
+          return sendJson(res, 200, {
+            message: "Masaüstü uygulaması başlatıldı.",
+            reachable: true,
+            desktop: true,
+            pid: appChild.pid,
+          });
+        }
+
         const appPort = applyJob.appPort || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
         if (await isPortOpen(appPort)) {
           return sendJson(res, 200, {

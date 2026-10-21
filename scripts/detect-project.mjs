@@ -249,6 +249,16 @@ function isPackageInUse(entry) {
   return Boolean(entry && (entry.used || (entry.declared && !entry.sourceScanned)));
 }
 
+/** Yalnız ön yüz araçlarını (vite, next, serve...) çalıştıran script, sunucu kanıtı sayılmaz. */
+const FRONTEND_CLI_PATTERN = /^(?:npx\s+|pnpm\s+(?:exec\s+)?|yarn\s+|bunx?\s+)?(?:cross-env\s+(?:\S+=\S+\s+)*)?(?:vite|next|nuxt|nuxi|astro|svelte-kit|react-scripts|vue-cli-service|webpack(?:-dev-server)?|parcel|serve|http-server|live-server|electron|electron-forge|tauri)(?:\s|$)/;
+
+function hasServerScript(pkg) {
+  return ["start", "dev"].some((name) => {
+    const cmd = String(pkg?.scripts?.[name] || "").trim();
+    return cmd !== "" && !FRONTEND_CLI_PATTERN.test(cmd);
+  });
+}
+
 function detectStack(root, usage) {
   const rootPkg = readJsonSafe(path.join(root, "package.json"));
   const hasServerSubdir =
@@ -265,7 +275,7 @@ function detectStack(root, usage) {
     exists(root, "src", "index.ts") ||
     exists(root, "src", "index.js") ||
     exists(root, "src", "server.ts") ||
-    Boolean(rootPkg?.scripts?.start || rootPkg?.scripts?.dev);
+    hasServerScript(rootPkg);
 
   const nextjs = isPackageInUse(usage.next) || exists(root, "next.config.js") || exists(root, "next.config.mjs");
   const nuxt = isPackageInUse(usage.nuxt) || exists(root, "nuxt.config.ts") || exists(root, "nuxt.config.js");
@@ -313,7 +323,7 @@ function detectStack(root, usage) {
       exists(root, "main.py"),
     go: exists(root, "go.mod") || exists(root, "main.go"),
     dotnet: hasFileWithSuffix(root, [".csproj", ".sln"]),
-    php: exists(root, "composer.json") || exists(root, "artisan") || exists(root, "index.php"),
+    rust: exists(root, "Cargo.toml") && !exists(root, "src-tauri", "tauri.conf.json") && !exists(root, "tauri.conf.json"),
     electron:
       isPackageInUse(usage.electron) ||
       Boolean(rootPkg?.main && isPackageInUse(usage.electron)) ||
@@ -383,7 +393,7 @@ export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
     };
   }
   if (
-    ["python-server", "go-server", "dotnet-server", "php-server"].includes(kind) ||
+    ["python-server", "go-server", "dotnet-server", "rust-server"].includes(kind) ||
     stack.fastify ||
     stack.koa ||
     stack.hono
@@ -391,7 +401,7 @@ export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
     return {
       id: "scenario-4-polyglot",
       number: 4,
-      label: "Senaryo 4: Çoklu Dil / Özel Sunucu Uygulaması (Python / Go / .NET / PHP / Fastify / Koa / Hono)",
+      label: "Senaryo 4: Çoklu Dil / Özel Sunucu Uygulaması (Python / Go / .NET / Rust / Fastify / Koa / Hono)",
       summary: "Dile özgü bağımlılık kurulumu, .env ve yönetici yapılandırması ve servis başlatma.",
       requiresDependencies: true,
       requiresDatabase: true,
@@ -475,11 +485,11 @@ export function detectProject(root = process.cwd()) {
   else if (stack.nodeServer && stack.client) kind = "node-webapp";
   else if (stack.nodeServer) kind = "node-server";
   else if (stack.client && validPkg) kind = "node-client";
-  else if (validPkg) kind = "node-package";
   else if (stack.python) kind = "python-server";
   else if (stack.go) kind = "go-server";
   else if (stack.dotnet) kind = "dotnet-server";
-  else if (stack.php) kind = "php-server";
+  else if (stack.rust) kind = "rust-server";
+  else if (validPkg) kind = "node-package";
   else if (stack.staticHtml) kind = "static-web";
   else if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) kind = "directory";
 
@@ -539,7 +549,7 @@ export function buildInstallPlan(detection) {
     detection.stack.python ||
     detection.stack.go ||
     detection.stack.dotnet ||
-    detection.stack.php ||
+    detection.stack.rust ||
     detection.stack.staticHtml ||
     Boolean(detection.setupConfig?.install?.command);
 
@@ -564,13 +574,13 @@ export function buildInstallPlan(detection) {
       required: true,
     });
   } else if (detection.stack.python) {
-    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (Python / pip)", required: true });
+    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (Python venv + pip) + pip check", required: true });
   } else if (detection.stack.go) {
-    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (go mod download)", required: true });
+    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (go mod download) + go build doğrulaması", required: true });
   } else if (detection.stack.dotnet) {
-    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (dotnet restore)", required: true });
-  } else if (detection.stack.php) {
-    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (composer install)", required: true });
+    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (dotnet restore) + dotnet build doğrulaması", required: true });
+  } else if (detection.stack.rust) {
+    steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (cargo fetch) + derleme doğrulaması (cargo check)", required: true });
   }
 
   steps.push({ id: "wizard", label: `Web kurulum sihirbazı (${detection.ports?.wizard || 5050})`, optional: false });

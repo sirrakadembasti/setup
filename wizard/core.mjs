@@ -110,6 +110,15 @@ export function readSetupRuntimeConfig(rootOrOptions = process.cwd()) {
   };
 }
 
+/** HTTP üzerinden sunulabilecek, gizli anahtar ve parola özeti içermeyen çalışma anı görünümü. */
+export function publicRuntimeConfig(runtime) {
+  return {
+    installed: runtime.installed,
+    deployment: runtime.deployment,
+    admin: runtime.admin ? { name: runtime.admin.name || "", email: runtime.admin.email || "" } : null,
+  };
+}
+
 export function verifyAdminCredentials(rootOrOptions, email, password) {
   const runtime = readSetupRuntimeConfig(rootOrOptions);
   const admin = runtime.admin;
@@ -255,8 +264,13 @@ function validateStepData(step, data, options = {}) {
 export function createSetupWizardCore(options = {}) {
   const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
   const dataDir = options.dataDir || null;
-  const token = options.token || "embedded-setup-wizard-token-123456";
+  // Tahmin edilebilir sabit anahtar yok: verilmezse işlem başına rastgele üretilir.
+  // Sunucusuz (serverless) ortamlarda örnekler arası tutarlılık için `token` seçeneğini verin.
+  const token = options.token || crypto.randomBytes(24).toString("base64url");
   const requireAuth = Boolean(options.requireAuth && !options.ipcMode && options.auth !== false);
+  // IPC (Electron) dışındaki her kullanım HTTP üzerinden erişilebilir kabul edilir; CSRF + Origin zorunludur.
+  const enforceCsrf = !options.ipcMode && options.enforceCsrf !== false;
+  const allowedOrigins = [].concat(options.allowedOrigins || []).map((o) => String(o).trim()).filter(Boolean);
   const setupConfig = loadSetupConfig(projectRoot);
   const paths = getSetupPaths(projectRoot, { dataDir });
   const detection = detectProject(projectRoot);
@@ -301,9 +315,10 @@ export function createSetupWizardCore(options = {}) {
     const summary = [];
     const appUrl = publicAppUrl(payload);
     applyJob.publicUrl = appUrl;
-    applyJob.loginUrl = detection.scenario.isStaticOnly ? appUrl : `${appUrl.replace(/\/$/, "")}/auth`;
+    applyJob.loginUrl = detection.scenario.isStaticOnly || options.embedded ? appUrl : `${appUrl.replace(/\/$/, "")}/auth`;
     applyJob.appPort = payload.server.port;
     applyJob.mode = payload.deployment.mode;
+    applyJob.isDesktop = Boolean(detection.scenario.isDesktop);
 
     try {
       markStep("prepare", "running");
@@ -483,6 +498,32 @@ export function createSetupWizardCore(options = {}) {
     }
 
     const title = options.title || setupConfig?.wizard?.title || "Uygulama Kurulum Sihirbazı";
+    const jsonHeaders = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+
+    // Kurulum tamamlandıktan sonra sihirbaz kapanır: yalnız sade durum bilgisi (sır içermez) sunulur.
+    if (fs.existsSync(getSetupPaths(projectRoot, { dataDir }).lock)) {
+      if (method === "GET" && pathname === "/api/status") {
+        return { status: 200, headers: jsonHeaders, body: { installed: true, title, apply: applyJob } };
+      }
+      return { status: 404, headers: jsonHeaders, body: { ok: false, installed: true, message: "Kurulum tamamlandı; sihirbaz kapalı." } };
+    }
+
+    if (enforceCsrf && method !== "GET" && method !== "HEAD") {
+      const origin = String(headers.origin || "").trim();
+      const host = String(headers.host || "").trim().toLowerCase();
+      let originOk = true;
+      if (origin) {
+        try {
+          originOk = allowedOrigins.includes(origin) || (Boolean(host) && new URL(origin).host.toLowerCase() === host);
+        } catch {
+          originOk = false;
+        }
+      }
+      const csrf = String(headers["x-setup-csrf"] || "");
+      if (!originOk || !equalSecret(csrf, csrfToken)) {
+        return { status: 403, headers: jsonHeaders, body: { ok: false, message: "Kurulum isteği güvenlik doğrulamasından geçmedi." } };
+      }
+    }
 
     if (method === "GET" && (pathname === "/" || pathname === "/setup")) {
       return {
@@ -491,7 +532,7 @@ export function createSetupWizardCore(options = {}) {
           "content-type": "text/html; charset=utf-8",
           "cache-control": "no-store",
         },
-        body: renderSetupPage(csrfToken, { title }),
+        body: renderSetupPage(csrfToken, { title, apiBase: options.apiBase, embedded: options.embedded }),
       };
     }
 
@@ -544,7 +585,7 @@ export function createSetupWizardCore(options = {}) {
       return {
         status: 200,
         headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
-        body: getRuntimeConfig(),
+        body: publicRuntimeConfig(getRuntimeConfig()),
       };
     }
 
@@ -695,6 +736,7 @@ export function createSetupWizardCore(options = {}) {
 
   return {
     paths,
+    csrfToken,
     handle,
     waitForApply,
     getRuntimeConfig,
@@ -751,6 +793,8 @@ export function mountSetupGuard(appOrOptions = {}, maybeOptions = {}) {
     ...options,
     projectRoot,
     dataDir,
+    embedded: embedWizard,
+    apiBase: options.apiBase || (embedWizard ? "/api/setup" : "/api"),
   });
 
   const middleware = async function setupGuardMiddleware(req, res, next) {

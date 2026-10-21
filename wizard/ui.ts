@@ -298,6 +298,8 @@ if(adminPwd){
   adminPwd.addEventListener('input',()=>{renderPasswordRules();fieldError(adminPwd,adminPasswordError(adminPwd.value))});
   renderPasswordRules();
 }
+const API=(window.__SETUP__&&window.__SETUP__.apiBase)||'/api';
+const EMBEDDED=Boolean(window.__SETUP__&&window.__SETUP__.embedded);
 async function fetchJson(url,options){
   const r=await fetch(url,options);
   const text=await r.text();
@@ -311,7 +313,7 @@ async function fetchJson(url,options){
 async function loadStatus(){
   checks.textContent='Kontrol ediliyor…';
   try{
-    const {ok,status,data:s}=await fetchJson('/api/status');
+    const {ok,status,data:s}=await fetchJson(API+'/status');
     if(!ok)throw new Error(s&&s.message?s.message:('Sunucu ön kontrolü başarısız ('+status+')'));
     const rows=Object.entries(s.checks).map(([k,v])=>{
       const label=CHECK_LABELS[k]||k;
@@ -390,7 +392,7 @@ wizard.onsubmit=async e=>{
   });
   const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy')),retention:{enabled:f.has('retention'),actionLogDays:Number(f.get('actionDays')),readNotificationDays:Number(f.get('notificationDays')),emailLogDays:Number(f.get('emailDays')),passwordResetDays:Number(f.get('passwordDays'))}},server:{host:f.get('host'),port:Number(f.get('port'))},admin:isOptionalEmptyAdmin?{name:'',email:'',password:''}:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:enabled?{enabled:true,user:f.get('emailUser'),password:f.get('emailPassword'),fromEmail:f.get('fromEmail'),fromName:f.get('fromName')}:{enabled:false},customEnv,buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
   try{
-    const start=await fetchJson('/api/apply',{method:'POST',headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},body:JSON.stringify(payload)});
+    const start=await fetchJson(API+'/apply',{method:'POST',headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},body:JSON.stringify(payload)});
     const startData=start.data||{};
     if(start.status===400&&startData.issues){
       const issueText='\\n'+startData.issues.map(i=>'• '+((i.message)||i.code)+((i.path&&i.path.length)?' ('+i.path.join('.')+')':'')).join('\\n');
@@ -450,6 +452,53 @@ function finishApplySuccess(applyJob){
     note.textContent='Giriş sayfası açılıyor…';
     location.href=url||loginUrl;
   };
+  if(applyJob.isDesktop&&!EMBEDDED){
+    // Masaüstü (Electron/Tauri): port/adres yok; uygulama ayrı bir pencerede açılır, durum süreçten okunur.
+    list.innerHTML=[
+      'Aşağıdaki <strong>Masaüstü uygulamasını başlat</strong> düğmesi uygulamayı ayrı bir pencerede açar; tarayıcı adresi yoktur.',
+      'Gizli değerler yalnız <code>.env</code> içindedir; Git’e eklemeyin.',
+    ].map(x=>'<li>'+x+'</li>').join('');
+    if(goApp){goApp.hidden=true;goApp.classList.add('hidden')}
+    if(goLogin){goLogin.textContent='Uygulama durumunu denetle'}
+    const checkDesktop=async()=>{
+      const {data}=await fetchJson(API+'/app-health');
+      note.textContent=(data&&data.hint)||'Durum okunamadı.';
+      return Boolean(data&&data.reachable);
+    };
+    if(goLogin)goLogin.onclick=async()=>{goLogin.disabled=true;try{await checkDesktop()}catch(err){note.textContent=err.message||'Denetim başarısız.'}goLogin.disabled=false};
+    if(startBtn){
+      startBtn.hidden=false;
+      startBtn.classList.remove('hidden');
+      startBtn.disabled=false;
+      startBtn.textContent='Masaüstü uygulamasını başlat';
+      startBtn.onclick=async()=>{
+        startBtn.disabled=true;
+        note.textContent='Masaüstü uygulaması başlatılıyor…';
+        try{
+          const {data}=await fetchJson(API+'/start-app',{
+            method:'POST',
+            headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},
+            body:JSON.stringify({mode:'desktop'}),
+          });
+          note.textContent=(data&&data.message)||'Başlatma isteği gönderildi.';
+          if(data&&data.reachable){startBtn.textContent='Masaüstü uygulaması çalışıyor';return}
+        }catch(err){
+          note.textContent=err.message||'Uygulama başlatılamadı.';
+        }
+        startBtn.disabled=false;
+      };
+    }
+    note.textContent='Kurulum tamam. Masaüstü uygulamasını başlatabilirsiniz.';
+    return;
+  }
+  if(EMBEDDED){
+    // Gömülü kurulum: uygulama zaten bu sunucudur; ayrı başlatma/sağlık uçları yoktur.
+    if(startBtn){startBtn.hidden=true;startBtn.classList.add("hidden")}
+    if(goLogin)goLogin.onclick=()=>openLogin(loginUrl);
+    if(goApp)goApp.onclick=()=>{note.textContent="Adres açılıyor…";location.href=publicUrl||loginUrl};
+    note.textContent="Kurulum tamam. Uygulama bu sunucu üzerinde hazır; devam etmek için düğmeyi kullanın.";
+    return;
+  }
   if(startBtn){
     startBtn.hidden=false;
     startBtn.classList.remove('hidden');
@@ -462,7 +511,7 @@ function finishApplySuccess(applyJob){
         ? 'Geliştirme sunucusu arka planda başlatılıyor; terminal penceresi açılmaz…'
         : 'Uygulama servisi başlatılıyor…';
       try{
-        const {data}=await fetchJson('/api/start-app',{
+        const {data}=await fetchJson(API+'/start-app',{
           method:'POST',
           headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},
           body:JSON.stringify(isLocal?{mode:'dev'}:{mode:'production'}),
@@ -486,7 +535,7 @@ function finishApplySuccess(applyJob){
     goLogin.disabled=true;
     note.textContent='Uygulama denetleniyor…';
     try{
-      const {data}=await fetchJson('/api/app-health');
+      const {data}=await fetchJson(API+'/app-health');
       if(data&&data.reachable){
         openLogin(data.loginUrl||loginUrl);
         return;
@@ -512,7 +561,7 @@ function finishApplySuccess(applyJob){
 async function watchAppHealth(loginUrl,note,isLocal){
   for(let i=0;i<30;i++){
     try{
-      const {data}=await fetchJson('/api/app-health');
+      const {data}=await fetchJson(API+'/app-health');
       if(data&&data.reachable){
         note.textContent='Uygulama ayakta. Giriş sayfasına yönlendiriliyorsunuz…';
         setTimeout(()=>{location.href=loginUrl},1200);
@@ -526,7 +575,7 @@ async function pollApplyProgress(){
   let failures=0;
   for(let i=0;i<240;i++){
     try{
-      const {ok,status,data:s}=await fetchJson('/api/status');
+      const {ok,status,data:s}=await fetchJson(API+'/status');
       if(!ok&&status===429){
         failures+=1;
         if(failures>8)throw new Error('Sunucu istek limiti aşıldı. Birkaç dakika sonra tekrar deneyin.');

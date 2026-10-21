@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { buildInstallPlan, detectPackageManager, detectProject, detectScenarioProfile, DEFAULT_PORTS, loadSetupConfig, parseEnvExample } from "./detect-project.mjs";
+import { resolveLanguageProfile } from "./polyglot.mjs";
 import { getVersion, parseSemver } from "./version.mjs";
 
 export { buildInstallPlan, detectPackageManager, detectProject, detectScenarioProfile, DEFAULT_PORTS, loadSetupConfig, parseEnvExample };
@@ -41,10 +42,63 @@ export async function inspect(root = process.cwd()) {
 }
 
 /**
+ * Hedef projeye çift tıklanabilir kurulum.bat / kurulum.sh başlatıcılarını yazar.
+ * Mevcut dosyaların üzerine yalnız overwrite=true ise yazılır.
+ * @returns {boolean} en az bir başlatıcı yazıldıysa true
+ */
+function writeLaunchers(resolved, overwrite) {
+  let launchersCreated = false;
+  const batPath = path.join(resolved, "kurulum.bat");
+  const shPath = path.join(resolved, "kurulum.sh");
+  if (!fs.existsSync(batPath) || overwrite) {
+    const batContent = [
+      "@echo off",
+      "setlocal EnableExtensions",
+      "chcp 65001 >nul",
+      "cd /d \"%~dp0\"",
+      "if exist \"tools\\setup\\bin\\setup.mjs\" (",
+      "  node \"tools\\setup\\bin\\setup.mjs\" %*",
+      ") else if exist \"node_modules\\setup\\bin\\setup.mjs\" (",
+      "  node \"node_modules\\setup\\bin\\setup.mjs\" %*",
+      ") else (",
+      "  npx --yes github:sirrakadembasti/setup %*",
+      ")",
+      "",
+    ].join("\r\n");
+    fs.writeFileSync(batPath, batContent, "utf8");
+    launchersCreated = true;
+  }
+  if (!fs.existsSync(shPath) || overwrite) {
+    const shContent = [
+      "#!/usr/bin/env sh",
+      "set -u",
+      "cd \"$(dirname \"$0\")\" || exit 1",
+      "if [ -f \"tools/setup/bin/setup.mjs\" ]; then",
+      "  exec node \"tools/setup/bin/setup.mjs\" \"$@\"",
+      "elif [ -f \"node_modules/setup/bin/setup.mjs\" ]; then",
+      "  exec node \"node_modules/setup/bin/setup.mjs\" \"$@\"",
+      "else",
+      "  exec npx --yes github:sirrakadembasti/setup \"$@\"",
+      "fi",
+      "",
+    ].join("\n");
+    fs.writeFileSync(shPath, shContent, { encoding: "utf8", mode: 0o755 });
+    try {
+      fs.chmodSync(shPath, 0o755);
+    } catch {
+      /* Windows'ta chmod göz ardı edilir */
+    }
+    launchersCreated = true;
+  }
+  return launchersCreated;
+}
+
+/**
  * Herhangi bir GitHub reposuna setup.config.json yapılandırmasını ve
  * isteğe bağlı package.json kurulum betiklerini entegre eder.
  * @param {string} root
- * @param {{ overwrite?: boolean, updatePackageJson?: boolean, setupBin?: string }} options
+ * @param {{ overwrite?: boolean, updatePackageJson?: boolean, createLaunchers?: boolean, setupBin?: string }} options
+ * `createLaunchers` varsayılan olarak açıktır (kapatmak için false); `updatePackageJson` varsayılan olarak kapalıdır.
  */
 export function initProject(root = process.cwd(), options = {}) {
   const resolved = path.resolve(root);
@@ -52,11 +106,15 @@ export function initProject(root = process.cwd(), options = {}) {
   const configPath = path.join(resolved, "setup.config.json");
 
   if (fs.existsSync(configPath) && !options.overwrite) {
+    const launchersCreated = options.createLaunchers === false ? false : writeLaunchers(resolved, false);
     return {
       created: false,
       configPath,
+      launchersCreated,
       detection,
-      message: "setup.config.json zaten mevcut. Üzerine yazmak için --force kullanın.",
+      message: launchersCreated
+        ? "setup.config.json zaten mevcut; eksik başlatıcılar (kurulum.bat / kurulum.sh) eklendi. Yapılandırmanın üzerine yazmak için --force kullanın."
+        : "setup.config.json zaten mevcut. Üzerine yazmak için --force kullanın.",
     };
   }
 
@@ -85,46 +143,16 @@ export function initProject(root = process.cwd(), options = {}) {
   };
   let start = null;
 
-  if (detection.kind === "python-server") {
+  const languageProfile = resolveLanguageProfile(resolved, detection.kind, detection.ports.app);
+  if (languageProfile) {
+    const [primary] = languageProfile.steps.filter((step) => !step.skipIfExists);
     install = {
-      command: "pip",
-      args: exists(resolved, "requirements.txt") ? ["install", "-r", "requirements.txt"] : ["install", "-e", "."],
+      command: primary.command,
+      args: primary.args,
+      steps: languageProfile.steps,
       requireWorkspaces: false,
     };
-    start = {
-      command: "python",
-      args: exists(resolved, "manage.py") ? ["manage.py", "runserver", `127.0.0.1:${detection.ports.app}`] : ["app.py"],
-    };
-  } else if (detection.kind === "go-server") {
-    install = {
-      command: "go",
-      args: ["mod", "download"],
-      requireWorkspaces: false,
-    };
-    start = {
-      command: "go",
-      args: ["run", "."],
-    };
-  } else if (detection.kind === "dotnet-server") {
-    install = {
-      command: "dotnet",
-      args: ["restore"],
-      requireWorkspaces: false,
-    };
-    start = {
-      command: "dotnet",
-      args: ["run", "--urls", `http://127.0.0.1:${detection.ports.app}`],
-    };
-  } else if (detection.kind === "php-server") {
-    install = {
-      command: "composer",
-      args: ["install"],
-      requireWorkspaces: false,
-    };
-    start = {
-      command: "php",
-      args: ["-S", `127.0.0.1:${detection.ports.app}`],
-    };
+    start = languageProfile.start;
   } else if (detection.kind === "static-web") {
     install = {
       command: null,
@@ -135,6 +163,17 @@ export function initProject(root = process.cwd(), options = {}) {
       command: "static",
       args: ["."],
     };
+  } else if (detection.stack.electron || detection.stack.tauri) {
+    const scripts = existingPkg?.scripts || {};
+    if (detection.stack.tauri && scripts.tauri) {
+      start = { command: pm, args: ["run", "tauri", "dev"] };
+    } else if (scripts.start) {
+      start = { command: pm, args: ["run", "start"] };
+    } else if (detection.stack.electron) {
+      start = { command: "npx", args: ["electron", "."] };
+    } else if (scripts.dev) {
+      start = { command: pm, args: ["run", "dev"] };
+    }
   } else if (existingPkg?.scripts?.start) {
     start = {
       command: pm,
@@ -223,51 +262,7 @@ export function initProject(root = process.cwd(), options = {}) {
     }
   }
 
-  let launchersCreated = false;
-  if (options.createLaunchers === true) {
-    const batPath = path.join(resolved, "kurulum.bat");
-    const shPath = path.join(resolved, "kurulum.sh");
-    if (!fs.existsSync(batPath) || options.overwrite) {
-      const batContent = [
-        "@echo off",
-        "setlocal EnableExtensions",
-        "chcp 65001 >nul",
-        "cd /d \"%~dp0\"",
-        "if exist \"tools\\setup\\bin\\setup.mjs\" (",
-        "  node \"tools\\setup\\bin\\setup.mjs\" %*",
-        ") else if exist \"node_modules\\setup\\bin\\setup.mjs\" (",
-        "  node \"node_modules\\setup\\bin\\setup.mjs\" %*",
-        ") else (",
-        "  npx --yes github:sirrakadembasti/setup %*",
-        ")",
-        "",
-      ].join("\r\n");
-      fs.writeFileSync(batPath, batContent, "utf8");
-      launchersCreated = true;
-    }
-    if (!fs.existsSync(shPath) || options.overwrite) {
-      const shContent = [
-        "#!/usr/bin/env sh",
-        "set -u",
-        "cd \"$(dirname \"$0\")\" || exit 1",
-        "if [ -f \"tools/setup/bin/setup.mjs\" ]; then",
-        "  exec node \"tools/setup/bin/setup.mjs\" \"$@\"",
-        "elif [ -f \"node_modules/setup/bin/setup.mjs\" ]; then",
-        "  exec node \"node_modules/setup/bin/setup.mjs\" \"$@\"",
-        "else",
-        "  exec npx --yes github:sirrakadembasti/setup \"$@\"",
-        "fi",
-        "",
-      ].join("\n");
-      fs.writeFileSync(shPath, shContent, { encoding: "utf8", mode: 0o755 });
-      try {
-        fs.chmodSync(shPath, 0o755);
-      } catch {
-        /* Windows'ta chmod göz ardı edilir */
-      }
-      launchersCreated = true;
-    }
-  }
+  const launchersCreated = options.createLaunchers === false ? false : writeLaunchers(resolved, Boolean(options.overwrite));
 
   return {
     created: true,

@@ -700,6 +700,7 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
   // 3. POST /api/validate-step adım doğrulaması
   const badAdminStep = await core.handle({
     method: "POST",
+    headers: { "x-setup-csrf": core.csrfToken },
     path: "/api/validate-step",
     body: { step: "admin", data: { name: "A", email: "bad", password: "short" } },
   });
@@ -708,6 +709,7 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
 
   const goodAdminStep = await core.handle({
     method: "POST",
+    headers: { "x-setup-csrf": core.csrfToken },
     path: "/api/validate-step",
     body: { step: "admin", data: VALID_PAYLOAD.admin },
   });
@@ -717,6 +719,7 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
   // 4. POST /api/test-smtp doğrulaması
   const badSmtp = await core.handle({
     method: "POST",
+    headers: { "x-setup-csrf": core.csrfToken },
     path: "/api/test-smtp",
     body: { enabled: true, user: "a@yahoo.com", fromEmail: "a@yahoo.com", fromName: "Test", password: "short" },
   });
@@ -725,6 +728,7 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
 
   const goodSmtp = await core.handle({
     method: "POST",
+    headers: { "x-setup-csrf": core.csrfToken },
     path: "/api/test-smtp",
     body: { enabled: false },
   });
@@ -734,6 +738,7 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
   // 5. POST /api/apply (wait: true ile senkron tamamlanma)
   const applyRes = await core.handle({
     method: "POST",
+    headers: { "x-setup-csrf": core.csrfToken },
     path: "/api/apply",
     body: { ...VALID_PAYLOAD, buildClient: true, wait: true },
   });
@@ -879,6 +884,7 @@ test("wizard/core: mountSetupGuard kurulum öncesi 302/503 döner, gömülü /ap
     method: "POST",
     path: "/api/setup/apply",
     url: "/api/setup/apply",
+    headers: { "x-setup-csrf": mounted.core.csrfToken },
     body: { ...VALID_PAYLOAD, wait: true },
   });
   assert.equal(embeddedApply.intercepted, true);
@@ -1192,6 +1198,7 @@ test("createSetupWizardCore: Senaryo 2 (SPA/Static) handle('/api/status') senary
 
   const applyRes = await core.handle({
     method: "POST",
+    headers: { "x-setup-csrf": core.csrfToken },
     url: "/api/apply",
     body: {
       deployment: {
@@ -1217,4 +1224,234 @@ test("createSetupWizardCore: Senaryo 2 (SPA/Static) handle('/api/status') senary
 
   const parsedEnv = parseDotEnvFile(path.join(tmpRoot, ".env"));
   assert.equal(parsedEnv.VITE_TITLE, "MyConfiguredApp");
+});
+
+test("güvenlik: gömülü çekirdek CSRF/Origin ister, runtime-config sır sızdırmaz ve kurulum sonrası kapanır", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-core-sec-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "sec-app", scripts: { start: "node index.js" } }), "utf8");
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, runBuildCommands: async () => {} });
+  const body = { ...VALID_PAYLOAD, email: { enabled: true, user: "x@gmail.com", fromEmail: "x@gmail.com", fromName: "X", password: "abcdabcdabcdabcd" }, wait: true };
+
+  // CSRF başlığı yok -> 403, kurulum yapılmaz
+  const noCsrf = await core.handle({ method: "POST", path: "/api/apply", body });
+  assert.equal(noCsrf.status, 403);
+  // Yanlış CSRF -> 403
+  const badCsrf = await core.handle({ method: "POST", path: "/api/apply", headers: { "x-setup-csrf": "x" }, body });
+  assert.equal(badCsrf.status, 403);
+  // Farklı origin -> 403
+  const badOrigin = await core.handle({
+    method: "POST",
+    path: "/api/apply",
+    headers: { "x-setup-csrf": core.csrfToken, origin: "https://evil.example", host: "localhost:3000" },
+    body,
+  });
+  assert.equal(badOrigin.status, 403);
+  assert.equal(fs.existsSync(path.join(tmpRoot, "data", "installation.lock")), false);
+  // Sabit/tahmin edilebilir anahtar yok
+  assert.notEqual(core.csrfToken, createSetupWizardCore({ projectRoot: tmpRoot }).csrfToken);
+
+  const ok = await core.handle({
+    method: "POST",
+    path: "/api/apply",
+    headers: { "x-setup-csrf": core.csrfToken, origin: "http://localhost:3000", host: "localhost:3000" },
+    body,
+  });
+  assert.equal(ok.status, 200);
+
+  // Kurulum sonrası: runtime-config ve sayfa kapalı, durum sır içermez
+  for (const p of ["/api/runtime-config", "/api/RuntimeConfig", "/setup", "/api/validate-step"]) {
+    const res = await core.handle({ method: "GET", path: p });
+    assert.equal(res.status, 404, p);
+    assert.doesNotMatch(JSON.stringify(res.body), /SESSION_SECRET|EMAIL_PASS|scrypt\$/);
+  }
+  const status = await core.handle({ method: "GET", path: "/api/status" });
+  assert.equal(status.body.installed, true);
+  assert.doesNotMatch(JSON.stringify(status.body), /SESSION_SECRET|EMAIL_PASS|scrypt\$|abcdabcdabcdabcd/);
+});
+
+test("güvenlik: publicRuntimeConfig env ve parola özetini çıkarır", async () => {
+  const { publicRuntimeConfig } = await import("../wizard/core.mjs");
+  const out = publicRuntimeConfig({
+    installed: true,
+    env: { SESSION_SECRET: "s", EMAIL_PASS: "p" },
+    deployment: { mode: "localhost" },
+    admin: { name: "A", email: "a@b.co", passwordHash: "scrypt$x$y" },
+  });
+  assert.deepEqual(Object.keys(out).sort(), ["admin", "deployment", "installed"]);
+  assert.equal(out.admin.passwordHash, undefined);
+});
+
+test("gömülü arayüz: mountSetupGuard sayfası /api/setup tabanını ve embedded bayrağını taşır, bağımsız sunucu /api kullanır", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-embed-ui-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "embed-ui", scripts: { start: "node index.js" } }), "utf8");
+
+  const { core } = mountSetupGuard({ use() {} }, { projectRoot: tmpRoot });
+  const page = await core.handle({ method: "GET", path: "/setup" });
+  assert.equal(page.status, 200);
+  const boot = JSON.parse(page.body.match(/window\.__SETUP__=(\{.*?\});/)[1]);
+  assert.equal(boot.apiBase, "/api/setup");
+  assert.equal(boot.embedded, true);
+  assert.equal(boot.csrfToken, core.csrfToken);
+  assert.doesNotMatch(page.body, /fetchJson\('\/api\//);
+
+  const standalone = await createSetupWizardCore({ projectRoot: tmpRoot }).handle({ method: "GET", path: "/setup" });
+  const sBoot = JSON.parse(standalone.body.match(/window\.__SETUP__=(\{.*?\});/)[1]);
+  assert.equal(sBoot.apiBase, "/api");
+  assert.equal(sBoot.embedded, false);
+});
+
+async function startDesktopFixture(t, appSource) {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-desktop-"));
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({ name: "desk-app", main: "main.js", scripts: { start: "node app.mjs" }, devDependencies: { electron: "^30.0.0" } }),
+    "utf8",
+  );
+  fs.writeFileSync(path.join(tmpRoot, "main.js"), "const { app } = require('electron');\n", "utf8");
+  fs.writeFileSync(path.join(tmpRoot, "app.mjs"), appSource, "utf8");
+
+  const token = "wizard_secret_token_desktop_1234567890";
+  const server = createSetupServer(token, { projectRoot: tmpRoot, desktopGraceMs: 1200 });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await server.stopSpawnedApp?.();
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  const cookie = loginRes.headers.get("set-cookie").split(";")[0];
+  const page = await (await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookie } })).text();
+  const csrf = JSON.parse(page.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+  const post = (p, body = {}) =>
+    fetch(`${baseUrl}${p}`, {
+      method: "POST",
+      headers: { Cookie: cookie, "X-Setup-CSRF": csrf, Origin: `http://localhost:${port}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const get = (p) => fetch(`${baseUrl}${p}`, { headers: { Cookie: cookie } });
+  const applyRes = await post("/api/apply", { ...VALID_PAYLOAD, admin: { name: "", email: "", password: "" }, buildClient: false });
+  assert.equal(applyRes.status, 202);
+  let status;
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    status = await (await get("/api/status")).json();
+    if (status.apply.status !== "running") break;
+  }
+  assert.equal(status.apply.status, "success", JSON.stringify(status.apply));
+  return { post, get, status };
+}
+
+test("masaüstü (Electron): start-app port yerine süreç denetler, app-health PID bildirir, kapanınca ayakta değil der", async (t) => {
+  // Port açmayan, ayakta kalan masaüstü uygulaması
+  const { post, get, status } = await startDesktopFixture(t, "setInterval(() => {}, 1000);\n");
+  assert.equal(status.detected.scenario.number, 5);
+  assert.equal(status.apply.isDesktop, true);
+
+  const before = await (await get("/api/app-health")).json();
+  assert.equal(before.desktop, true);
+  assert.equal(before.reachable, false);
+
+  const start = await post("/api/start-app", { mode: "desktop" });
+  assert.equal(start.status, 200);
+  const startBody = await start.json();
+  assert.equal(startBody.reachable, true);
+  assert.equal(startBody.desktop, true);
+  assert.equal(typeof startBody.pid, "number");
+
+  const health = await (await get("/api/app-health")).json();
+  assert.equal(health.reachable, true);
+  assert.equal(health.pid, startBody.pid);
+
+  const again = await (await post("/api/start-app")).json();
+  assert.equal(again.reachable, true);
+  assert.match(again.message, /zaten çalışıyor/);
+});
+
+test("masaüstü (Electron): hemen kapanan uygulama için start-app 409 ve çıkış kodu döner", async (t) => {
+  const { post, get } = await startDesktopFixture(t, "process.exit(3);\n");
+  const start = await post("/api/start-app");
+  assert.equal(start.status, 409);
+  const body = await start.json();
+  assert.equal(body.reachable, false);
+  assert.match(body.message, /kapandı|başlatılamadı/);
+  assert.match(body.message, /3/);
+  const health = await (await get("/api/app-health")).json();
+  assert.equal(health.reachable, false);
+  assert.equal(health.exitCode, 3);
+});
+
+test("wrapShimCommand: Windows'ta npm/pnpm/yarn/bun cmd.exe üzerinden çalışır; resolveAppStartInvocation config komutunu sarar", async () => {
+  const { wrapShimCommand } = await import("../wizard/server.mjs");
+  const wrapped = wrapShimCommand("npm", ["run", "start"], "/x");
+  if (process.platform === "win32") {
+    assert.match(wrapped.command, /cmd/i);
+    assert.deepEqual(wrapped.args.slice(0, 3), ["/d", "/s", "/c"]);
+    assert.deepEqual(wrapped.args.slice(3), ["npm", "run", "start"]);
+  } else {
+    assert.equal(wrapped.command, "npm");
+  }
+  assert.equal(wrapShimCommand("go", ["run", "."]).command, "go");
+
+  // Gerçekten çalışmalı (ENOENT olmamalı)
+  const { spawnSync } = await import("node:child_process");
+  const inv = wrapShimCommand("npm", ["--version"]);
+  const res = spawnSync(inv.command, inv.args, { encoding: "utf8", windowsHide: true });
+  assert.equal(res.status, 0, res.error?.message || res.stderr);
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wrap-"));
+  try {
+    fs.writeFileSync(path.join(tmpRoot, "setup.config.json"), JSON.stringify({ start: { command: "npm", args: ["run", "start"] } }), "utf8");
+    const resolved = resolveAppStartInvocation(tmpRoot, null);
+    assert.equal(resolved.command, wrapShimCommand("npm", ["run", "start"]).command);
+    assert.equal(resolved.cwd, tmpRoot);
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test("masaüstü IPC: ipcMode çekirdek CSRF istemez, desktop senaryosu algılanır ve harici dataDir'e yazar", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-ipc-project-"));
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "setup-ipc-userdata-"));
+  t.after(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    fs.rmSync(userData, { recursive: true, force: true });
+  });
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "ipc-app", main: "main.js", devDependencies: { electron: "^30.0.0" } }), "utf8");
+  fs.writeFileSync(path.join(tmpRoot, "main.js"), "require('electron');\n", "utf8");
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, dataDir: userData, ipcMode: true, syncApply: true, runBuildCommands: async () => {} });
+  const status = await core.handle({ method: "GET", path: "/api/status" });
+  assert.equal(status.body.detected.scenario.number, 5);
+  const apply = await core.handle({
+    method: "POST",
+    path: "/api/apply",
+    body: { ...VALID_PAYLOAD, admin: { name: "", email: "", password: "" }, wait: true },
+  });
+  assert.equal(apply.status, 200, JSON.stringify(apply.body));
+  assert.equal(apply.body.state.isDesktop, true);
+  assert.equal(fs.existsSync(path.join(userData, "installation.lock")), true);
+  assert.equal(fs.existsSync(path.join(tmpRoot, "data")), false, "proje dizinine veri yazılmamalı");
+});
+
+test("wizard/ui: sayfadaki satır içi betik geçerli JavaScript'tir (kaçış dizileri şablon semantiğiyle çözülür)", async () => {
+  const vm = await import("node:vm");
+  for (const opts of [{}, { apiBase: "/api/setup", embedded: true, title: "Başlık \\ \"x\"" }]) {
+    const html = renderSetupPage("csrf_abc", opts);
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+    assert.ok(scripts.length >= 1);
+    for (const script of scripts) {
+      assert.doesNotThrow(() => new vm.Script(script), "betik sözdizimi hatası içermemeli");
+    }
+    // kaçış dizileri şablon semantiğiyle çözülmüş olmalı (çift ters eğik çizgi kalmamalı)
+    const joined = scripts.join("\n");
+    assert.equal(joined.includes(String.raw`/^https?:\\/\\//i`), false, "çift kaçış kalmamalı");
+    assert.equal(joined.includes(String.raw`/^https?:\/\//i`), true, "tek kaçışlı düzenli ifade bulunmalı");
+    assert.equal(joined.includes(String.raw`.join('\n')`), true);
+  }
 });

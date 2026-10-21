@@ -3,8 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { parseArgs } from "../bin/setup.mjs";
 import { buildInstallPlan, detectPackageManager, detectProject, parseEnvExample } from "./detect-project.mjs";
 import { checkDependencies, getSetupPaths, initProject } from "./setup-api.mjs";
+import { resolveLanguageProfile } from "./polyglot.mjs";
+import { runSteps } from "./run-steps.mjs";
 import { bumpSemver, getVersion, parseSemver } from "./version.mjs";
 
 function mkTemp() {
@@ -315,20 +319,20 @@ test("Python ve Go çok dilli (polyglot) sunucu repoları algılanır ve initPro
     assert.equal(d.stack.python, true);
     assert.equal(d.kind, "python-server");
     assert.equal(plan.canInstall, true);
-    assert.ok(plan.steps.some((s) => s.id === "dependencies" && s.label.includes("Python / pip")));
+    assert.ok(plan.steps.some((s) => s.id === "dependencies" && s.label.includes("Python venv + pip")));
     assert.ok(plan.steps.some((s) => s.id === "wizard"));
 
     const initRes = initProject(dir);
     assert.equal(initRes.created, true);
-    assert.deepEqual(initRes.config.install, {
-      command: "pip",
-      args: ["install", "-r", "requirements.txt"],
-      requireWorkspaces: false,
-    });
-    assert.deepEqual(initRes.config.start, {
-      command: "python",
-      args: ["app.py"],
-    });
+    assert.deepEqual(initRes.config.install.steps.map((st) => st.args.join(" ")), [
+      "-m venv .venv",
+      "-m pip install -r requirements.txt",
+      "-m pip check",
+    ]);
+    assert.equal(initRes.config.install.steps[1].venv, true);
+    assert.equal(initRes.config.install.command, "python");
+    // Flask nesnesi yok: düz dosya girişi, proje içi venv ile
+    assert.deepEqual(initRes.config.start, { command: "python", args: ["app.py"], venv: true });
   }
 
   // Go
@@ -347,11 +351,9 @@ test("Python ve Go çok dilli (polyglot) sunucu repoları algılanır ve initPro
 
     const initRes = initProject(dir);
     assert.equal(initRes.created, true);
-    assert.deepEqual(initRes.config.install, {
-      command: "go",
-      args: ["mod", "download"],
-      requireWorkspaces: false,
-    });
+    assert.deepEqual(initRes.config.install.steps.map((st) => st.args.join(" ")), ["mod download", "build ./..."]);
+    assert.equal(initRes.config.install.command, "go");
+    assert.deepEqual(initRes.config.install.args, ["mod", "download"]);
     assert.deepEqual(initRes.config.start, {
       command: "go",
       args: ["run", "."],
@@ -475,4 +477,264 @@ test("detectScenarioProfile 5 senaryoyu doğru sınıflandırır ve initProject 
     assert.equal(fs.existsSync(path.join(dir, "kurulum.bat")), true);
     assert.equal(fs.existsSync(path.join(dir, "kurulum.sh")), true);
   }
+});
+
+test("Vite + React SPA (scripts.dev=vite, sunucu yok) Senaryo 2 olarak algılanır", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({
+      name: "vite-spa",
+      scripts: { dev: "vite", build: "vite build", preview: "vite preview" },
+      dependencies: { react: "^18.0.0" },
+      devDependencies: { vite: "^5.0.0" },
+    }),
+    "utf8",
+  );
+  fs.writeFileSync(path.join(dir, "index.html"), "<html></html>\n", "utf8");
+  fs.mkdirSync(path.join(dir, "src"));
+  fs.writeFileSync(path.join(dir, "src", "main.jsx"), "import React from 'react';\n", "utf8");
+
+  const detection = detectProject(dir);
+  assert.equal(detection.stack.nodeServer, false);
+  assert.equal(detection.kind, "node-client");
+  assert.equal(detection.scenario.number, 2);
+  assert.equal(detection.scenario.requiresAdmin, false);
+});
+
+test("scripts.start gerçek bir Node sunucusunu çalıştırıyorsa Senaryo 1 olarak kalır", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "api", scripts: { start: "node src/main.js", dev: "vite" } }),
+    "utf8",
+  );
+  const detection = detectProject(dir);
+  assert.equal(detection.stack.nodeServer, true);
+  assert.equal(detection.scenario.number, 1);
+});
+
+test("package.json içeren Python projesi Senaryo 4 olarak algılanır", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "py-tools", scripts: { lint: "eslint ." } }), "utf8");
+  fs.writeFileSync(path.join(dir, "requirements.txt"), "flask\n", "utf8");
+  fs.writeFileSync(path.join(dir, "app.py"), "print(1)\n", "utf8");
+  const detection = detectProject(dir);
+  assert.equal(detection.kind, "python-server");
+  assert.equal(detection.scenario.number, 4);
+});
+
+test("ön yüz CLI script'leri (argümanlı, npx/cross-env önekli) sunucu kanıtı sayılmaz", (t) => {
+  for (const dev of ["vite --host 0.0.0.0", "npx vite", "cross-env NODE_ENV=development vite", "react-scripts start", "serve -s dist"]) {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "spa", scripts: { dev } }), "utf8");
+    fs.writeFileSync(path.join(dir, "index.html"), "<html></html>\n", "utf8");
+    const detection = detectProject(dir);
+    assert.equal(detection.stack.nodeServer, false, dev);
+    assert.equal(detection.scenario.number, 2, dev);
+  }
+});
+
+test("initProject varsayılan olarak başlatıcıları ekler ve package.json'a dokunmaz", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  const pkgText = JSON.stringify({ name: "plain-app", scripts: { start: "node index.js" } });
+  fs.writeFileSync(path.join(dir, "package.json"), pkgText, "utf8");
+
+  const res = initProject(dir);
+  assert.equal(res.created, true);
+  assert.equal(res.launchersCreated, true);
+  assert.equal(res.packageJsonUpdated, false);
+  assert.equal(fs.existsSync(path.join(dir, "kurulum.bat")), true);
+  assert.equal(fs.existsSync(path.join(dir, "kurulum.sh")), true);
+  assert.equal(fs.readFileSync(path.join(dir, "package.json"), "utf8"), pkgText);
+  // .sh LF, .bat CRLF olmalı (shebang bozulmasın)
+  assert.equal(fs.readFileSync(path.join(dir, "kurulum.sh"), "utf8").includes("\r"), false);
+  assert.equal(fs.readFileSync(path.join(dir, "kurulum.bat"), "utf8").includes("\r\n"), true);
+});
+
+test("initProject createLaunchers:false ile başlatıcı üretmez; yapılandırma varken eksik başlatıcıları tamamlar", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "cfg-app", scripts: { start: "node index.js" } }), "utf8");
+
+  const first = initProject(dir, { createLaunchers: false });
+  assert.equal(first.created, true);
+  assert.equal(first.launchersCreated, false);
+  assert.equal(fs.existsSync(path.join(dir, "kurulum.bat")), false);
+
+  const second = initProject(dir);
+  assert.equal(second.created, false);
+  assert.equal(second.launchersCreated, true);
+  assert.equal(fs.existsSync(path.join(dir, "kurulum.sh")), true);
+
+  const third = initProject(dir);
+  assert.equal(third.created, false);
+  assert.equal(third.launchersCreated, false);
+});
+
+test("CLI init: varsayılan başlatıcı ekler, --no-launchers ve --update-package-json bayraklarını işler", (t) => {
+  assert.equal(parseArgs(["init"]).launchers, true);
+  assert.equal(parseArgs(["init"]).updatePackageJson, false);
+  assert.equal(parseArgs(["init", "--no-launchers"]).launchers, false);
+  assert.equal(parseArgs(["init", "--update-package-json"]).updatePackageJson, true);
+
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "cli-app", scripts: { start: "node index.js" } }), "utf8");
+  const bin = path.join(process.cwd(), "bin", "setup.mjs");
+  const run = spawnSync(process.execPath, [bin, "init", "--root", dir], { encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.equal(fs.existsSync(path.join(dir, "kurulum.bat")), true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).scripts.setup, undefined);
+
+  // yapılandırma + başlatıcı varken tekrar çalıştırmak hata (çıkış 1) verir
+  const again = spawnSync(process.execPath, [bin, "init", "--root", dir], { encoding: "utf8" });
+  assert.equal(again.status, 1);
+});
+
+test("bin/kurulum.sh package.json olmayan hedef projeyi (çağrıldığı dizin) kullanır", (t) => {
+  const probe = spawnSync("sh", ["-c", "exit 0"]);
+  if (probe.error || probe.status !== 0) return t.skip("sh bulunamadı");
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  fs.writeFileSync(path.join(dir, "requirements.txt"), "flask\n", "utf8");
+  fs.writeFileSync(path.join(dir, "app.py"), "print(1)\n", "utf8");
+  const sh = path.join(process.cwd(), "bin", "kurulum.sh");
+  const env = { ...process.env };
+  delete env.SETUP_PROJECT_ROOT;
+  const run = spawnSync("sh", [sh, "--check-only", "--no-open"], { cwd: dir, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  assert.doesNotMatch(run.stdout, /package\.json bulunamad/);
+  assert.match(run.stdout, /"kind": "python-server"/);
+  assert.equal(fs.existsSync(path.join(dir, "setup.config.json")), true);
+});
+
+test("PHP desteği kaldırıldı: composer.json/artisan artık PHP olarak algılanmaz", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  writeFile(dir, "composer.json", "{}\n");
+  writeFile(dir, "artisan", "#!/usr/bin/env php\n");
+  const d = detectProject(dir);
+  assert.equal("php" in d.stack, false);
+  assert.notEqual(d.kind, "php-server");
+  assert.equal(buildInstallPlan(d).canInstall, false);
+});
+
+test("Rust (Cargo.toml) Senaryo 4 olarak algılanır; init cargo fetch/check ve cargo run yazar; Tauri Rust sayılmaz", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  writeFile(dir, "Cargo.toml", '[package]\nname = "api"\nversion = "0.1.0"\n');
+  fs.mkdirSync(path.join(dir, "src"));
+  writeFile(dir, "src/main.rs", "fn main() {}\n");
+  const d = detectProject(dir);
+  assert.equal(d.stack.rust, true);
+  assert.equal(d.kind, "rust-server");
+  assert.equal(d.scenario.number, 4);
+  assert.match(d.scenario.label, /Rust/);
+  assert.ok(buildInstallPlan(d).steps.some((s) => s.id === "dependencies" && s.label.includes("cargo fetch")));
+  const res = initProject(dir);
+  assert.deepEqual(res.config.install.steps.map((st) => `${st.command} ${st.args.join(" ")}`), ["cargo fetch", "cargo check"]);
+  assert.deepEqual(res.config.start, { command: "cargo", args: ["run"] });
+
+  const tauri = mkTemp();
+  t.after(tauri.cleanup);
+  writeFile(tauri.dir, "Cargo.toml", '[package]\nname = "t"\n');
+  fs.mkdirSync(path.join(tauri.dir, "src-tauri"));
+  writeFile(tauri.dir, "src-tauri/tauri.conf.json", "{}\n");
+  const td = detectProject(tauri.dir);
+  assert.equal(td.stack.rust, false);
+  assert.equal(td.scenario.number, 5);
+});
+
+function makeTree(t, files) {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  for (const [name, content] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), content, "utf8");
+  }
+  return dir;
+}
+
+test("polyglot: Python profilleri (Django, FastAPI, Flask, düz) doğru başlatma komutunu seçer", (t) => {
+  const make = (files) => resolveLanguageProfile(makeTree(t, files), "python-server", 8123);
+  const django = make({ "requirements.txt": "django\n", "manage.py": "" });
+  assert.deepEqual(django.start.args, ["manage.py", "runserver", "127.0.0.1:8123"]);
+
+  const fastapi = make({ "requirements.txt": "fastapi\n", "main.py": "from fastapi import FastAPI\napi = FastAPI()\n" });
+  assert.deepEqual(fastapi.start.args, ["-m", "uvicorn", "main:api", "--host", "127.0.0.1", "--port", "8123"]);
+  assert.ok(fastapi.steps.some((st) => st.args.includes("uvicorn")), "uvicorn eksikse kurulum adımı eklenir");
+
+  const withUvicorn = make({ "requirements.txt": "fastapi\nuvicorn[standard]\n", "app/main.py": "app = FastAPI()\n" });
+  assert.deepEqual(withUvicorn.start.args.slice(0, 3), ["-m", "uvicorn", "app.main:app"]);
+  assert.equal(withUvicorn.steps.some((st) => st.args.includes("uvicorn")), false);
+
+  const flask = make({ "requirements.txt": "flask\n", "server.py": "from flask import Flask\nweb = Flask(__name__)\n" });
+  assert.deepEqual(flask.start.args, ["-m", "flask", "--app", "server:web", "run", "--host", "127.0.0.1", "--port", "8123"]);
+
+  const pyproject = make({ "pyproject.toml": "[project]\nname='x'\n", "main.py": "print(1)\n" });
+  assert.deepEqual(pyproject.steps[1].args, ["-m", "pip", "install", "-e", "."]);
+  assert.deepEqual(pyproject.start.args, ["main.py"]);
+  assert.equal(pyproject.steps.at(-1).args.join(" "), "-m pip check");
+});
+
+test("polyglot: Go cmd/ girişi, .NET çözüm dosyası + web projesi ve Rust çalışma alanı", (t) => {
+  const go = resolveLanguageProfile(makeTree(t, { "go.mod": "module x\n", "cmd/server/main.go": "package main\n" }), "go-server");
+  assert.deepEqual(go.start.args, ["run", "./cmd/server"]);
+
+  const dn = resolveLanguageProfile(
+    makeTree(t, {
+      "app.sln": "",
+      "lib/Lib.csproj": '<Project Sdk="Microsoft.NET.Sdk"/>',
+      "web/Web.csproj": '<Project Sdk="Microsoft.NET.Sdk.Web"/>',
+    }),
+    "dotnet-server",
+    5100,
+  );
+  assert.deepEqual(dn.steps[0].args, ["restore", "app.sln"]);
+  assert.deepEqual(dn.start.args, ["run", "--project", "web/Web.csproj", "--urls", "http://127.0.0.1:5100"]);
+
+  const dnRoot = resolveLanguageProfile(makeTree(t, { "App.csproj": "<Project/>" }), "dotnet-server", 5100);
+  assert.deepEqual(dnRoot.steps[0].args, ["restore"]);
+  assert.deepEqual(dnRoot.start.args, ["run", "--urls", "http://127.0.0.1:5100"]);
+
+  const rs = resolveLanguageProfile(
+    makeTree(t, {
+      "Cargo.toml": '[workspace]\nmembers = ["crates/lib", "crates/web"]\n',
+      "crates/lib/Cargo.toml": '[package]\nname = "lib"\n',
+      "crates/lib/src/lib.rs": "",
+      "crates/web/Cargo.toml": '[package]\nname = "web-api"\n',
+      "crates/web/src/main.rs": "fn main() {}\n",
+    }),
+    "rust-server",
+  );
+  assert.deepEqual(rs.start.args, ["run", "-p", "web-api"]);
+});
+
+test("run-steps: adımları sırayla çalıştırır, skipIfExists'i atlar, ilk hatada durur", async (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+  const node = process.execPath;
+  const logs = [];
+  const log = (line) => logs.push(line);
+  const ok = await runSteps(dir, [
+    { label: "yaz", command: node, args: ["-e", "require('fs').writeFileSync('a.txt','1')"] },
+    { label: "atla", command: node, args: ["-e", "process.exit(9)"], skipIfExists: "a.txt" },
+  ], log);
+  assert.equal(ok.ok, true);
+  assert.equal(fs.existsSync(path.join(dir, "a.txt")), true);
+  assert.ok(logs.some((l) => l.includes("atlandı")));
+
+  const fail = await runSteps(dir, [
+    { label: "hata", command: node, args: ["-e", "process.exit(3)"] },
+    { label: "çalışmamalı", command: node, args: ["-e", "require('fs').writeFileSync('b.txt','1')"] },
+  ], log);
+  assert.equal(fail.ok, false);
+  assert.equal(fail.code, 3);
+  assert.equal(fs.existsSync(path.join(dir, "b.txt")), false);
 });
