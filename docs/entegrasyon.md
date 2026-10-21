@@ -1,8 +1,27 @@
 # setup — 5 Mimari Senaryo Entegrasyon ve Uygulama Kılavuzu (v1.0)
 
-`setup` (`https://github.com/sirrakadembasti/setup.git`), herhangi bir GitHub reposundaki Node.js, SPA/statik web, full-stack, çoklu dil (Python, Go, C# .NET, PHP) veya masaüstü (Electron, Tauri) uygulamasını son kullanıcıların ve sistem yöneticilerinin terminal komutlarıyla boğuşmadan tarayıcı veya masaüstü penceresi üzerinden kurabilmesi için tasarlanmış sıfır bağımlılıklı kurulum eklentisidir.
+`setup` (`https://github.com/sirrakadembasti/setup.git`), herhangi bir GitHub reposundaki Node.js, SPA/statik web, full-stack, çoklu dil (Python, Go, C# .NET, Rust) veya masaüstü (Electron, Tauri) uygulamasını son kullanıcıların ve sistem yöneticilerinin terminal komutlarıyla boğuşmadan tarayıcı veya masaüstü penceresi üzerinden kurabilmesi için tasarlanmış sıfır bağımlılıklı kurulum eklentisidir.
 
 ---
+
+## Masaüstü Uygulamaları: Başlatma ve Durum
+
+- **Başlatma ve durum (CLI/Sidecar):** Masaüstü uygulamaları port açmadığından sihirbaz bitişte "Masaüstü uygulamasını başlat" düğmesi gösterir. `/api/start-app` uygulamayı ayrı bir süreç olarak açar ve **portu değil süreci** denetler: 3 sn içinde kapanırsa 409 ve çıkış koduyla hata döner, ayaktaysa PID bildirir; `/api/app-health` aynı süreç durumunu verir. Başlatma komutu `setup.config.json` içindeki `start` alanından gelir (`init` bunu Electron için `scripts.start` veya `npx electron .`, Tauri için `scripts.tauri` → `<pm> run tauri dev` olarak yazar).
+- **Veri dizini:** Kurulum verileri varsayılan olarak proje dizinine yazılır. Paketlenmiş uygulamada kullanıcı verisi dizinini (`app.getPath('userData')`) `dataDir` ile (IPC) veya `--data-dir` ile (Sidecar) verin; `setup` bu dizini tahmin etmez.
+
+## `setup init` Seçenekleri
+
+- Varsayılan: `setup.config.json` + `kurulum.bat` / `kurulum.sh` yazılır; `package.json` değiştirilmez.
+- `--no-launchers`: başlatıcı üretilmez. `--update-package-json`: `package.json` içine `setup` (ve gömülü kurulumlarda `wizard`) script'i eklenir. `--force`: mevcut dosyaların üzerine yazar.
+- Yapılandırma zaten varsa `init` yalnız eksik başlatıcıları ekler; hiçbir şey yazılmadıysa çıkış kodu 1'dir.
+- `bin/kurulum.sh|bat` (eklentinin kendi ön kontrol betiği) çağrıldığı dizindeki projeyi kurar: `cd /proje && /yol/setup/bin/kurulum.sh`.
+
+## Güvenlik Notları (Gömülü Kullanım)
+
+- **CSRF + Origin:** `ipcMode: true` olmayan her çekirdek (`mountSetupGuard`, Next/Fastify/Hono route'ları) mutasyon isteklerinde `x-setup-csrf` başlığı ister; değer sihirbaz sayfasına gömülür (`core.csrfToken`). `Origin` başlığı varsa `Host` ile veya `allowedOrigins` seçeneğiyle eşleşmelidir.
+- **Anahtar:** `token` verilmezse her çekirdek örneği rastgele bir anahtar üretir. Sunucusuz veya birden çok süreçli dağıtımlarda `token: process.env.SETUP_TOKEN` verin.
+- **Arayüz tabanı:** Gömülü sayfa API'ye `apiBase` altından gider (`mountSetupGuard` için `/api/setup`; kendi route'unuzda `apiBase: "/api/setup", embedded: true` verin).
+- **Kurulum sonrası:** `/setup` ve sihirbaz uçları 404 döner; `/api/status` yalnız sade durum verir. `runtime-config` ucu `.env` değerlerini veya parola özetini döndürmez; bunlara yalnız `readSetupRuntimeConfig()` ile sunucu tarafında erişin.
 
 ## İçindekiler
 
@@ -10,7 +29,7 @@
 2. [Senaryo 1: Express.js ve Node.js Sunucu Uygulamaları](#senaryo-1-expressjs-ve-nodejs-sunucu-uygulamaları)
 3. [Senaryo 2: Tek Sayfalık (SPA) ve Statik Web Uygulamaları (React, Vue, Vite, Saf HTML/JS)](#senaryo-2-tek-sayfalık-spa-ve-statik-web-uygulamaları-react-vue-vite-saf-htmljs)
 4. [Senaryo 3: Full-Stack Uygulamalar (Next.js App Router, Nuxt, SvelteKit, Astro, Monorepo)](#senaryo-3-full-stack-uygulamalar-nextjs-app-router-nuxt-sveltekit-astro-monorepo)
-5. [Senaryo 4: Diğer Sunucu Uygulamaları (Fastify/Koa/Hono, Python FastAPI/Django, Go, C# .NET, PHP)](#senaryo-4-diğer-sunucu-uygulamaları-fastifykoahono-python-fastapidjango-go-c-net-php)
+5. [Senaryo 4: Diğer Sunucu Uygulamaları (Fastify/Koa/Hono, Python FastAPI/Django, Go, C# .NET, Rust)](#senaryo-4-diğer-sunucu-uygulamaları-fastifykoahono-python-fastapidjango-go-c-net-rust)
 6. [Senaryo 5: Masaüstü Uygulamaları (Electron, Tauri, C# WPF/MAUI, PyQt)](#senaryo-5-masaüstü-uygulamaları-electron-tauri-c-wpfmaui-pyqt)
 7. [Alt Klasör veya Git Submodule Olarak Ekleme](#2-alt-klasör-veya-git-submodule-olarak-ekleme)
 8. [`setup.config.json` ile Özelleştirme](#3-setupconfigjson-ile-özelleştirme)
@@ -30,7 +49,7 @@ node /path/to/setup/bin/setup.mjs init --root /path/to/hedef-repo --force
 
 Bu komut hedef repoyu tarar ve:
 - Paket yöneticisini (`npm`, `pnpm`, `yarn`, `bun`),
-- Proje yapısını (`node-package`, `node-webapp`, `node-fullstack`, `workspace-fullstack`, `desktop-app`, `static-web`, `python-server`, `go-server`, `dotnet-server`, `php-server`),
+- Proje yapısını (`node-package`, `node-webapp`, `node-fullstack`, `workspace-fullstack`, `desktop-app`, `static-web`, `python-server`, `go-server`, `dotnet-server`, `rust-server`),
 - Varsa `.env.example` değişkenlerini ve dizin yollarını (`.env` veya `server/.env`) algılayarak hedef dizinde **`setup.config.json`** dosyasını oluşturur ve `package.json` içine `"setup": "setup"` betiğini ekler.
 
 ### Teknoloji algılama nasıl çalışır?
@@ -229,6 +248,10 @@ export const setupCore =
     projectRoot: process.cwd(),
     syncApply: true,
     title: "Next.js Kurulum Sihirbazı",
+    // Serverless/çoklu örnekte CSRF anahtarının tutarlı kalması için sabit ve gizli bir değer verin.
+    token: process.env.SETUP_TOKEN,
+    apiBase: "/api/setup",
+    embedded: true,
   });
 
 if (process.env.NODE_ENV !== "production") {
@@ -307,7 +330,7 @@ export default function HomePage() {
 
 ---
 
-## Senaryo 4: Diğer Sunucu Uygulamaları (Fastify/Koa/Hono, Python FastAPI/Django, Go, C# .NET, PHP)
+## Senaryo 4: Diğer Sunucu Uygulamaları (Fastify/Koa/Hono, Python FastAPI/Django, Go, C# .NET, Rust)
 
 ### Bölüm A: Node.js Alternatif Çatılar (Fastify & Hono)
 
@@ -325,6 +348,8 @@ const fastify = Fastify({ logger: true });
 const setupCore = createSetupWizardCore({
   projectRoot: process.cwd(),
   syncApply: true,
+  apiBase: "/api/setup",
+  embedded: true,
 });
 
 // Kurulum tamamlanmadıysa tüm istekleri /setup sayfasına yönlendir
@@ -398,17 +423,30 @@ app.get("/", (c) => {
 export default app;
 ```
 
-### Bölüm B: Node.js Dışı Diller (Python FastAPI/Django, Go, C# .NET, PHP)
+### Bölüm B: Node.js Dışı Diller (Python FastAPI/Django, Go, C# .NET, Rust)
 
-`setup init` komutu hedef dizindeki `pyproject.toml` / `requirements.txt` / `manage.py`, `go.mod`, `*.csproj` / `*.sln` veya `composer.json` dosyalarını otomatik algılar ve `setup.config.json` içine ilgili dilin paket kurulum (`install`) ve sunucu başlatma (`start`) komutlarını yazar.
+`setup init` komutu hedef dizindeki `pyproject.toml` / `requirements.txt` / `manage.py`, `go.mod`, `*.csproj` / `*.sln` veya `Cargo.toml` dosyalarını otomatik algılar ve `setup.config.json` içine ilgili dilin paket kurulum (`install`) ve sunucu başlatma (`start`) komutlarını yazar.
 
 ```bash
-# 1. Python / Go / C# / PHP projesinde setup.config.json üretin
+# 1. Python / Go / C# / Rust projesinde setup.config.json üretin
 npx github:sirrakadembasti/setup init --root .
 
 # 2. Yerel Sidecar olarak sihirbazı başlatın (.env, data/admin.json ve nginx.conf.example üretir ve sunucuyu başlatır)
 npx github:sirrakadembasti/setup wizard --root . --port 5050
 ```
+
+#### Dil Profilleri (Python / Go / C# .NET / Rust)
+
+`setup init` ve kurulum başlatıcısı (5049) aşağıdaki profilleri kullanır. Kurulum adımları sırayla çalışır (`scripts/run-steps.mjs`); son adım gerçek bir **doğrulamadır** ve başarısız olursa kurulum "başarılı" sayılmaz. Gerekli araç (`python`, `go`, `dotnet`, `cargo`) kurulu değilse indirme bağlantısıyla birlikte okunur bir hata verilir.
+
+| Dil | Algılama | Kurulum adımları | Başlatma |
+| --- | --- | --- | --- |
+| Python | `requirements.txt`, `pyproject.toml`, `manage.py`, `main.py`/`app.py` | proje içi `.venv` oluştur → `pip install -r requirements.txt` (yoksa `-e .`) → `pip check` | Django: `manage.py runserver`; FastAPI/Starlette: `python -m uvicorn modül:app` (uvicorn yoksa kurulur); Flask: `python -m flask --app modül:nesne run`; aksi halde `main.py`/`app.py`. Hepsi `.venv` yorumlayıcısıyla |
+| Go | `go.mod`, `main.go` | `go mod download` → `go build ./...` | `go run .` (kökte `main.go` yoksa `./cmd/<ad>`) |
+| C# .NET | `*.csproj`, `*.sln` | `dotnet restore` → `dotnet build --no-restore` | `dotnet run --urls http://127.0.0.1:<port>` (çözümde `--project <web projesi>`) |
+| Rust | `Cargo.toml` (Tauri hariç) | `cargo fetch` → `cargo check` | `cargo run` (çalışma alanında ilk ikili üye için `-p <ad>`) |
+
+Uygulamanız portu `PORT` ortam değişkeninden okumalıdır (sihirbaz `PORT`'u `.env` ve başlatma ortamına yazar). PHP desteği kaldırılmıştır.
 
 #### Python (FastAPI) `.env` ve `data/admin.json` (`scrypt`) Doğrulama Şablonu
 
