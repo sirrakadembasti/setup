@@ -31,7 +31,7 @@ function validateEmail(value, fieldPath, requireGmail = false) {
   return str;
 }
 
-export function parseSetupPayload(raw) {
+export function parseSetupPayload(raw, options = {}) {
   const issues = [];
   if (!raw || typeof raw !== "object") {
     throw new ValidationError([{ code: "invalid_type", message: "Geçersiz kurulum verisi.", path: [] }]);
@@ -53,28 +53,36 @@ export function parseSetupPayload(raw) {
     issues.push({ code: "invalid_port", message: "Sunucu portu 1024-65535 aralığında olmalıdır.", path: ["server", "port"] });
   }
 
-  let adminName = "";
-  let adminEmail = "";
+  const rawAdminName = String(raw.admin?.name ?? "").trim();
+  const rawAdminEmail = String(raw.admin?.email ?? "").trim();
   const adminPassword = String(raw.admin?.password ?? "");
-  try {
-    adminName = validateCleanText(raw.admin?.name, "admin.name", 100, 2);
-  } catch (err) {
-    issues.push(...err.issues);
-  }
-  try {
-    adminEmail = validateEmail(raw.admin?.email, "admin.email", false);
-  } catch (err) {
-    issues.push(...err.issues);
-  }
-  if (adminPassword.length < 12 || adminPassword.length > 128) {
-    issues.push({ code: "too_small", message: "Parola en az 12, en fazla 128 karakter olmalıdır.", path: ["admin", "password"] });
-  } else {
-    if (!(/[a-z]/.test(adminPassword) && /[A-Z]/.test(adminPassword) && /\d/.test(adminPassword))) {
-      issues.push({ code: "custom", message: "Parola büyük/küçük harf ve rakam içermelidir.", path: ["admin", "password"] });
+  const isAdminBlank = !raw.admin || (!rawAdminName && !rawAdminEmail && !adminPassword);
+  let admin = null;
+
+  if (!(options.allowOptionalAdmin && isAdminBlank)) {
+    let adminName = "";
+    let adminEmail = "";
+    try {
+      adminName = validateCleanText(raw.admin?.name, "admin.name", 100, 2);
+    } catch (err) {
+      issues.push(...err.issues);
     }
-    if (/password|123456|qwerty|admin123/i.test(adminPassword)) {
-      issues.push({ code: "custom", message: "Kolay tahmin edilen parola kullanılamaz.", path: ["admin", "password"] });
+    try {
+      adminEmail = validateEmail(raw.admin?.email, "admin.email", false);
+    } catch (err) {
+      issues.push(...err.issues);
     }
+    if (adminPassword.length < 12 || adminPassword.length > 128) {
+      issues.push({ code: "too_small", message: "Parola en az 12, en fazla 128 karakter olmalıdır.", path: ["admin", "password"] });
+    } else {
+      if (!(/[a-z]/.test(adminPassword) && /[A-Z]/.test(adminPassword) && /\d/.test(adminPassword))) {
+        issues.push({ code: "custom", message: "Parola büyük/küçük harf ve rakam içermelidir.", path: ["admin", "password"] });
+      }
+      if (/password|123456|qwerty|admin123/i.test(adminPassword)) {
+        issues.push({ code: "custom", message: "Kolay tahmin edilen parola kullanılamaz.", path: ["admin", "password"] });
+      }
+    }
+    admin = { name: adminName, email: adminEmail, password: adminPassword };
   }
 
   let email = { enabled: false };
@@ -94,6 +102,26 @@ export function parseSetupPayload(raw) {
     }
   }
 
+  const customEnv = {};
+  if (raw.customEnv !== undefined && raw.customEnv !== null) {
+    if (typeof raw.customEnv !== "object" || Array.isArray(raw.customEnv)) {
+      issues.push({ code: "invalid_type", message: "customEnv nesne olmalıdır.", path: ["customEnv"] });
+    } else {
+      for (const [key, val] of Object.entries(raw.customEnv)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+          issues.push({ code: "invalid_key", message: `Geçersiz ortam değişkeni adı: ${key}`, path: ["customEnv", key] });
+          continue;
+        }
+        const strVal = String(val ?? "");
+        if (strVal.length > 2048 || /[\r\n\0]/.test(strVal)) {
+          issues.push({ code: "invalid_string", message: `${key} geçersiz karakter veya uzunluk içeriyor.`, path: ["customEnv", key] });
+          continue;
+        }
+        customEnv[key] = strVal;
+      }
+    }
+  }
+
   if (issues.length > 0) {
     throw new ValidationError(issues);
   }
@@ -101,15 +129,23 @@ export function parseSetupPayload(raw) {
   return {
     deployment,
     server: { host, port },
-    admin: { name: adminName, email: adminEmail, password: adminPassword },
+    admin,
     email,
+    customEnv,
     buildClient: raw.buildClient !== undefined ? Boolean(raw.buildClient) : true,
     overwriteExistingEnv: Boolean(raw.overwriteExistingEnv),
   };
 }
 
 export const setupPayloadSchema = {
-  parse: parseSetupPayload,
+  parse: (raw, options = {}) => parseSetupPayload(raw, options),
+  safeParse: (raw, options = {}) => {
+    try {
+      return { success: true, data: parseSetupPayload(raw, options) };
+    } catch (error) {
+      return { success: false, error };
+    }
+  },
 };
 
 function envValue(value) {
@@ -193,7 +229,7 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     `RETENTION_PASSWORD_RESET_DAYS=${retention.passwordResetDays}`,
   ];
 
-  if (payload.admin) {
+  if (payload.admin && payload.admin.email) {
     const passwordHash = payload.admin.passwordHash || hashAdminPassword(payload.admin.password);
     lines.push(
       `ADMIN_NAME=${envValue(payload.admin.name)}`,
@@ -224,6 +260,8 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     "EMAIL_SOCKET_TIMEOUT=20000",
   );
 
+  const customEnv = payload.customEnv && typeof payload.customEnv === "object" ? payload.customEnv : {};
+
   if (Array.isArray(extraEnvVars)) {
     for (const item of extraEnvVars) {
       if (!item || typeof item !== "object") continue;
@@ -234,9 +272,18 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
       if (description) {
         lines.push(`# ${String(description).replace(/[\r\n]+/g, " ")}`);
       }
-      lines.push(`${key}=${envValue(defaultValue ?? "")}`);
+      const effectiveValue = Object.prototype.hasOwnProperty.call(customEnv, key)
+        ? customEnv[key]
+        : (defaultValue ?? "");
+      lines.push(`${key}=${envValue(effectiveValue)}`);
       writtenKeys.add(key);
     }
+  }
+
+  for (const [key, val] of Object.entries(customEnv)) {
+    if (writtenKeys.has(key) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    lines.push(`${key}=${envValue(val ?? "")}`);
+    writtenKeys.add(key);
   }
 
   lines.push(

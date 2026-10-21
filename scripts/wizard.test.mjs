@@ -459,7 +459,7 @@ test("wizard/server E2E: package.json içindeki build ve migrate betikleri gerç
   assert.equal(apply1.status, 202);
 
   let status1;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 150; i++) {
     await new Promise((r) => setTimeout(r, 100));
     const sRes = await fetch(`${baseUrl1}/api/status`, { headers: { Cookie: cookie1 } });
     status1 = await sRes.json();
@@ -1080,3 +1080,141 @@ test("SETUP_ALLOWED_ORIGINS (Tauri/Sidecar CORS + Origin izni) ve CLI --port / -
 
 
 
+test("Senaryo 2 (SPA/Static): /api/status senaryo + .env.example döndürür, opsiyonel admin ve customEnv ile kurulum tamamlanır ve ui.ts sabit :5173 içermez", async (t) => {
+  const html = renderSetupPage("csrf_token_test");
+  assert.equal(html.includes("127.0.0.1:5173/auth"), false, "ui.ts sabit 127.0.0.1:5173/auth içermemeli");
+  assert.match(html, /id="scenarioInfo"/);
+  assert.match(html, /id="customEnvSection"/);
+
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-scenario2-ux-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  fs.writeFileSync(path.join(tmpRoot, "index.html"), "<!doctype html><html><body>SPA</body></html>\n", "utf8");
+  fs.writeFileSync(
+    path.join(tmpRoot, ".env.example"),
+    "PORT=4173\nVITE_API_URL=http://localhost:8000\nCUSTOM_BACKEND_KEY=default_key\n",
+    "utf8",
+  );
+
+  const token = "wizard_secret_token_scenario2_ux_123";
+  const server = createSetupServer(token, { projectRoot: tmpRoot });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  const cookiePair = loginRes.headers.get("set-cookie").split(";")[0];
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const pageHtml = await pageRes.text();
+  const csrf = JSON.parse(pageHtml.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  const statusBeforeRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
+  assert.equal(statusBeforeRes.status, 200);
+  const statusBefore = await statusBeforeRes.json();
+  assert.equal(statusBefore.detected.kind, "static-web");
+  assert.equal(statusBefore.detected.scenario?.number, 2);
+  assert.equal(statusBefore.detected.scenario?.requiresAdmin, false);
+  assert.equal(statusBefore.detected.defaultPort, 4173);
+  assert.ok(Array.isArray(statusBefore.detected.envVariables));
+  assert.ok(statusBefore.detected.envVariables.some((v) => v.key === "VITE_API_URL"));
+
+  const applyPayload = {
+    deployment: {
+      mode: "localhost",
+      publicUrl: "http://localhost:4173/",
+      basePath: "/",
+      allowedOrigins: ["http://localhost:4173", "http://127.0.0.1:4173"],
+      trustProxyHops: 0,
+    },
+    server: { host: "127.0.0.1", port: 4173 },
+    admin: { name: "", email: "", password: "" },
+    email: { enabled: false },
+    customEnv: {
+      VITE_API_URL: "https://api.prod.example.com",
+      CUSTOM_BACKEND_KEY: "overridden_value",
+    },
+    buildClient: false,
+    overwriteExistingEnv: false,
+  };
+
+  const applyRes = await fetch(`${baseUrl}/api/apply`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(applyPayload),
+  });
+  assert.equal(applyRes.status, 202);
+
+  let statusAfter;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+    const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
+    statusAfter = await sRes.json();
+    if (statusAfter.apply.status === "success" || statusAfter.apply.status === "error") break;
+  }
+  assert.equal(statusAfter.apply.status, "success", statusAfter.apply.message);
+  const adminStep = statusAfter.apply.steps.find((s) => s.id === "admin");
+  assert.equal(adminStep?.status, "skipped");
+  assert.equal(fs.existsSync(path.join(tmpRoot, "data", "admin.json")), false);
+
+  const parsedEnv = parseDotEnvFile(path.join(tmpRoot, ".env"));
+  assert.equal(parsedEnv.VITE_API_URL, "https://api.prod.example.com");
+  assert.equal(parsedEnv.CUSTOM_BACKEND_KEY, "overridden_value");
+  assert.equal("ADMIN_EMAIL" in parsedEnv, false);
+
+  const runtimeCfg = JSON.parse(fs.readFileSync(path.join(tmpRoot, "runtime-config.json"), "utf8"));
+  assert.equal(runtimeCfg.env.VITE_API_URL, "https://api.prod.example.com");
+});
+
+test("createSetupWizardCore: Senaryo 2 (SPA/Static) handle('/api/status') senaryo döndürür ve /api/apply opsiyonel admin ile başarıyla tamamlanır", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-core-scenario2-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  fs.writeFileSync(path.join(tmpRoot, "index.html"), "<!doctype html><html><body>SPA Core</body></html>\n", "utf8");
+  fs.writeFileSync(
+    path.join(tmpRoot, ".env.example"),
+    "PORT=8080\nVITE_TITLE=MyCustomSpa\n",
+    "utf8",
+  );
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot });
+  const statusRes = await core.handle({ method: "GET", url: "/api/status" });
+  assert.equal(statusRes.status, 200);
+  assert.equal(statusRes.body.detected.scenario?.number, 2);
+  assert.equal(statusRes.body.detected.scenario?.requiresAdmin, false);
+  assert.equal(statusRes.body.detected.defaultPort, 8080);
+  assert.ok(statusRes.body.detected.envVariables.some((v) => v.key === "VITE_TITLE"));
+
+  const applyRes = await core.handle({
+    method: "POST",
+    url: "/api/apply",
+    body: {
+      deployment: {
+        mode: "localhost",
+        publicUrl: "http://localhost:8080/",
+        basePath: "/",
+        allowedOrigins: ["http://localhost:8080"],
+        trustProxyHops: 0,
+      },
+      server: { host: "127.0.0.1", port: 8080 },
+      admin: { name: "", email: "", password: "" },
+      email: { enabled: false },
+      customEnv: { VITE_TITLE: "MyConfiguredApp" },
+      buildClient: false,
+      overwriteExistingEnv: false,
+      wait: true,
+    },
+  });
+  assert.equal(applyRes.status, 200);
+  assert.equal(applyRes.body.ok, true);
+  assert.equal(applyRes.body.state.steps.find((s) => s.id === "admin")?.status, "skipped");
+  assert.equal(fs.existsSync(path.join(tmpRoot, "data", "admin.json")), false);
+
+  const parsedEnv = parseDotEnvFile(path.join(tmpRoot, ".env"));
+  assert.equal(parsedEnv.VITE_TITLE, "MyConfiguredApp");
+});

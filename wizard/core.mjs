@@ -6,7 +6,7 @@ import path from "node:path";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
-import { detectPackageManager, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
+import { detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
 import {
   buildServerEnv,
   hashAdminPassword,
@@ -178,7 +178,7 @@ function runCommand(command, args, cwd, extraEnv = {}) {
   });
 }
 
-function validateStepData(step, data) {
+function validateStepData(step, data, options = {}) {
   const issues = [];
   const raw = data && typeof data === "object" ? data : {};
   if (step === "deployment") {
@@ -200,6 +200,9 @@ function validateStepData(step, data) {
     const name = String(raw.name ?? "").trim();
     const email = String(raw.email ?? "").trim();
     const password = String(raw.password ?? "");
+    if (options.allowOptionalAdmin && !name && !email && !password) {
+      return issues;
+    }
     if (name.length < 2 || name.length > 100 || /[\r\n\0]/.test(name)) {
       issues.push({ code: "invalid_string", message: "admin.name 2-100 karakter aralığında olmalıdır.", path: ["admin.name"] });
     }
@@ -237,7 +240,7 @@ function validateStepData(step, data) {
     }
   } else {
     try {
-      setupPayloadSchema.parse(raw);
+      setupPayloadSchema.parse(raw, { allowOptionalAdmin: Boolean(options.allowOptionalAdmin) });
     } catch (err) {
       if (err instanceof ValidationError) {
         issues.push(...err.issues);
@@ -256,6 +259,7 @@ export function createSetupWizardCore(options = {}) {
   const requireAuth = Boolean(options.requireAuth && !options.ipcMode && options.auth !== false);
   const setupConfig = loadSetupConfig(projectRoot);
   const paths = getSetupPaths(projectRoot, { dataDir });
+  const detection = detectProject(projectRoot);
 
   const csrfToken = crypto.createHmac("sha256", token).update("setup-wizard-csrf").digest("hex");
   const applyJob = createApplyState();
@@ -285,7 +289,7 @@ export function createSetupWizardCore(options = {}) {
       throw new Error("Başka bir kurulum işlemi çalışıyor veya önceki işlem yarım kaldı.");
     }
 
-    const passwordHash = hashAdminPassword(payload.admin.password);
+    const passwordHash = payload.admin && payload.admin.password ? (payload.admin.passwordHash || hashAdminPassword(payload.admin.password)) : "";
     const envExample = parseEnvExample(projectRoot);
     const envText = buildServerEnv(
       { ...payload, admin: { ...payload.admin, passwordHash } },
@@ -297,7 +301,7 @@ export function createSetupWizardCore(options = {}) {
     const summary = [];
     const appUrl = publicAppUrl(payload);
     applyJob.publicUrl = appUrl;
-    applyJob.loginUrl = `${appUrl.replace(/\/$/, "")}/auth`;
+    applyJob.loginUrl = detection.scenario.isStaticOnly ? appUrl : `${appUrl.replace(/\/$/, "")}/auth`;
     applyJob.appPort = payload.server.port;
     applyJob.mode = payload.deployment.mode;
 
@@ -378,13 +382,17 @@ export function createSetupWizardCore(options = {}) {
       }
 
       markStep("admin", "running");
-      fs.writeFileSync(
-        path.join(dataRoot, "admin.json"),
-        `${JSON.stringify({ name: payload.admin.name, email: payload.admin.email, passwordHash, createdAt: new Date().toISOString() }, null, 2)}\n`,
-        { encoding: "utf8", mode: 0o600 },
-      );
-      markStep("admin", "done", payload.admin.email);
-      summary.push("İlk yönetici hesabı oluşturuldu.");
+      if (payload.admin && payload.admin.email) {
+        fs.writeFileSync(
+          path.join(dataRoot, "admin.json"),
+          `${JSON.stringify({ name: payload.admin.name, email: payload.admin.email, passwordHash, createdAt: new Date().toISOString() }, null, 2)}\n`,
+          { encoding: "utf8", mode: 0o600 },
+        );
+        markStep("admin", "done", payload.admin.email);
+        summary.push("İlk yönetici hesabı oluşturuldu.");
+      } else {
+        markStep("admin", "skipped", "Bu senaryoda yönetici hesabı atlandı.");
+      }
 
       markStep("artifacts", "running");
       const config = saveDeploymentConfig(toDeploymentConfig(payload), "setup-wizard", projectRoot, { dataDir });
@@ -392,7 +400,11 @@ export function createSetupWizardCore(options = {}) {
       fs.mkdirSync(artifactRoot, { recursive: true });
       fs.writeFileSync(path.join(artifactRoot, "nginx.conf.example"), `${artifacts.nginxText}\n`, "utf8");
       fs.writeFileSync(path.join(artifactRoot, "deployment.env.example"), `${artifacts.envText}\n`, "utf8");
-      writePublicFrontendArtifacts(projectRoot, dataRoot, payload, envExample.variables);
+      const effectiveExtraEnvVars = [
+        ...(envExample.variables || []),
+        ...Object.entries(payload.customEnv || {}).map(([key, defaultValue]) => ({ key, defaultValue, description: "Kullanıcı tanımlı ortam değişkeni" })),
+      ];
+      writePublicFrontendArtifacts(projectRoot, dataRoot, payload, effectiveExtraEnvVars);
       markStep("artifacts", "done", "setup-artifacts");
       summary.push("Nginx örneği setup-artifacts altında üretildi.");
 
@@ -490,7 +502,8 @@ export function createSetupWizardCore(options = {}) {
         .flat()
         .filter((item) => item && !item.internal)
         .map((item) => item.address);
-      const defaultPort = readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
+      const envExample = parseEnvExample(projectRoot);
+      const defaultPort = detection.ports.app || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
       return {
         status: 200,
         headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
@@ -510,6 +523,10 @@ export function createSetupWizardCore(options = {}) {
             cpus: os.cpus().length,
             memoryGb: Math.round(os.totalmem() / 1024 ** 3),
             addresses: networks,
+            kind: detection.kind,
+            scenario: detection.scenario,
+            defaultPort,
+            envVariables: envExample.variables || [],
           },
           checks: {
             nodeSupported: [18, 20, 22, 24].includes(Number(process.versions.node.split(".")[0])),
@@ -534,7 +551,7 @@ export function createSetupWizardCore(options = {}) {
     if (method === "POST" && pathname === "/api/validate-step") {
       const step = body?.step || "all";
       const data = body?.data ?? body;
-      const issues = validateStepData(step, data);
+      const issues = validateStepData(step, data, { allowOptionalAdmin: !detection.scenario.requiresAdmin });
       if (issues.length > 0) {
         return {
           status: 400,
@@ -590,7 +607,7 @@ export function createSetupWizardCore(options = {}) {
       try {
         const rawPayload = body && typeof body === "object" ? body : {};
         const shouldWait = Boolean(rawPayload.wait || options.syncApply);
-        const payload = setupPayloadSchema.parse(rawPayload);
+        const payload = setupPayloadSchema.parse(rawPayload, { allowOptionalAdmin: !detection.scenario.requiresAdmin });
 
         applyJob.status = "running";
         applyJob.message = "Kurulum uygulanıyor; adımlar ekranda canlı izleniyor…";

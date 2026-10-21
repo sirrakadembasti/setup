@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
-import { detectPackageManager, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
+import { detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
 
@@ -80,6 +80,11 @@ export function buildPublicFrontendConfig(payload, extraEnvVars = []) {
     const key = item.key.trim();
     if (!/^(VITE_|PUBLIC_|NEXT_PUBLIC_|REACT_APP_)[A-Za-z0-9_]*$/.test(key)) continue;
     publicEnvObject[key] = String(item.value ?? item.defaultValue ?? "");
+  }
+  const customEnv = payload?.customEnv && typeof payload.customEnv === "object" ? payload.customEnv : {};
+  for (const [key, val] of Object.entries(customEnv)) {
+    if (!/^(VITE_|PUBLIC_|NEXT_PUBLIC_|REACT_APP_)[A-Za-z0-9_]*$/.test(key)) continue;
+    publicEnvObject[key] = String(val ?? "");
   }
   const dep = payload?.deployment || {};
   const normalizedUrl = dep.publicUrl ? publicAppUrl(payload) : String(dep.publicUrl || "");
@@ -416,6 +421,7 @@ export function createSetupServer(token, options = {}) {
   if (!token || token.length < 24) throw new Error("SETUP_TOKEN en az 24 karakter olmalıdır.");
   const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
   const setupConfig = loadSetupConfig(projectRoot);
+  const detection = detectProject(projectRoot);
 
   let serverRoot;
   let dataRoot;
@@ -492,10 +498,9 @@ export function createSetupServer(token, options = {}) {
       throw new Error("Başka bir kurulum işlemi çalışıyor veya önceki işlem yarım kaldı.");
     }
 
-    const passwordHash = hashAdminPassword(payload.admin.password);
     const envExample = parseEnvExample(projectRoot);
     const envText = buildServerEnv(
-      { ...payload, admin: { ...payload.admin, passwordHash } },
+      payload,
       undefined,
       databaseUrl,
       envExample.variables,
@@ -504,7 +509,7 @@ export function createSetupServer(token, options = {}) {
     const summary = [];
     const appUrl = publicAppUrl(payload);
     applyJob.publicUrl = appUrl;
-    applyJob.loginUrl = `${appUrl.replace(/\/$/, "")}/auth`;
+    applyJob.loginUrl = detection.scenario.isStaticOnly ? appUrl : `${appUrl.replace(/\/$/, "")}/auth`;
     applyJob.appPort = payload.server.port;
     applyJob.mode = payload.deployment.mode;
 
@@ -585,13 +590,18 @@ export function createSetupServer(token, options = {}) {
       }
 
       markStep("admin", "running");
-      fs.writeFileSync(
-        path.join(dataRoot, "admin.json"),
-        `${JSON.stringify({ name: payload.admin.name, email: payload.admin.email, passwordHash, createdAt: new Date().toISOString() }, null, 2)}\n`,
-        { encoding: "utf8", mode: 0o600 },
-      );
-      markStep("admin", "done", payload.admin.email);
-      summary.push("İlk yönetici hesabı oluşturuldu.");
+      if (payload.admin && payload.admin.email) {
+        const passwordHash = payload.admin.passwordHash || hashAdminPassword(payload.admin.password);
+        fs.writeFileSync(
+          path.join(dataRoot, "admin.json"),
+          `${JSON.stringify({ name: payload.admin.name, email: payload.admin.email, passwordHash, createdAt: new Date().toISOString() }, null, 2)}\n`,
+          { encoding: "utf8", mode: 0o600 },
+        );
+        markStep("admin", "done", payload.admin.email);
+        summary.push("İlk yönetici hesabı oluşturuldu.");
+      } else {
+        markStep("admin", "skipped", "Bu senaryoda yönetici hesabı atlandı.");
+      }
 
       markStep("artifacts", "running");
       const savedEnvRoot = process.env.SETUP_PROJECT_ROOT;
@@ -656,6 +666,9 @@ export function createSetupServer(token, options = {}) {
       const name = String(raw.name ?? "").trim();
       const email = String(raw.email ?? "").trim();
       const password = String(raw.password ?? "");
+      if (!detection.scenario.requiresAdmin && !name && !email && !password) {
+        return issues;
+      }
       if (name.length < 2 || name.length > 100 || /[\r\n\0]/.test(name)) {
         issues.push({ code: "invalid_string", message: "admin.name 2-100 karakter aralığında olmalıdır.", path: ["admin.name"] });
       }
@@ -693,7 +706,7 @@ export function createSetupServer(token, options = {}) {
       }
     } else {
       try {
-        setupPayloadSchema.parse(raw);
+        setupPayloadSchema.parse(raw, { allowOptionalAdmin: !detection.scenario.requiresAdmin });
       } catch (err) {
         if (err instanceof ValidationError) {
           issues.push(...err.issues);
@@ -780,8 +793,21 @@ export function createSetupServer(token, options = {}) {
 
       if (req.method === "GET" && reqUrl.pathname === "/api/status") {
         const networks = Object.values(os.networkInterfaces()).flat().filter((item) => item && !item.internal).map((item) => item.address);
+        const envExample = parseEnvExample(projectRoot);
+        const defaultPort = detection.ports.app || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
         return sendJson(res, 200, {
-          detected: { hostname: os.hostname(), platform: `${process.platform}/${process.arch}`, node: process.version, cpus: os.cpus().length, memoryGb: Math.round(os.totalmem() / 1024 ** 3), addresses: networks },
+          detected: {
+            hostname: os.hostname(),
+            platform: `${process.platform}/${process.arch}`,
+            node: process.version,
+            cpus: os.cpus().length,
+            memoryGb: Math.round(os.totalmem() / 1024 ** 3),
+            addresses: networks,
+            kind: detection.kind,
+            scenario: detection.scenario,
+            defaultPort,
+            envVariables: envExample.variables || [],
+          },
           checks: {
             nodeSupported: [18, 20, 22, 24].includes(Number(process.versions.node.split(".")[0])),
             dataWritable: writable(dataRoot),
@@ -802,7 +828,7 @@ export function createSetupServer(token, options = {}) {
         const apiReachable = await isPortOpen(appPort);
         const uiReachable = isLocal ? await isPortOpen(uiPort) : apiReachable;
         const reachable = isLocal ? uiReachable : apiReachable;
-        const loginUrl = isLocal && uiReachable ? `http://127.0.0.1:${devPort}/auth` : applyJob.loginUrl;
+        const loginUrl = isLocal && uiReachable && !detection.scenario.isStaticOnly ? `http://127.0.0.1:${devPort}/auth` : applyJob.loginUrl;
         return sendJson(res, 200, {
           reachable,
           apiReachable,
@@ -897,7 +923,7 @@ export function createSetupServer(token, options = {}) {
         }
         try {
           const rawBody = await readJson(req);
-          const payload = setupPayloadSchema.parse(rawBody);
+          const payload = setupPayloadSchema.parse(rawBody, { allowOptionalAdmin: !detection.scenario.requiresAdmin });
           applyJob.status = "running";
           applyJob.message = "Kurulum uygulanıyor; adımlar ekranda canlı izleniyor…";
           applyJob.summary = [];

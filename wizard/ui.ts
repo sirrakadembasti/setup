@@ -10,7 +10,7 @@ export function renderSetupPage(csrfToken: string, options: { title?: string } =
 .lbl-row{display:flex;align-items:center;gap:6px;margin:8px 0 5px;flex-wrap:wrap}.lbl-row label{margin:0;font-weight:650}.help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid #c7d2fe;background:#eef2ff;color:var(--p);font-size:11px;font-weight:700;cursor:help;position:relative;line-height:1}.help:hover,.help:focus{background:var(--p);color:#fff;outline:none}.help::after{content:attr(data-tip);position:absolute;left:50%;top:24px;transform:translateX(-50%);width:min(280px,70vw);padding:10px 12px;background:var(--tip);color:#fff;border-radius:8px;font-size:12px;font-weight:400;line-height:1.45;opacity:0;pointer-events:none;transition:opacity .12s;z-index:30;text-align:left;white-space:normal}.help:hover::after,.help:focus::after{opacity:1}.tip-note{margin:6px 0 0;font-size:12px;color:var(--muted)}
 @media(max-width:700px){.grid,.steps{grid-template-columns:1fr}.steps{display:flex;overflow:auto}.step{min-width:120px}}
 </style></head><body><main class="wrap">
-<section class="hero"><h1>${pageTitle}</h1><p class="muted">Sunucuyu doğrular, güvenli ayarları kaydeder, veritabanını hazırlar ve ilk yöneticiyi oluşturur.</p><div class="warn"><strong>Kurulum şeması:</strong> 1) Ön kontrol · 2) Adres / kurulum biçimi (yerel veya kurum) · 3) Veri ve saklama · 4) Yönetici ve e-posta · 5) Uygula. Bu araç yalnız ilk kurulum içindir; Nginx, TLS veya güvenlik duvarını kendiliğinden değiştirmez.</div></section>
+<section class="hero"><h1>${pageTitle}</h1><p class="muted">Sunucuyu doğrular, güvenli ayarları kaydeder, veritabanını hazırlar ve ilk yöneticiyi oluşturur.</p><div id="scenarioInfo" class="warn" style="margin-top:10px">Proje mimarisi algılanıyor…</div><div class="warn" style="margin-top:8px"><strong>Kurulum şeması:</strong> 1) Ön kontrol · 2) Adres / kurulum biçimi (yerel veya kurum) · 3) Veri ve saklama · 4) Yönetici ve e-posta · 5) Uygula. Bu araç yalnız ilk kurulum içindir; Nginx, TLS veya güvenlik duvarını kendiliğinden değiştirmez.</div></section>
 <div class="steps"><div class="step on">1. Sunucu</div><div class="step">2. Adres</div><div class="step">3. Veri</div><div class="step">4. Güvenlik</div><div class="step">5. Uygula</div></div>
 <form id="wizard" class="card">
 <section class="pane on">
@@ -57,6 +57,11 @@ export function renderSetupPage(csrfToken: string, options: { title?: string } =
       <div class="lbl-row"><label for="proxy">Güvenilir proxy sayısı</label><span class="help" tabindex="0" data-tip="Önünüzdeki reverse proxy (Nginx/IIS) sayısı. Yerelde 0. Nginx varsa 1. Zincirde 2+ proxy varsa artırın.">?</span></div>
       <input name="proxy" id="proxy" type="number" min="0" max="5" value="1">
     </div>
+    <div id="customEnvSection" class="full hidden" style="margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc">
+      <h3 style="margin:0 0 8px;font-size:15px">Proje Ortam Değişkenleri (.env.example)</h3>
+      <p class="tip-note" style="margin:0 0 10px">Repoda bulunan özel değişkenleri buradan düzenleyebilirsiniz.</p>
+      <div id="customEnvFields" class="grid"></div>
+    </div>
   </div>
 </section>
 <section class="pane">
@@ -86,6 +91,7 @@ export function renderSetupPage(csrfToken: string, options: { title?: string } =
 </section>
 <section class="pane">
   <h2>İlk yönetici ve e-posta <span class="help" tabindex="0" data-tip="Sistemdeki ilk admin hesabı burada açılır. Gmail ayarı isteğe bağlıdır; parola sıfırlama için kullanılır.">?</span></h2>
+  <div id="adminOptionalNote" class="warn hidden" style="margin-bottom:12px">Bu mimaride (SPA / Statik / Masaüstü) yerel yönetici hesabı isteğe bağlıdır; boş bırakıp doğrudan geçebilirsiniz.</div>
   <div class="grid">
     <div>
       <div class="lbl-row"><label for="adminName">Yönetici adı</label><span class="help" tabindex="0" data-tip="Panelde görünecek ad soyad.">?</span></div>
@@ -258,11 +264,16 @@ next.onclick=()=>{
   const fields=[...panes[page].querySelectorAll('input,select')];
   if(page===3){
     const pwd=wizard.elements.namedItem('adminPassword');
-    if(pwd){
+    const nameInput=wizard.elements.namedItem('adminName');
+    const emailInput=wizard.elements.namedItem('adminEmail');
+    const isOptionalEmptyAdmin=Boolean(window.__OPTIONAL_ADMIN__)&&!String(pwd?.value||'').trim()&&!String(nameInput?.value||'').trim()&&!String(emailInput?.value||'').trim();
+    if(pwd&&!isOptionalEmptyAdmin){
       renderPasswordRules();
       const message=adminPasswordError(pwd.value);
       fieldError(pwd,message);
       if(message){pwd.focus();return}
+    }else if(pwd){
+      fieldError(pwd,'');
     }
     validateEmailFields();
   }
@@ -307,6 +318,35 @@ async function loadStatus(){
       return '<div class="check '+(v?'ok':'error')+'">'+(v?'✓ ':'✕ ')+escapeHtml(label)+'</div>';
     }).join('');
     checks.innerHTML=rows+'<pre>'+escapeHtml(JSON.stringify(s.detected,null,2))+'</pre>';
+    const sInfo=document.getElementById('scenarioInfo');
+    if(sInfo&&s&&s.detected&&s.detected.scenario){
+      sInfo.innerHTML='<strong>Algılanan Mimari:</strong> Senaryo '+escapeHtml(s.detected.scenario.number)+' — '+escapeHtml(s.detected.scenario.label)+'<div class="tip-note" style="margin-top:4px">'+escapeHtml(s.detected.scenario.summary||'')+'</div>';
+    }
+    if(s&&s.detected&&s.detected.defaultPort){
+      setVal('port',s.detected.defaultPort);
+      applyModeDefaults();
+    }
+    const CORE_ENV_KEYS=new Set(['PORT','HOST','NODE_ENV','DATABASE_URL','SESSION_SECRET','ADMIN_NAME','ADMIN_EMAIL','ADMIN_PASSWORD','EMAIL_ENABLED','EMAIL_HOST','EMAIL_PORT','EMAIL_USER','EMAIL_PASSWORD','EMAIL_FROM_EMAIL','EMAIL_FROM_NAME','RETENTION_ENABLED','RETENTION_ACTION_DAYS','RETENTION_NOTIFICATION_DAYS','RETENTION_EMAIL_DAYS','RETENTION_PASSWORD_DAYS','FRONTEND_URL','APP_BASE_PATH','ALLOWED_ORIGINS','TRUST_PROXY_HOPS']);
+    const envVars=(s&&s.detected&&Array.isArray(s.detected.envVariables))?s.detected.envVariables.filter(v=>v&&v.key&&!CORE_ENV_KEYS.has(v.key)):[];
+    const customEnvSec=document.getElementById('customEnvSection');
+    const customEnvFields=document.getElementById('customEnvFields');
+    if(customEnvSec&&customEnvFields){
+      if(envVars.length>0){
+        customEnvSec.classList.remove('hidden');
+        customEnvFields.innerHTML=envVars.map(v=>'<div><div class="lbl-row"><label for="env_'+escapeHtml(v.key)+'">'+escapeHtml(v.key)+'</label>'+(v.description?'<span class="help" tabindex="0" data-tip="'+escapeHtml(v.description)+'">?</span>':'')+'</div><input id="env_'+escapeHtml(v.key)+'" data-custom-env-key="' + escapeHtml(v.key)+'" value="'+escapeHtml(v.defaultValue||'')+'"></div>').join('');
+      }else{
+        customEnvSec.classList.add('hidden');
+      }
+    }
+    if(s&&s.detected&&s.detected.scenario&&s.detected.scenario.requiresAdmin===false){
+      window.__OPTIONAL_ADMIN__=true;
+      ['adminName','adminEmail','adminPassword'].forEach(id=>{
+        const el=wizard.elements.namedItem(id);
+        if(el)el.required=false;
+      });
+      const admNote=document.getElementById('adminOptionalNote');
+      if(admNote)admNote.classList.remove('hidden');
+    }
   }catch(e){
     checks.innerHTML='<p class="error">Ön kontrol sonucu alınamadı: '+escapeHtml(e&&e.message?e.message:e)+'</p><button type="button" class="secondary" id="retry">Yeniden Dene</button>';
     const retry=document.getElementById('retry');
@@ -317,7 +357,10 @@ loadStatus();
 wizard.onsubmit=async e=>{
   e.preventDefault();
   const pwd=wizard.elements.namedItem('adminPassword');
-  if(pwd){
+  const nameInput=wizard.elements.namedItem('adminName');
+  const emailInput=wizard.elements.namedItem('adminEmail');
+  const isOptionalEmptyAdmin=Boolean(window.__OPTIONAL_ADMIN__)&&!String(pwd?.value||'').trim()&&!String(nameInput?.value||'').trim()&&!String(emailInput?.value||'').trim();
+  if(pwd&&!isOptionalEmptyAdmin){
     const message=adminPasswordError(pwd.value);
     fieldError(pwd,message);
     if(message){
@@ -326,6 +369,8 @@ wizard.onsubmit=async e=>{
       result.className='error';
       return;
     }
+  }else if(pwd){
+    fieldError(pwd,'');
   }
   validateEmailFields();
   apply.disabled=true;next.disabled=true;prev.disabled=true;
@@ -338,7 +383,12 @@ wizard.onsubmit=async e=>{
   progressBox.innerHTML='<div>Adımlar başlatılıyor…</div>';
   const f=new FormData(wizard);
   const enabled=f.has('emailEnabled');
-  const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy')),retention:{enabled:f.has('retention'),actionLogDays:Number(f.get('actionDays')),readNotificationDays:Number(f.get('notificationDays')),emailLogDays:Number(f.get('emailDays')),passwordResetDays:Number(f.get('passwordDays'))}},server:{host:f.get('host'),port:Number(f.get('port'))},admin:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:enabled?{enabled:true,user:f.get('emailUser'),password:f.get('emailPassword'),fromEmail:f.get('fromEmail'),fromName:f.get('fromName')}:{enabled:false},buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
+  const customEnv={};
+  document.querySelectorAll('[data-custom-env-key]').forEach(el=>{
+    const k=el.getAttribute('data-custom-env-key');
+    if(k)customEnv[k]=el.value;
+  });
+  const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy')),retention:{enabled:f.has('retention'),actionLogDays:Number(f.get('actionDays')),readNotificationDays:Number(f.get('notificationDays')),emailLogDays:Number(f.get('emailDays')),passwordResetDays:Number(f.get('passwordDays'))}},server:{host:f.get('host'),port:Number(f.get('port'))},admin:isOptionalEmptyAdmin?{name:'',email:'',password:''}:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:enabled?{enabled:true,user:f.get('emailUser'),password:f.get('emailPassword'),fromEmail:f.get('fromEmail'),fromName:f.get('fromName')}:{enabled:false},customEnv,buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
   try{
     const start=await fetchJson('/api/apply',{method:'POST',headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},body:JSON.stringify(payload)});
     const startData=start.data||{};
@@ -373,8 +423,7 @@ function finishApplySuccess(applyJob){
   const list=document.getElementById('nextSteps');
   const summary=(applyJob.summary||[]);
   const isLocal=(applyJob.mode==='localhost')||/localhost|127\\.0\\.0\\.1/i.test(applyJob.publicUrl||'');
-  let loginUrl=applyJob.loginUrl||'#';
-  if(isLocal)loginUrl='http://127.0.0.1:5173/auth';
+  let loginUrl=applyJob.loginUrl||applyJob.publicUrl||('http://127.0.0.1:'+(wizard.elements.namedItem('port')?.value||5000));
   const publicUrl=applyJob.publicUrl||'';
   const escapedLogin=escapeHtml(loginUrl);
   const escapedHref=safeHref(loginUrl);
