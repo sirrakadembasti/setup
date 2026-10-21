@@ -615,7 +615,9 @@ export function createSetupWizardCore(options = {}) {
       };
     }
 
-    if (method === "POST" && pathname === "/api/test-smtp") {
+    // Gerçek bir SMTP bağlantısı denenmez; yalnızca e-posta alanlarının biçimi doğrulanır.
+    // `/api/test-smtp` eski adı geriye uyumluluk için kabul edilir.
+    if (method === "POST" && (pathname === "/api/validate-email-format" || pathname === "/api/test-smtp")) {
       const emailData = body?.email ?? body ?? {};
       const issues = validateStepData("email", emailData);
       if (issues.length > 0) {
@@ -624,6 +626,7 @@ export function createSetupWizardCore(options = {}) {
           headers: { "content-type": "application/json; charset=utf-8" },
           body: {
             ok: false,
+            connectionTested: false,
             message: issues[0].message,
             errors: issues.map((i) => i.message),
           },
@@ -634,8 +637,9 @@ export function createSetupWizardCore(options = {}) {
         headers: { "content-type": "application/json; charset=utf-8" },
         body: {
           ok: true,
+          connectionTested: false,
           message: emailData.enabled
-            ? "Gmail SMTP yapılandırma biçimi doğrulandı."
+            ? "Gmail ayarlarının biçimi doğrulandı (SMTP bağlantısı denenmedi)."
             : "E-posta gönderimi devre dışı olarak doğrulandı.",
         },
       };

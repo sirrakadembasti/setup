@@ -720,7 +720,7 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
   const badSmtp = await core.handle({
     method: "POST",
     headers: { "x-setup-csrf": core.csrfToken },
-    path: "/api/test-smtp",
+    path: "/api/validate-email-format",
     body: { enabled: true, user: "a@yahoo.com", fromEmail: "a@yahoo.com", fromName: "Test", password: "short" },
   });
   assert.equal(badSmtp.status, 400);
@@ -729,11 +729,12 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
   const goodSmtp = await core.handle({
     method: "POST",
     headers: { "x-setup-csrf": core.csrfToken },
-    path: "/api/test-smtp",
+    path: "/api/test-smtp", // eski ad geriye uyumluluk için hâlâ çalışır
     body: { enabled: false },
   });
   assert.equal(goodSmtp.status, 200);
   assert.equal(goodSmtp.body.ok, true);
+  assert.equal(goodSmtp.body.connectionTested, false);
 
   // 5. POST /api/apply (wait: true ile senkron tamamlanma)
   const applyRes = await core.handle({
