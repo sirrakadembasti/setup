@@ -121,6 +121,8 @@ test("wizard/server: Host başlığı sahteciliğine (Host Header Spoofing) kar�
 
 test("wizard/server E2E: token oturumu (setup.wizard), rate limit, /api/apply ve .env + lock üretimi", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-e2e-"));
+  fs.mkdirSync(path.join(tmpRoot, "prisma"), { recursive: true });
+  fs.writeFileSync(path.join(tmpRoot, "prisma", "schema.prisma"), "// SQLite/Prisma kullanan proje\n", "utf8");
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
 
   const token = "wizard_secret_token_1234567890_abcdef";
@@ -196,6 +198,8 @@ test("wizard/server E2E: token oturumu (setup.wizard), rate limit, /api/apply ve
 
 test("wizard/server E2E: tek dizinli projede (server/ yokken) .env ve data/* doğrudan proje köküne yazılır", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-singledir-"));
+  fs.mkdirSync(path.join(tmpRoot, "prisma"), { recursive: true });
+  fs.writeFileSync(path.join(tmpRoot, "prisma", "schema.prisma"), "// SQLite/Prisma kullanan proje\n", "utf8");
   t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "single-dir-app" }), "utf8");
 
@@ -525,6 +529,8 @@ test("wizard/server E2E: package.json içindeki build ve migrate betikleri gerç
 
 test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişkenleriyle başlatır ve port açılana kadar bekler", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-startapp-"));
+  fs.mkdirSync(path.join(tmpRoot, "prisma"), { recursive: true });
+  fs.writeFileSync(path.join(tmpRoot, "prisma", "schema.prisma"), "// SQLite/Prisma kullanan proje\n", "utf8");
 
   // Dinamik boş port bul (>= 1024)
   const appPort = await new Promise((resolve, reject) => {
@@ -1479,4 +1485,21 @@ test("wizard/config: .env senaryoya göre sadeleşir; isteğe bağlı gruplar ya
 
   const desktop = buildServerEnv(parsed, "s", "file:./app.db", [], { isDesktop: true, requiresDatabase: false });
   assert.doesNotMatch(desktop, /SESSION_SECRET|FRONTEND_URL|ALLOWED_ORIGINS|DATABASE_URL/);
+});
+
+test("wizard/config: sunucu senaryolarında SQLite DATABASE_URL, SESSION_SECRET ve NODE_ENV yalnızca gerekirse yazılır", () => {
+  const parsed = setupPayloadSchema.parse(VALID_PAYLOAD);
+  const noAdmin = { ...parsed, admin: undefined };
+  const polyglot = { isStaticOnly: false, isDesktop: false, requiresDatabase: true, usesLocalDatabase: false, usesNodeEnv: false };
+  const py = buildServerEnv(parsed, "s", "file:../data/app.db", [], polyglot);
+  assert.doesNotMatch(py, /DATABASE_URL|NODE_ENV/, "Python/Go/.NET/Rust projesine SQLite yolu ve NODE_ENV dayatılmaz");
+  assert.match(py, /SESSION_SECRET=/, "yönetici hesabı varsa oturum anahtarı yazılır");
+  assert.doesNotMatch(buildServerEnv(noAdmin, "s", "x", [], polyglot), /SESSION_SECRET/);
+  assert.match(buildServerEnv(noAdmin, "s", "x", [{ key: "SESSION_SECRET", defaultValue: "" }], polyglot), /SESSION_SECRET="s"/);
+  assert.match(buildServerEnv(parsed, "s", "file:./db.sqlite", [{ key: "DATABASE_URL", defaultValue: "" }], polyglot), /DATABASE_URL="file:\.\/db\.sqlite"/);
+
+  const node = { isStaticOnly: false, isDesktop: false, requiresDatabase: true, usesLocalDatabase: true, usesNodeEnv: true };
+  const nodeEnv = buildServerEnv(parsed, "s", "file:../data/app.db", [], node);
+  assert.match(nodeEnv, /DATABASE_URL="file:\.\.\/data\/app\.db"/);
+  assert.match(nodeEnv, /NODE_ENV=production/);
 });

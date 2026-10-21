@@ -175,7 +175,8 @@ export function verifyAdminPassword(password, storedHash) {
 
 /**
  * Senaryoya göre sade `.env` üretir. Her zaman yazılanlar: algılanan senaryonun gerektirdiği
- * çekirdek ayarlar. İsteğe bağlı gruplar (TRUST_PROXY_HOPS, RETENTION_*, EMAIL_*,
+ * çekirdek ayarlar (`SESSION_SECRET` yalnızca yönetici hesabı varsa/bildirilmişse, `DATABASE_URL`
+ * yalnızca yerel veritabanı algılanırsa/bildirilirse, `NODE_ENV` yalnızca Node senaryolarında). İsteğe bağlı gruplar (TRUST_PROXY_HOPS, RETENTION_*, EMAIL_*,
  * ALLOW_RUNTIME_DEPLOYMENT_CHANGES) yalnızca kullanıcı etkinleştirdiyse veya
  * `.env.example` içinde bildirildiyse yazılır. `.env.example` değişkenleri ve
  * `customEnv` değerleri her senaryoda eklenir.
@@ -203,7 +204,11 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
   const isDesktop = Boolean(scenario?.isDesktop);
   // Tarayıcıda çalışan statik uygulamada sunucu sırrı/oturum anahtarı yoktur; masaüstünde sunucu ayarları gerekmez.
   const needsServerCore = !isStatic && !isDesktop;
-  const needsDatabase = scenario ? Boolean(scenario.requiresDatabase) : true;
+  // Yerel (SQLite/Prisma) veritabanı yolu yalnızca algılanırsa veya .env.example bildirirse yazılır;
+  // Python/Go/.NET/Rust gibi projelere eski uygulamanın SQLite yolu dayatılmaz.
+  const needsDatabase = scenario ? Boolean(scenario.usesLocalDatabase) || declared.has("DATABASE_URL") : true;
+  const needsNodeEnv = scenario ? Boolean(scenario.usesNodeEnv) || declared.has("NODE_ENV") : true;
+  const needsSessionSecret = scenario ? Boolean(payload.admin?.email) || declared.has("SESSION_SECRET") : true;
 
   const writtenKeys = new Set();
   const lines = [
@@ -217,8 +222,8 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
 
   if (needsDatabase) put("DATABASE_URL", envValue(databaseUrl));
   if (needsServerCore) {
-    put("SESSION_SECRET", envValue(sessionSecret));
-    put("NODE_ENV", "production");
+    if (needsSessionSecret) put("SESSION_SECRET", envValue(sessionSecret));
+    if (needsNodeEnv) put("NODE_ENV", "production");
     put("HOST", envValue(payload.server.host));
     put("PORT", String(payload.server.port));
     put("FRONTEND_URL", envValue(deployment.publicUrl));
