@@ -1614,3 +1614,30 @@ test("masaüstü IPC: core hemen kapanan uygulama için 409 döner; masaüstü o
   const res = await other.handle({ method: "GET", path: "/api/app-health" });
   assert.equal(res.status, 404);
 });
+
+test("readSetupRuntimeConfig: masaüstü senaryosunda dataDir verilmezse kullanıcı veri dizininden okur", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-desktop-rt-"));
+  const userHome = fs.mkdtempSync(path.join(os.tmpdir(), "setup-desktop-rthome-"));
+  const prevUserHome = process.env.SETUP_USER_DATA_HOME;
+  process.env.SETUP_USER_DATA_HOME = userHome;
+  t.after(() => {
+    if (prevUserHome === undefined) delete process.env.SETUP_USER_DATA_HOME;
+    else process.env.SETUP_USER_DATA_HOME = prevUserHome;
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    fs.rmSync(userHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({ name: "my-desk-app", main: "main.js", devDependencies: { electron: "^30.0.0" } }),
+    "utf8",
+  );
+  fs.writeFileSync(path.join(tmpRoot, "main.js"), "require('electron');\n", "utf8");
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, ipcMode: true, syncApply: true, runBuildCommands: async () => {} });
+  await core.handle({ method: "POST", path: "/api/apply", body: { ...VALID_PAYLOAD, admin: { name: "", email: "", password: "" }, wait: true } });
+
+  const runtime = readSetupRuntimeConfig(tmpRoot);
+  assert.equal(runtime.installed, true);
+  assert.equal(runtime.paths.dataRoot, path.join(userHome, "my-desk-app"));
+});

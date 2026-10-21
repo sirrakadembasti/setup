@@ -89,7 +89,13 @@ function normalizeRootAndOptions(rootOrOptions = process.cwd()) {
 }
 
 export function readSetupRuntimeConfig(rootOrOptions = process.cwd()) {
-  const { projectRoot, dataDir } = normalizeRootAndOptions(rootOrOptions);
+  const { projectRoot, dataDir: rawDataDir } = normalizeRootAndOptions(rootOrOptions);
+  let dataDir = rawDataDir;
+  if (!dataDir && !process.env.SETUP_DATA_DIR) {
+    const detection = detectProject(projectRoot);
+    const setupConfig = loadSetupConfig(projectRoot);
+    dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: null });
+  }
   const paths = getSetupPaths(projectRoot, { dataDir });
   const installed = fs.existsSync(paths.lock);
   const env = parseEnvFile(paths.env);

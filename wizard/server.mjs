@@ -894,8 +894,10 @@ export function createSetupServer(token, options = {}) {
 
 export function startSetupWizard() {
   const projectRoot = getProjectRoot();
-  const paths = getSetupPaths(projectRoot);
   const setupConfig = loadSetupConfig(projectRoot);
+  const detection = detectProject(projectRoot);
+  const dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: null });
+  const paths = getSetupPaths(projectRoot, { dataDir });
   fs.mkdirSync(paths.dataRoot, { recursive: true });
   if (fs.existsSync(paths.lock)) {
     throw new Error("Kurulum kilidi mevcut. Çalışan sistemi yeniden yapılandırmak için önce temiz kurulum adımını kullanın.");
@@ -904,7 +906,7 @@ export function startSetupWizard() {
   const host = "127.0.0.1";
   const port = Math.min(65535, Math.max(1024, Number(process.env.SETUP_PORT) || Number(setupConfig?.ports?.wizard) || 5050));
   let server;
-  server = createSetupServer(token, { projectRoot, onComplete: () => server.close() });
+  server = createSetupServer(token, { projectRoot, dataDir, onComplete: () => server.close() });
   server.listen(port, host, () => {
     console.log(`Kurulum sihirbazı: http://${host}:${port}/setup?token=${token}`);
     console.log("Bu bağlantıyı paylaşmayın. Kurulum tamamlandığında sihirbaz otomatik kapanır.");
