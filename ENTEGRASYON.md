@@ -13,9 +13,14 @@
 
 - Varsayılan: `setup.config.json` + `kurulum.bat` / `kurulum.sh` yazılır; `package.json` değiştirilmez.
 - `--no-launchers`: başlatıcı üretilmez. `--update-package-json`: `package.json` içine `setup` (ve gömülü kurulumlarda `wizard`) script'i eklenir. `--force`: mevcut dosyaların üzerine yazar.
+- `--root <yol>`: Hedef proje kökünü belirler. **Komut hedef projenin kendi dizininde çalıştırılıyorsa `--root .` yazılmasına gerek yoktur**, varsayılan olarak bulunulan dizin alınır. Yalnızca farklı bir dizinden çağrılıyorsa `--root /hedef/dizin` verilmelidir.
 - Yapılandırma zaten varsa `init` yalnız eksik başlatıcıları ekler; hiçbir şey yazılmadıysa çıkış kodu 1'dir.
 - `bin/kurulum.sh|bat` (eklentinin kendi ön kontrol betiği) çağrıldığı dizindeki projeyi kurar: `cd /proje && /yol/setup/bin/kurulum.sh`.
-- **Kurumsal ve Kısıtlı Ortamlarda Bun / bunx Desteği:** İş ortamlarında `npx` ve `npm` kısıtlı veya bulunmadığında, `bunx github:sirrakadembasti/setup init --root .` komutu kullanılabilir. Üretilen `kurulum.bat` / `kurulum.sh` başlatıcıları sistemde `npx` yoksa otomatik olarak `bunx`'e geri düşer; sonraki paket kurulumu (`install`), derleme (`build`), migration ve başlatma (`start`) aşamaları da otomatik olarak Bun üzerinden kesintisiz yürütülür.
+- **Kurumsal ve Kısıtlı Ortamlarda Bun / bunx Desteği:** İş ortamlarında `npx` ve `npm` kısıtlı veya bulunmadığında, `bunx github:sirrakadembasti/setup init` komutu kullanılabilir. Üretilen `kurulum.bat` / `kurulum.sh` başlatıcıları sistemde `npx` yoksa otomatik olarak `bunx`'e geri düşer; sonraki paket kurulumu (`install`), derleme (`build`), migration ve başlatma (`start`) aşamaları da otomatik olarak Bun üzerinden kesintisiz yürütülür.
+- **Çalışma Zamanı (Runtime) Paket Yöneticisi Fallback ve Shims Mimarisi:**
+  - Proje ister `pnpm-workspace.yaml` monorepo, ister `yarn`, ister `npm` olsun; hedef bilgisayarda ilgili paket yöneticisi yüklü değilse ve `bun` mevcutsa sistem çalışma zamanında otomatik `bun`'a geçer.
+  - Arayüzde sahte gösterim (`pnpm 1.3.14 ✓` gibi) yapılmaz; gerçekte çalışan araç ve sürüm (`bun 1.3.14 ✓`) ile kurulum adımı (`bun install`) gösterilir.
+  - `bin/shims/` katmanı sayesinde `package.json` içindeki `pnpm --filter ...` gibi monorepo alt script çağrıları da alt süreç PATH'i üzerinden şeffaf şekilde Bun'a yönlendirilir ve `'pnpm is not recognized'` hatası oluşmaz.
 
 ## Güvenlik Notları (Gömülü Kullanım)
 
@@ -47,15 +52,20 @@
 Eklentiyi hedef GitHub reponuza bağlamanın en hızlı yolu `init` komutudur:
 
 ```bash
-# npx (Node.js) ile:
-npx github:sirrakadembasti/setup init --root /path/to/hedef-repo
-# veya bunx (Bun) ile:
+# Proje dizinindeyken (--root yazmaya gerek yoktur):
+bunx github:sirrakadembasti/setup init
+# veya npx (Node.js) ile:
+npx github:sirrakadembasti/setup init
+
+# Farklı bir dizini uzaktan hedeflemek için:
 bunx github:sirrakadembasti/setup init --root /path/to/hedef-repo
 
-# Yerel kopyadan çalıştırmak için:
-node /path/to/setup/bin/setup.mjs init --root /path/to/hedef-repo # veya: bun /path/to/setup/bin/setup.mjs ...
+# Yerel kopyadan veya çevrimdışı (offline tools/setup) çalıştırmak için:
+node tools/setup/bin/setup.mjs init
+# veya:
+node /path/to/setup/bin/setup.mjs init --root /path/to/hedef-repo
 # Mevcut setup.config.json üzerine yazmak için:
-node /path/to/setup/bin/setup.mjs init --root /path/to/hedef-repo --force
+node tools/setup/bin/setup.mjs init --force
 ```
 
 Bu komut hedef repoyu tarar ve:
@@ -879,7 +889,8 @@ setup/
 ├── bin/
 │   ├── setup.mjs             # Ana CLI aracı (setup, wizard, init, detect, version)
 │   ├── kurulum.sh            # Bash/POSIX başlatıcı (npm/npx ve bun/bunx dual fallback)
-│   └── kurulum.bat           # Windows UTF-8 başlatıcı (npm/npx ve bun/bunx dual fallback)
+│   ├── kurulum.bat           # Windows UTF-8 başlatıcı (npm/npx ve bun/bunx dual fallback)
+│   └── shims/                # Alt süreçler için şeffaf yönlendiriciler (pnpm, npm, npx, bunx)
 ├── scripts/
 │   ├── detect-project.mjs    # Otomatik mimari, kaynak doğrulama, paket yöneticisi ve .env tespiti
 │   ├── polyglot.mjs          # Python/Go/C#/Rust kurulum, doğrulama ve başlatma profilleri

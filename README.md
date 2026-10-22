@@ -27,10 +27,17 @@ bunx github:sirrakadembasti/setup
 Projenizin kök dizininde aşağıdaki komutu çalıştırarak çift tıklanabilir başlatıcıları (`kurulum.bat`, `kurulum.sh`) ve yapılandırma dosyasını (`setup.config.json`) otomatik oluşturun:
 
 ```bash
-npx github:sirrakadembasti/setup init --root .
-# veya
-bunx github:sirrakadembasti/setup init --root .
+# Bun / bunx ile:
+bunx github:sirrakadembasti/setup init
+
+# veya npm / npx ile:
+npx github:sirrakadembasti/setup init
+
+# Çevrimdışı / Yerel klasörden (tools/setup):
+node tools/setup/bin/setup.mjs init
 ```
+
+> **İpucu:** Proje dizinindeyken `--root .` yazmanıza gerek yoktur; komut doğrudan çalıştırıldığı klasörü hedefler. Farklı bir dizini hedeflemek için `--root /hedef/dizin` belirtebilirsiniz.
 
 ---
 
@@ -62,6 +69,7 @@ bunx github:sirrakadembasti/setup init --root .
 
 - **Sıfır Bağımlılık:** Yalnızca Node.js (>=18) veya Bun yerleşik modüllerini kullanır; `npm install` gerektirmez.
 - **Dual npm / bunx Desteği:** İş ortamlarında `npm` çalışmasa dahi sistemdeki `bun` algılanarak kurulumdan derlemeye tüm süreç sorunsuz tamamlanır.
+- **Dinamik Paket Yöneticisi Fallback'i:** Proje `pnpm` veya `yarn` istese bile sistemde o araç yoksa ve yalnızca `bun` varsa, kurulum ve derleme otomatik olarak `bun`'a yönlendirilir; alt script çağrıları (`bin/shims`) çökmeden çalışır.
 - **Güvenli:** Tarayıcı uygulamalarına gizli anahtarları sızdırmaz, CSRF ve timing-safe korumalıdır.
 - **Esnek:** Doğrudan CLI ile kullanılabileceği gibi Express middleware'i, Next.js API Route'u veya Electron IPC içine gömülebilir.
 
