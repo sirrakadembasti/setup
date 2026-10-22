@@ -13,6 +13,7 @@
 
 - Varsayılan: `setup.config.json` + `kurulum.bat` / `kurulum.sh` yazılır; `package.json` değiştirilmez.
 - `--no-launchers`: başlatıcı üretilmez. `--update-package-json`: `package.json` içine `setup` (ve gömülü kurulumlarda `wizard`) script'i eklenir. `--force`: mevcut dosyaların üzerine yazar.
+- `--copy-tools` (`--offline` / `--tools`): `setup` çekirdek klasörünü hedef projenin içine `tools/setup` olarak kopyalar. Şirket/kurumsal ağlarda veya internet erişiminin kısıtlı olduğu ortamlarda `kurulum.bat`'ın GitHub'a hiç gitmeden %100 çevrimdışı çalışmasını sağlar.
 - `--root <yol>`: Hedef proje kökünü belirler. **Komut hedef projenin kendi dizininde çalıştırılıyorsa `--root .` yazılmasına gerek yoktur**, varsayılan olarak bulunulan dizin alınır. Yalnızca farklı bir dizinden çağrılıyorsa `--root /hedef/dizin` verilmelidir.
 - Yapılandırma zaten varsa `init` yalnız eksik başlatıcıları ekler; hiçbir şey yazılmadıysa çıkış kodu 1'dir.
 - `bin/kurulum.sh|bat` (eklentinin kendi ön kontrol betiği) çağrıldığı dizindeki projeyi kurar: `cd /proje && /yol/setup/bin/kurulum.sh`.
@@ -869,6 +870,7 @@ node bin/setup.mjs help     # Yardım kılavuzunu gösterir
 --port <numara>          # Sihirbaz veya başlatıcı portunu özelleştirir
 --data-dir <yol>         # Kurulum verileri ve .env için harici dizin belirler
 --force, -f              # init sırasında mevcut yapılandırma ve başlatıcıların üzerine yazar
+--copy-tools             # init sırasında setup çekirdeğini tools/setup içine kopyalar (--tools, --offline)
 --no-launchers           # init sırasında kurulum.bat / kurulum.sh üretmez
 --update-package-json    # init sırasında package.json içine "setup" script'i ekler
 --no-open                # Tarayıcıyı otomatik olarak açmaz

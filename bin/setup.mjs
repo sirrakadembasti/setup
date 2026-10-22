@@ -94,6 +94,7 @@ Seçenekler:
   --port <numara>    Sihirbaz veya başlatıcı portunu özelleştir
   --data-dir <yol>   Kurulum verileri ve .env için harici dizin belirt
   --force, -f        init sırasında mevcut setup.config.json ve başlatıcıların üzerine yaz
+  --copy-tools       init sırasında setup çekirdeğini tools/setup içine kopyalar (--tools, --offline)
   --no-launchers     init sırasında kurulum.bat / kurulum.sh üretme
   --update-package-json  init sırasında package.json'a "setup" script'i ekle (varsayılan: dokunma)
   --no-open          Tarayıcıyı otomatik açma

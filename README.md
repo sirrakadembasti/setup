@@ -35,9 +35,14 @@ npx github:sirrakadembasti/setup init
 
 # Çevrimdışı / Yerel klasörden (tools/setup):
 node tools/setup/bin/setup.mjs init
+
+# Şirket / Kurumsal Ağlar İçin (%100 Çevrimdışı - GitHub/SSL engeline takılmaz):
+bun /path/to/setup/bin/setup.mjs init --copy-tools
+# veya:
+node /path/to/setup/bin/setup.mjs init --offline
 ```
 
-> **İpucu:** Proje dizinindeyken `--root .` yazmanıza gerek yoktur; komut doğrudan çalıştırıldığı klasörü hedefler. Farklı bir dizini hedeflemek için `--root /hedef/dizin` belirtebilirsiniz.
+> **İpucu:** Proje dizinindeyken `--root .` yazmanıza gerek yoktur; komut doğrudan çalıştırıldığı klasörü hedefler. Farklı bir dizini hedeflemek için `--root /hedef/dizin` belirtebilirsiniz. Şirket ağında GitHub SSL engeli varsa `--copy-tools` parametresi `tools/setup` klasörünü otomatik olarak projenize yerleştirir ve kurulumun internete hiç çıkmadan çalışmasını sağlar.
 
 ---
 
