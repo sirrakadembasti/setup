@@ -138,7 +138,15 @@ test("dış dizini gösteren sembolik bağlantı (symlink) yedekleme sırasında
   fs.writeFileSync(outsideFile, "secret-outside", "utf8");
   t.after(() => fs.rmSync(outsideFile, { force: true }));
 
-  fs.symlinkSync(outsideFile, path.join(item.paths.uploadsRoot, "leak.txt"));
+  try {
+    fs.symlinkSync(outsideFile, path.join(item.paths.uploadsRoot, "leak.txt"));
+  } catch (err) {
+    if (err.code === "EPERM") {
+      t.skip("Windows'ta symlink oluşturma yetkisi (Geliştirici Modu) bulunmadığından atlandı");
+      return;
+    }
+    throw err;
+  }
   assert.throws(
     () => createVerifiedBackup(item.root, "symlink-test"),
     /sembolik bağlantı proje dışını gösteriyor|Güvenli dizin sınırı ihlali/,

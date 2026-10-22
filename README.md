@@ -11,7 +11,7 @@ Herhangi bir GitHub reposundaki Node.js, SPA/statik web, full-stack, çoklu dil 
 - **Kaynak Doğrulamalı Teknoloji Algılama:** `express`, `fastify`, `koa`, `hono`, `react`, `vue`, `next`, `nuxt`, `sveltekit`, `astro`, `vite`, `electron` ve `tauri` kullanımı yalnız `package.json` bildirimine göre değil, kaynak koddaki `import`/`require` ifadelerine ve script'lerdeki CLI çağrılarına göre doğrulanır (`dependencyUsage` çıktısı).
 - **Framework-Agnostik Kurulum Çekirdeği (`setup/core`):** HTTP soketi açmadan doğrudan Express/Fastify/Hono middleware'i, Next.js Route Handler'ı veya Electron IPC kanalı içinden çağrılabilen `createSetupWizardCore`, `mountSetupGuard`, `readSetupRuntimeConfig` ve `verifyAdminCredentials` API'leri sunar.
 - **SPA Güvenli Yapılandırma & Statik Sunucu:** Tarayıcı uygulamalarında gizli anahtarları sızdırmadan yalnız güvenli genel ayarları (`VITE_*`, `PUBLIC_*`, `NEXT_PUBLIC_*`, `REACT_APP_*`) içeren `runtime-config.json` ve `env-config.js` (`window.__SETUP_CONFIG__`) üretir; yerleşik `createStaticAppServer` ile sıfır bağımlılıklı SPA sunumu yapar.
-- **Çoklu Paket Yöneticisi Desteği:** Hedef repodaki kilit dosyalarına bakarak `npm`, `pnpm`, `yarn` veya `bun` paket yöneticisini otomatik seçer.
+- **Çoklu Paket Yöneticisi ve Kurumsal Ortam (Dual npm/bunx) Desteği:** Hedef repodaki kilit dosyalarına bakarak `npm`, `pnpm`, `yarn` veya `bun` paket yöneticisini otomatik seçer. Kurumsal/iş bilgisayarlarında `npm` ve `npx` kısıtlı olduğunda, `bun` ve `bunx` otomatik algılanarak bağımlılık kurulumundan derleme ve başlatmaya kadar tüm süreç kesintisiz yürütülür.
 - **Tek Komutla Entegrasyon (`setup init`):** Herhangi bir GitHub reposuna `setup.config.json` yapılandırmasını ve çift tıklanabilir `kurulum.bat` / `kurulum.sh` başlatıcılarını saniyeler içinde ekler. Hedef projenin `package.json` dosyasına varsayılan olarak dokunmaz.
 - **İki Aşamalı Güvenli Web Kurulumu:**
   - **Kurulum Başlatıcısı (`127.0.0.1:5049`):** Projenin 5 senaryosuna göre dinamik başlık ve rozet gösterir. Node.js (`npm`/`pnpm`/`yarn`/`bun`), Python (`venv` + `pip`), Go (`go mod`), C# (`dotnet restore`) ve Rust (`cargo fetch`) bağımlılıklarını tek tıkla kurar ve derleme/tutarlılık doğrulaması yapar; saf statik web (Senaryo 2) projelerinde bağımlılık adımını otomatik tamamlanmış sayarak sihirbaza aktarır.
@@ -22,15 +22,18 @@ Herhangi bir GitHub reposundaki Node.js, SPA/statik web, full-stack, çoklu dil 
 
 ### 1. Son Kullanıcı Deneyimi (İndirilen Herhangi Bir GitHub Reposunda Tek Komutla Kurulum)
 
-GitHub'dan indirdiğiniz veya klonladığınız herhangi bir projenin kök dizininde sadece aşağıdaki komutu çalıştırın (ayrı bir `init` komutuna veya `setup.config.json` hazırlamaya gerek yoktur):
+GitHub'dan indirdiğiniz veya klonladığınız herhangi bir projenin kök dizininde aşağıdaki komutlardan birini çalıştırın (ayrı bir `init` komutuna veya `setup.config.json` hazırlamaya gerek yoktur):
 
 ```bash
-# Herhangi bir projenin ana klasöründe:
+# npm / npx kullananlar için:
 npx github:sirrakadembasti/setup
+
+# Bun / bunx kullananlar için (iş/kurumsal bilgisayarlarda npm kısıtlı olduğunda idealdir):
+bunx github:sirrakadembasti/setup
 ```
 
 Eğer repoya daha önce başlatıcı entegre edilmişse (`setup init` bunları varsayılan olarak ekler) doğrudan çift tıklayabilirsiniz:
-- **Windows:** `kurulum.bat`
+- **Windows:** `kurulum.bat` (sistemdeki Node.js/npx veya Bun/bunx'i otomatik algılar)
 - **Linux / macOS:** `./kurulum.sh`
 
 `setup` projenin hangi senaryoya (1: Node/Express Sunucu, 2: SPA/Statik Web, 3: Next/Nuxt Full-Stack, 4: Python/Go/C#/Rust Sunucu, 5: Electron/Tauri Masaüstü) ait olduğunu otomatik algılar, bellekte/diskte yapılandırır ve tarayıcınızda Web Kurulum Arayüzünü açar.
@@ -41,16 +44,19 @@ Eğer repoya daha önce başlatıcı entegre edilmişse (`setup init` bunları v
 
 ```bash
 # 1. Hedef repoya çift tıklanabilir başlatıcıları (kurulum.bat / kurulum.sh) ve setup.config.json'ı ekleyin
+# npx ile:
 npx github:sirrakadembasti/setup init --root /path/to/github-repo
+# veya bunx ile:
+bunx github:sirrakadembasti/setup init --root /path/to/github-repo
 #    --no-launchers          kurulum.bat / kurulum.sh üretme
 #    --update-package-json   package.json'a "setup" script'i ekle (varsayılan: dokunma)
 #    --force                 mevcut setup.config.json ve başlatıcıların üzerine yaz
 
 # 2. Hedef repoyu analiz edin ve 5 senaryolu algılama profilini görün
-node bin/setup.mjs detect --root /path/to/github-repo
+node bin/setup.mjs detect --root /path/to/github-repo   # veya: bun bin/setup.mjs detect ...
 
 # 3. Web kurulum başlatıcısını (5049) açın
-node bin/setup.mjs --root /path/to/github-repo
+node bin/setup.mjs --root /path/to/github-repo          # veya: bun bin/setup.mjs --root ...
 
 # 4. Doğrudan 5 adımlı kurulum sihirbazını (5050) özelleştirilmiş port ve veri diziniyle açın
 node bin/setup.mjs wizard --root /path/to/github-repo --port 5050 --data-dir /path/to/data
@@ -60,7 +66,7 @@ node bin/setup.mjs wizard --root /path/to/github-repo --port 5050 --data-dir /pa
 
 ### Senaryo 1: Express.js ve Node.js Sunucu Uygulamaları (Doğrudan Gömülü veya CLI)
 
-1. **Kurulum:** `npm install github:sirrakadembasti/setup` veya `npx github:sirrakadembasti/setup init`
+1. **Kurulum:** `npm install github:sirrakadembasti/setup` veya `npx github:sirrakadembasti/setup init` (Bun için: `bun add github:sirrakadembasti/setup` veya `bunx github:sirrakadembasti/setup init`)
 2. **Bağlama:** `mountSetupGuard(app, { embedWizard: true })` ile kurulum tamamlanana kadar istekleri `/setup` sihirbazına yönlendirme; çalışma anında `readSetupRuntimeConfig()` ve `verifyAdminCredentials(root, email, password)` kullanımı.
 3. **Kullanım:** Yöneticiler `/setup` sayfasından 5 adımlı kurulumu tamamlar; `.env`, `data/admin.json` (`scrypt` hash) ve `data/installation.lock` üretilir.
 
@@ -68,8 +74,8 @@ node bin/setup.mjs wizard --root /path/to/github-repo --port 5050 --data-dir /pa
 
 Tarayıcıda çalışan statik uygulamalarda gizli anahtarlar (`SESSION_SECRET`, `ADMIN_PASSWORD_HASH`, `SMTP_PASS`) istemciye çıkarılmaz; `setup` yerel kurulum/önizleme servisi olarak çalışır:
 
-1. **Servisi Başlatma:** `npx github:sirrakadembasti/setup --root .` (veya BFF/Sidecar olarak `SETUP_ALLOWED_ORIGINS=http://localhost:5173 npx github:sirrakadembasti/setup wizard --port 5050`).
-2. **Yapılandırma & Derleme:** Sihirbaz `npm run build` çalıştırır ve çıktı klasörüne (`dist/` veya `public/`) yalnız güvenli genel ayarları içeren `runtime-config.json` ve `env-config.js` (`window.__SETUP_CONFIG__`) yazar.
+1. **Servisi Başlatma:** `npx github:sirrakadembasti/setup --root .` veya `bunx github:sirrakadembasti/setup --root .` (BFF/Sidecar olarak: `SETUP_ALLOWED_ORIGINS=http://localhost:5173 npx github:sirrakadembasti/setup wizard --port 5050`).
+2. **Yapılandırma & Derleme:** Sihirbaz `npm run build` (veya `bun run build`) çalıştırır ve çıktı klasörüne (`dist/` veya `public/`) yalnız güvenli genel ayarları içeren `runtime-config.json` ve `env-config.js` (`window.__SETUP_CONFIG__`) yazar.
 3. **Sunum:** `preview` betiği varsa onu, yoksa `setup`'ın yerleşik sıfır-bağımlılıklı statik dosya sunucusunu (`createStaticAppServer`) hedef portta başlatır.
 
 ### Senaryo 3: Full-Stack Uygulamalar (Next.js App Router, Nuxt, SvelteKit, Astro, Monorepo)
@@ -78,14 +84,14 @@ Express kullanmayan full-stack projelerde doğrudan framework-agnostik çekirdek
 
 1. **Singleton (`lib/setup.js`):** `createSetupWizardCore({ projectRoot: process.cwd(), syncApply: true })` örneğini oluşturun.
 2. **API Route (`app/api/setup/[...slug]/route.js`):** `await setupCore.handle({ method, path, headers, body })` çağırın ve dönen `{ status, headers, body }` nesnesini `NextResponse` ile yanıtlayın.
-3. **Kullanım:** Server Action veya Route Handler içinden `readSetupRuntimeConfig()` ve `verifyAdminCredentials()` çağırın ya da CLI ile migration + build (`next build`) zincirini otomatik çalıştırın.
+3. **Kullanım:** Server Action veya Route Handler içinden `readSetupRuntimeConfig()` ve `verifyAdminCredentials()` çağırın ya da CLI ile migration + build zincirini otomatik çalıştırın.
 
 ### Senaryo 4: Diğer Sunucu Uygulamaları (Fastify/Koa/Hono veya Python FastAPI/Django, Go, C# .NET, Rust)
 
 - **Node.js (Fastify / Koa / Hono):** `setup/core` içindeki `setupCore.handle({ method, path, headers, body })` metodunu kendi route handler'ınıza sarın.
 - **Node.js Dışı Diller (Python FastAPI/Django, Go, C# .NET, Rust):**
-  1. `npx github:sirrakadembasti/setup init` komutu `pyproject.toml`/`requirements.txt`, `go.mod`, `*.csproj` veya `Cargo.toml` dosyasını otomatik algılar ve `setup.config.json` içine ilgili dilin `install` ve `start` komutlarını yazar.
-  2. `npx github:sirrakadembasti/setup wizard --port 5050` yerel Sidecar olarak `.env`, `data/admin.json`, `data/deployment-config.json` ve `nginx.conf.example` üretip Python/Go/C#/Rust sunucusunu başlatır. Dil profilleri (venv, uvicorn/flask/django, `cmd/`, çözüm dosyası, Cargo çalışma alanı, doğrulama adımları) için [ENTEGRASYON.md](ENTEGRASYON.md#dil-profilleri-python--go--c-net--rust) bölümüne bakın.
+  1. `npx github:sirrakadembasti/setup init` veya `bunx github:sirrakadembasti/setup init` komutu `pyproject.toml`/`requirements.txt`, `go.mod`, `*.csproj` veya `Cargo.toml` dosyasını otomatik algılar ve `setup.config.json` içine ilgili dilin `install` ve `start` komutlarını yazar.
+  2. `npx github:sirrakadembasti/setup wizard --port 5050` (veya `bunx ...`) yerel Sidecar olarak `.env`, `data/admin.json`, `data/deployment-config.json` ve `nginx.conf.example` üretip Python/Go/C#/Rust sunucusunu başlatır. Dil profilleri (venv, uvicorn/flask/django, `cmd/`, çözüm dosyası, Cargo çalışma alanı, doğrulama adımları) için [ENTEGRASYON.md](ENTEGRASYON.md#dil-profilleri-python--go--c-net--rust) bölümüne bakın.
 
 ### Senaryo 5: Masaüstü Uygulamaları (Electron, Tauri, C# WPF/MAUI, PyQt)
 

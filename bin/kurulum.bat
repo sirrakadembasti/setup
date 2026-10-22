@@ -40,10 +40,18 @@ if exist "package.json" set "HAS_PACKAGE_JSON=1"
 set "HAS_ERROR=0"
 set "NODE_VERSION="
 set "NODE_MAJOR="
+set "JS_RUNNER=node"
 where node >nul 2>&1
 if errorlevel 1 (
-  echo [EKSİK] Node.js bulunamadı.
-  set "HAS_ERROR=1"
+  where bun >nul 2>&1
+  if not errorlevel 1 (
+    for /f "delims=" %%V in ('bun --version 2^>nul') do set "BUN_VERSION=%%V"
+    echo [TAMAM] Bun !BUN_VERSION! [Node.js yerine Bun calisma ortami kullanilacak]
+    set "JS_RUNNER=bun"
+  ) else (
+    echo [EKSİK] Node.js veya Bun bulunamadı.
+    set "HAS_ERROR=1"
+  )
 ) else (
   for /f "delims=" %%V in ('node -p "process.versions.node" 2^>nul') do set "NODE_VERSION=%%V"
   for /f "delims=" %%M in ('node -p "process.versions.node.split('.')[0]" 2^>nul') do set "NODE_MAJOR=%%M"
@@ -56,8 +64,14 @@ if errorlevel 1 (
   ) else if "!NODE_MAJOR!"=="24" (
     echo [TAMAM] Node.js !NODE_VERSION!
   ) else (
-    echo [UYUMSUZ] Node.js !NODE_VERSION! bulundu. Node.js 18, 20, 22 veya 24 LTS gereklidir.
-    set "HAS_ERROR=1"
+    where bun >nul 2>&1
+    if not errorlevel 1 (
+      for /f "delims=" %%V in ('bun --version 2^>nul') do set "BUN_VERSION=%%V"
+      echo [UYARI] Node.js !NODE_VERSION! [18, 20, 22, 24 LTS onerilir]. Sistemde Bun !BUN_VERSION! mevcut.
+    ) else (
+      echo [UYUMSUZ] Node.js !NODE_VERSION! bulundu. Node.js 18, 20, 22 veya 24 LTS gereklidir.
+      set "HAS_ERROR=1"
+    )
   )
 )
 
@@ -82,11 +96,19 @@ where !PM_NAME! >nul 2>&1
 if errorlevel 1 (
   where npm >nul 2>&1
   if errorlevel 1 (
-    echo [EKSİK] Paket yöneticisi (!PM_NAME! / npm) bulunamadı.
-    set "HAS_ERROR=1"
+    where bun >nul 2>&1
+    if errorlevel 1 (
+      echo [EKSİK] Paket yöneticisi [!PM_NAME! / npm / bun] bulunamadı.
+      set "HAS_ERROR=1"
+    ) else (
+      for /f "delims=" %%V in ('bun --version 2^>nul') do set "BUN_VERSION=%%V"
+      echo [TAMAM] bun !BUN_VERSION! [!PM_NAME! / npm bulunamadi, bun kullanilacak]
+      set "PM_NAME=bun"
+    )
   ) else (
     for /f "delims=" %%V in ('npm --version 2^>nul') do set "NPM_VERSION=%%V"
-    echo [TAMAM] npm !NPM_VERSION! (!PM_NAME! bulunamadı, npm kullanılacak)
+    echo [TAMAM] npm !NPM_VERSION! [!PM_NAME! bulunamadi, npm kullanilacak]
+    set "PM_NAME=npm"
   )
 ) else (
   for /f "delims=" %%V in ('!PM_NAME! --version 2^>nul') do set "PM_VERSION=%%V"
@@ -101,7 +123,7 @@ if defined SETUP_BOOTSTRAP_PORT set "CHECK_PORT=%SETUP_BOOTSTRAP_PORT%"
 
 rem --- Kurulum baslangic portu kontrolu ---
 set "PORT_HOLDER_PID="
-for /f "delims=" %%P in ('node "%SETUP_ROOT%scripts\find-port-holder.mjs" !CHECK_PORT! 2^>nul') do set "PORT_HOLDER_PID=%%P"
+for /f "delims=" %%P in ('!JS_RUNNER! "%SETUP_ROOT%scripts\find-port-holder.mjs" !CHECK_PORT! 2^>nul') do set "PORT_HOLDER_PID=%%P"
 
 if defined PORT_HOLDER_PID (
   echo.
@@ -117,7 +139,7 @@ if defined PORT_HOLDER_PID (
 set "WIZARD_PORT=5050"
 if defined SETUP_WIZARD_PORT set "WIZARD_PORT=%SETUP_WIZARD_PORT%"
 set "WIZARD_PID="
-for /f "delims=" %%P in ('node "%SETUP_ROOT%scripts\find-port-holder.mjs" !WIZARD_PORT! 2^>nul') do set "WIZARD_PID=%%P"
+for /f "delims=" %%P in ('!JS_RUNNER! "%SETUP_ROOT%scripts\find-port-holder.mjs" !WIZARD_PORT! 2^>nul') do set "WIZARD_PID=%%P"
 if defined WIZARD_PID (
   echo.
   echo [UYARI] Sihirbaz portu zaten kullanımda: 127.0.0.1:!WIZARD_PORT!
@@ -136,7 +158,7 @@ echo Web kurulum başlangıcı açılıyor...
 echo.
 set "SETUP_PROJECT_ROOT=%PROJECT_ROOT%"
 rem setup.mjs: proje algılama + setup.config.json otomatik oluşturma + başlatıcı
-node "%SETUP_ROOT%bin\setup.mjs" --root "%PROJECT_ROOT%" %*
+!JS_RUNNER! "%SETUP_ROOT%bin\setup.mjs" --root "%PROJECT_ROOT%" %*
 set "SETUP_EXIT=%ERRORLEVEL%"
 if not "%SETUP_EXIT%"=="0" (
   echo.
@@ -151,6 +173,7 @@ echo.
 echo ------------------------------------------------------------
 echo Kurulması veya düzeltilmesi gereken bileşenler var.
 echo Node.js LTS: https://nodejs.org/en/download
+echo Bun:         https://bun.sh
 echo ------------------------------------------------------------
 pause
 

@@ -6,7 +6,7 @@ import { parseDeploymentConfig, buildDeploymentArtifacts, saveDeploymentConfig }
 import { getSetupPaths } from "../scripts/setup-bootstrap-lib.mjs";
 import { buildLoginUrl, detectPackageManager, parseEnvExample } from "../scripts/detect-project.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
-import { pmRunInvocation, readJsonFileSafe } from "./app-process.mjs";
+import { pmRunInvocation, readJsonFileSafe, resolveEffectivePackageManager } from "./app-process.mjs";
 
 export function digest(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest();
@@ -289,7 +289,7 @@ export async function executeSetupApply({
     const rootPkg = readJsonFileSafe(path.join(projectRoot, "package.json"));
     const serverPkg = readJsonFileSafe(path.join(projectRoot, "server", "package.json"));
     const clientPkg = readJsonFileSafe(path.join(projectRoot, "client", "package.json"));
-    const pm = setupConfig?.packageManager || detectPackageManager(projectRoot, rootPkg);
+    const pm = resolveEffectivePackageManager(setupConfig?.packageManager || detectPackageManager(projectRoot, rootPkg));
 
     if (!payload.buildClient) {
       markStep("buildServer", "skipped", "Üretim derlemesi istenmedi.");

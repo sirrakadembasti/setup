@@ -553,8 +553,15 @@ test("initProject varsayılan olarak başlatıcıları ekler ve package.json'a d
   assert.equal(fs.existsSync(path.join(dir, "kurulum.sh")), true);
   assert.equal(fs.readFileSync(path.join(dir, "package.json"), "utf8"), pkgText);
   // .sh LF, .bat CRLF olmalı (shebang bozulmasın)
-  assert.equal(fs.readFileSync(path.join(dir, "kurulum.sh"), "utf8").includes("\r"), false);
-  assert.equal(fs.readFileSync(path.join(dir, "kurulum.bat"), "utf8").includes("\r\n"), true);
+  const shContent = fs.readFileSync(path.join(dir, "kurulum.sh"), "utf8");
+  const batContent = fs.readFileSync(path.join(dir, "kurulum.bat"), "utf8");
+  assert.equal(shContent.includes("\r"), false);
+  assert.equal(batContent.includes("\r\n"), true);
+  // Hem npx hem bunx desteği mevcut olmalı
+  assert.ok(batContent.includes("npx --yes github:sirrakadembasti/setup"), "bat npx içermeli");
+  assert.ok(batContent.includes("bunx github:sirrakadembasti/setup"), "bat bunx içermeli");
+  assert.ok(shContent.includes("npx --yes github:sirrakadembasti/setup"), "sh npx içermeli");
+  assert.ok(shContent.includes("bunx github:sirrakadembasti/setup"), "sh bunx içermeli");
 });
 
 test("initProject createLaunchers:false ile başlatıcı üretmez; yapılandırma varken eksik başlatıcıları tamamlar", (t) => {

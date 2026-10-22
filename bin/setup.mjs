@@ -97,9 +97,13 @@ Seçenekler:
   --check-only       Yalnız durum JSON çıktısını ver ve çık
 
 Örnek:
-  node bin/setup.mjs init --root /path/to/github-repo
+  # Node.js / npx ile:
+  npx github:sirrakadembasti/setup init --root /path/to/github-repo
   node bin/setup.mjs --root /path/to/github-repo
-  node bin/setup.mjs detect --root .
+
+  # Bun / bunx ile:
+  bunx github:sirrakadembasti/setup init --root /path/to/github-repo
+  bun bin/setup.mjs --root /path/to/github-repo
 `);
 }
 

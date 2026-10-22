@@ -22,6 +22,7 @@ printf 'Proje dizini: %s\n\n' "$PROJECT_ROOT"
 HAS_PACKAGE_JSON=0
 [ -f package.json ] && HAS_PACKAGE_JSON=1
 
+JS_RUNNER="node"
 has_error=0
 if command -v node >/dev/null 2>&1; then
   if [ "$HAS_PACKAGE_JSON" -eq 1 ] && ! node -e 'JSON.parse(require("fs").readFileSync("package.json","utf8"))' >/dev/null 2>&1; then
@@ -32,10 +33,22 @@ if command -v node >/dev/null 2>&1; then
   node_major=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || true)
   case "$node_major" in
     18|20|22|24) printf '[TAMAM] Node.js %s\n' "$node_version" ;;
-    *) printf '[UYUMSUZ] Node.js %s bulundu. Node.js 18, 20, 22 veya 24 LTS gereklidir.\n' "$node_version"; has_error=1 ;;
+    *)
+      if command -v bun >/dev/null 2>&1; then
+        bun_version=$(bun --version 2>/dev/null || true)
+        printf '[UYARI] Node.js %s (18/20/22/24 LTS önerilir). Sistemde Bun %s mevcut.\n' "$node_version" "$bun_version"
+      else
+        printf '[UYUMSUZ] Node.js %s bulundu. Node.js 18, 20, 22 veya 24 LTS gereklidir.\n' "$node_version"
+        has_error=1
+      fi
+      ;;
   esac
+elif command -v bun >/dev/null 2>&1; then
+  bun_version=$(bun --version 2>/dev/null || true)
+  printf '[TAMAM] Bun %s (Node.js yerine Bun çalışma ortamı kullanılacak)\n' "$bun_version"
+  JS_RUNNER="bun"
 else
-  printf '%s\n' '[EKSİK] Node.js bulunamadı.'
+  printf '%s\n' '[EKSİK] Node.js veya Bun bulunamadı.'
   has_error=1
 fi
 
@@ -56,8 +69,13 @@ elif command -v "$PM_NAME" >/dev/null 2>&1; then
 elif command -v npm >/dev/null 2>&1; then
   npm_version=$(npm --version 2>/dev/null || true)
   printf '[TAMAM] npm %s (varsayılan paket yöneticisi)\n' "$npm_version"
+  PM_NAME="npm"
+elif command -v bun >/dev/null 2>&1; then
+  bun_version=$(bun --version 2>/dev/null || true)
+  printf '[TAMAM] bun %s (!PM_NAME! / npm bulunamadı, bun kullanılacak)\n' "$bun_version"
+  PM_NAME="bun"
 else
-  printf '[EKSİK] Paket yöneticisi (%s / npm) bulunamadı.\n' "$PM_NAME"
+  printf '[EKSİK] Paket yöneticisi (%s / npm / bun) bulunamadı.\n' "$PM_NAME"
   has_error=1
 fi
 
@@ -67,6 +85,7 @@ if [ "$has_error" -ne 0 ]; then
 Kurulması veya düzeltilmesi gereken bileşenler var.
 
 Node.js LTS: https://nodejs.org/en/download
+Bun:         https://bun.sh
 
 Proxy, DNS veya sistem PATH ayarları bu betik tarafından değiştirilmez.
 Kurulumlardan sonra yeni bir terminal açıp ./bin/kurulum.sh komutunu tekrar çalıştırın.
@@ -77,7 +96,7 @@ fi
 CHECK_PORT="${SETUP_BOOTSTRAP_PORT:-5049}"
 WIZARD_PORT="${SETUP_WIZARD_PORT:-5050}"
 HOLDER_PID=""
-if HOLDER_PID=$(node "$SETUP_ROOT/scripts/find-port-holder.mjs" "$CHECK_PORT" 2>/dev/null); then
+if HOLDER_PID=$("$JS_RUNNER" "$SETUP_ROOT/scripts/find-port-holder.mjs" "$CHECK_PORT" 2>/dev/null); then
   :
 else
   HOLDER_PID=""
@@ -112,7 +131,7 @@ EOF
 fi
 
 WIZARD_HOLDER=""
-if WIZARD_HOLDER=$(node "$SETUP_ROOT/scripts/find-port-holder.mjs" "$WIZARD_PORT" 2>/dev/null); then
+if WIZARD_HOLDER=$("$JS_RUNNER" "$SETUP_ROOT/scripts/find-port-holder.mjs" "$WIZARD_PORT" 2>/dev/null); then
   :
 else
   WIZARD_HOLDER=""
@@ -143,7 +162,7 @@ printf '%s\n' 'Portlar: başlatıcı '"$CHECK_PORT"' · sihirbaz '"$WIZARD_PORT"
 printf '\n'
 export SETUP_PROJECT_ROOT="$PROJECT_ROOT"
 # setup.mjs: proje algılama + setup.config.json otomatik oluşturma + başlatıcı
-node "$SETUP_ROOT/bin/setup.mjs" --root "$PROJECT_ROOT" "$@"
+"$JS_RUNNER" "$SETUP_ROOT/bin/setup.mjs" --root "$PROJECT_ROOT" "$@"
 setup_exit=$?
 if [ "$setup_exit" -ne 0 ]; then
   cat <<EOF

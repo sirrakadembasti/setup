@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +9,30 @@ import { resolveStepCommand } from "../scripts/polyglot.mjs";
  * Hedef uygulamanın başlatma komutunu bulan ve (masaüstü için) süreci yöneten ortak kod.
  * Hem `server.mjs` (HTTP) hem `core.mjs` (gömülü/IPC) tarafından kullanılır.
  */
+
+const cmdAvailabilityCache = new Map();
+export function isCommandAvailable(cmd) {
+  if (cmdAvailabilityCache.has(cmd)) return cmdAvailabilityCache.get(cmd);
+  try {
+    const isWin = process.platform === "win32";
+    const checkCmd = isWin ? "where" : "which";
+    const res = spawnSync(checkCmd, [cmd], { stdio: "ignore", windowsHide: true });
+    const available = res.status === 0;
+    cmdAvailabilityCache.set(cmd, available);
+    return available;
+  } catch {
+    cmdAvailabilityCache.set(cmd, false);
+    return false;
+  }
+}
+
+export function resolveEffectivePackageManager(pm) {
+  let effective = ["pnpm", "yarn", "bun", "npm"].includes(pm) ? pm : "npm";
+  if (effective === "npm" && !isCommandAvailable("npm") && isCommandAvailable("bun")) {
+    effective = "bun";
+  }
+  return effective;
+}
 
 export function resolvePnpmInvocation(args) {
   const pnpmScript = process.env.npm_execpath;
@@ -22,7 +46,7 @@ export function resolvePnpmInvocation(args) {
 }
 
 export function pmRunInvocation(pm, scriptName, prefixDir = null) {
-  const safePm = ["pnpm", "yarn", "bun", "npm"].includes(pm) ? pm : "npm";
+  const safePm = resolveEffectivePackageManager(pm);
   if (process.platform === "win32") {
     return {
       command: process.env.ComSpec || "cmd.exe",
@@ -111,8 +135,12 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
       };
     }
     // python için proje içi .venv varsa onun yorumlayıcısı kullanılır
+    let startCmd = resolveStepCommand(root, cfg.start);
+    if (startCmd === "npm" && !isCommandAvailable("npm") && isCommandAvailable("bun")) {
+      startCmd = "bun";
+    }
     return wrapShimCommand(
-      resolveStepCommand(root, cfg.start),
+      startCmd,
       Array.isArray(cfg.start.args) ? cfg.start.args : [],
       root,
     );
@@ -120,7 +148,7 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
 
   const rootPkg = readJsonFileSafe(path.join(root, "package.json"));
   const serverPkg = readJsonFileSafe(path.join(root, "server", "package.json"));
-  const pm = cfg?.packageManager || detectPackageManager(root, rootPkg);
+  const pm = resolveEffectivePackageManager(cfg?.packageManager || detectPackageManager(root, rootPkg));
 
   if (serverPkg?.scripts?.start) {
     return scriptToInvocation(serverPkg.scripts.start, pm, "start", path.join(root, "server"));

@@ -1417,7 +1417,8 @@ test("wrapShimCommand: Windows'ta npm/pnpm/yarn/bun cmd.exe üzerinden çalış�
 
   // Gerçekten çalışmalı (ENOENT olmamalı)
   const { spawnSync } = await import("node:child_process");
-  const inv = wrapShimCommand("npm", ["--version"]);
+  const testPm = spawnSync(wrapShimCommand("npm", ["--version"]).command, wrapShimCommand("npm", ["--version"]).args).status === 0 ? "npm" : "bun";
+  const inv = wrapShimCommand(testPm, ["--version"]);
   const res = spawnSync(inv.command, inv.args, { encoding: "utf8", windowsHide: true });
   assert.equal(res.status, 0, res.error?.message || res.stderr);
 

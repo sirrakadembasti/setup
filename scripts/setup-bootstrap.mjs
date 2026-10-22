@@ -159,6 +159,16 @@ function getPackageManagerVersion(pm = activePackageManager) {
     });
     if (fbRes.status === 0) return String(fbRes.stdout || "").trim();
   }
+  if (pm !== "bun") {
+    const bunFallback = pmInvocation("bun", ["--version"]);
+    const bRes = spawnSync(bunFallback.command, bunFallback.args, {
+      cwd: projectRoot,
+      encoding: "utf8",
+      windowsHide: true,
+      shell: false,
+    });
+    if (bRes.status === 0) return String(bRes.stdout || "").trim();
+  }
   return "";
 }
 
@@ -172,9 +182,30 @@ function resolveDefaultInstallCommand() {
     return { steps: setupConfig.install.steps };
   }
   if (setupConfig?.install && Object.prototype.hasOwnProperty.call(setupConfig.install, "command")) {
+    let cmd = setupConfig.install.command;
+    const args = Array.isArray(setupConfig.install.args) ? setupConfig.install.args : ["install"];
+    if (cmd === "npm") {
+      const npmCheck = spawnSync(pmInvocation("npm", ["--version"]).command, pmInvocation("npm", ["--version"]).args, {
+        cwd: projectRoot,
+        encoding: "utf8",
+        windowsHide: true,
+        shell: false,
+      });
+      if (npmCheck.status !== 0) {
+        const bunCheck = spawnSync(pmInvocation("bun", ["--version"]).command, pmInvocation("bun", ["--version"]).args, {
+          cwd: projectRoot,
+          encoding: "utf8",
+          windowsHide: true,
+          shell: false,
+        });
+        if (bunCheck.status === 0) {
+          cmd = "bun";
+        }
+      }
+    }
     return {
-      command: setupConfig.install.command,
-      args: Array.isArray(setupConfig.install.args) ? setupConfig.install.args : ["install"],
+      command: cmd,
+      args,
     };
   }
   if (!detection.scenario.requiresDependencies) {
@@ -182,13 +213,41 @@ function resolveDefaultInstallCommand() {
   }
   const languageProfile = !hasNodePackageJson ? resolveLanguageProfile(projectRoot, detection.kind, detection.ports.app) : null;
   if (languageProfile) return { steps: languageProfile.steps };
-  return { command: activePackageManager, args: ["install"] };
+  let chosenPm = activePackageManager;
+  if (chosenPm === "npm") {
+    const npmCheck = spawnSync(pmInvocation("npm", ["--version"]).command, pmInvocation("npm", ["--version"]).args, {
+      cwd: projectRoot,
+      encoding: "utf8",
+      windowsHide: true,
+      shell: false,
+    });
+    if (npmCheck.status !== 0) {
+      const bunCheck = spawnSync(pmInvocation("bun", ["--version"]).command, pmInvocation("bun", ["--version"]).args, {
+        cwd: projectRoot,
+        encoding: "utf8",
+        windowsHide: true,
+        shell: false,
+      });
+      if (bunCheck.status === 0) {
+        chosenPm = "bun";
+      }
+    }
+  }
+  return { command: chosenPm, args: ["install"] };
 }
 
 function runtimeStatus() {
-  const pmVer = getPackageManagerVersion();
+  let effectivePm = activePackageManager;
+  let pmVer = getPackageManagerVersion(effectivePm);
+  if (!pmVer && effectivePm === "npm") {
+    const bunVer = getPackageManagerVersion("bun");
+    if (bunVer) {
+      effectivePm = "bun";
+      pmVer = bunVer;
+    }
+  }
   const base = validateRuntime(process.version, pmVer, {
-    packageManager: activePackageManager,
+    packageManager: effectivePm,
   });
   if (!hasNodePackageJson && base.nodeSupported) {
     return {

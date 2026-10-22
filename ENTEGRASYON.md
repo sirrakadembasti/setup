@@ -15,6 +15,7 @@
 - `--no-launchers`: başlatıcı üretilmez. `--update-package-json`: `package.json` içine `setup` (ve gömülü kurulumlarda `wizard`) script'i eklenir. `--force`: mevcut dosyaların üzerine yazar.
 - Yapılandırma zaten varsa `init` yalnız eksik başlatıcıları ekler; hiçbir şey yazılmadıysa çıkış kodu 1'dir.
 - `bin/kurulum.sh|bat` (eklentinin kendi ön kontrol betiği) çağrıldığı dizindeki projeyi kurar: `cd /proje && /yol/setup/bin/kurulum.sh`.
+- **Kurumsal ve Kısıtlı Ortamlarda Bun / bunx Desteği:** İş ortamlarında `npx` ve `npm` kısıtlı veya bulunmadığında, `bunx github:sirrakadembasti/setup init --root .` komutu kullanılabilir. Üretilen `kurulum.bat` / `kurulum.sh` başlatıcıları sistemde `npx` yoksa otomatik olarak `bunx`'e geri düşer; sonraki paket kurulumu (`install`), derleme (`build`), migration ve başlatma (`start`) aşamaları da otomatik olarak Bun üzerinden kesintisiz yürütülür.
 
 ## Güvenlik Notları (Gömülü Kullanım)
 
@@ -42,7 +43,13 @@
 Eklentiyi hedef GitHub reponuza bağlamanın en hızlı yolu `init` komutudur:
 
 ```bash
-node /path/to/setup/bin/setup.mjs init --root /path/to/hedef-repo
+# npx (Node.js) ile:
+npx github:sirrakadembasti/setup init --root /path/to/hedef-repo
+# veya bunx (Bun) ile:
+bunx github:sirrakadembasti/setup init --root /path/to/hedef-repo
+
+# Yerel kopyadan çalıştırmak için:
+node /path/to/setup/bin/setup.mjs init --root /path/to/hedef-repo # veya: bun /path/to/setup/bin/setup.mjs ...
 # Mevcut setup.config.json üzerine yazmak için:
 node /path/to/setup/bin/setup.mjs init --root /path/to/hedef-repo --force
 ```
