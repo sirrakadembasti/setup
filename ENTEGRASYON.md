@@ -777,3 +777,15 @@ Sihirbaz sabit adres varsaymaz. İsteğe bağlı ayarlar (`setup.config.json`):
 
 - `createSetupWizardCore({ ipcMode: true })` masaüstü projesini algılar. `dataDir` vermezseniz (ve `SETUP_DATA_DIR` / `paths.dataDir` yoksa) veri **kullanıcı veri dizinine** yazılır: Windows `%APPDATA%\<proje>`, macOS `~/Library/Application Support/<proje>`, Linux `$XDG_CONFIG_HOME|~/.config/<proje>`. Proje dizinine veri yazılmaz.
 - `core.handle({ method: "POST", path: "/api/start-app" })` uygulamayı ayrı süreç olarak başlatır ve **portu değil süreci** denetler; `GET /api/app-health` PID ve çıkış kodunu verir. `await core.stopApp()` süreci kapatır. Başlatılan uygulamaya `SETUP_DATA_DIR` ve `.env` değişkenleri iletilir; uygulamanız yapılandırmayı `readSetupRuntimeConfig({ projectRoot, dataDir: core.dataDir })` ile okuyabilir.
+
+## E-posta Yapılandırması ve Biçim Doğrulama
+
+Sihirbaz arayüzündeki e-posta adımı, sunucu dışına gerçek bir SMTP soketi açmadan Gmail uygulama şifresi (`EMAIL_USER`, `EMAIL_PASS`, 16 karakter boşluksuz), port (465/587) ve SSL kurallarını yerel olarak doğrular:
+
+- **Doğrulama Uç Noktası:** `POST /api/validate-email-format` (eski ad `/api/test-smtp` geriye dönük uyumluluk için korunmuştur).
+- **Arayüz Düğmesi:** "Biçim Doğrula" olarak adlandırılmıştır ve kullanıcıya harici SMTP bağlantısı denenmediği açıkça bildirilir (`connectionTested: false`).
+- **Ortam Değişkenleri:** E-posta gönderimi etkinleştirilmedikçe veya hedef projedeki `.env.example` içinde açıkça bildirilmedikçe `.env` dosyasına `EMAIL_*` değişkenleri yazılmaz.
+
+## Çekirdek ve Sunucu Mimarisi (`wizard/shared.mjs`)
+
+HTTP sihirbaz sunucusu (`wizard/server.mjs`) ve gömülü/IPC kurulum çekirdeği (`wizard/core.mjs`), kurulum yürütücüsü ve doğrulama mantığını [`wizard/shared.mjs`](wizard/shared.mjs) üzerinden paylaşır. Arayüz şablonu saf ESM olarak [`wizard/ui.html.mjs`](wizard/ui.html.mjs) dosyasında tutulur ve [`wizard/ui.mjs`](wizard/ui.mjs) üzerinden re-export edilir.
