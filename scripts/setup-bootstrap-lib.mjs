@@ -7,6 +7,58 @@ import path from "node:path";
 export const SUPPORTED_NODE_MAJORS = Object.freeze([18, 20, 22, 24]);
 export const CLEAN_INSTALL_CONFIRMATION = "SETUP VERİLERİNİ SİL";
 
+const cmdAvailabilityCache = new Map();
+
+/**
+ * Komutun sistem PATH'inde gerçek bir çalıştırılabilir dosya olarak bulunup bulunmadığını denetler.
+ * Shims (bin/shims) dizinindeki yapay yönlendiriciler gerçek sistem aracı sayılmaz.
+ */
+export function isCommandAvailable(cmd) {
+  if (!cmd || typeof cmd !== "string") return false;
+  if (cmdAvailabilityCache.has(cmd)) return cmdAvailabilityCache.get(cmd);
+  try {
+    const isWin = process.platform === "win32";
+    const checkCmd = isWin ? "where" : "which";
+    const res = spawnSync(checkCmd, [cmd], { encoding: "utf8", windowsHide: true });
+    if (res.status !== 0) {
+      cmdAvailabilityCache.set(cmd, false);
+      return false;
+    }
+    const lines = String(res.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const hasRealExecutable = lines.some(
+      (line) =>
+        !line.toLowerCase().includes(`${path.sep}bin${path.sep}shims`) &&
+        !line.toLowerCase().includes(`/bin/shims`),
+    );
+    cmdAvailabilityCache.set(cmd, hasRealExecutable);
+    return hasRealExecutable;
+  } catch {
+    cmdAvailabilityCache.set(cmd, false);
+    return false;
+  }
+}
+
+export function clearCommandAvailabilityCache() {
+  cmdAvailabilityCache.clear();
+}
+
+/**
+ * Projenin talep ettiği paket yöneticisi sistemde kurulu değilse, kurulu olan diğer
+ * araçlara (bun -> npm -> pnpm -> yarn) otomatik ve güvenli fallback sağlar.
+ */
+export function resolveEffectivePackageManager(requestedPm) {
+  const norm = String(requestedPm || "").toLowerCase().trim();
+  const known = ["pnpm", "yarn", "bun", "npm"].includes(norm) ? norm : "npm";
+  if (isCommandAvailable(known)) {
+    return known;
+  }
+  if (isCommandAvailable("bun")) return "bun";
+  if (isCommandAvailable("npm")) return "npm";
+  if (isCommandAvailable("pnpm")) return "pnpm";
+  if (isCommandAvailable("yarn")) return "yarn";
+  return known;
+}
+
 function isInside(parent, target) {
   const relative = path.relative(path.resolve(parent), path.resolve(target));
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));

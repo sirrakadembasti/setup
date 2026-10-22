@@ -3,6 +3,10 @@
 Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallarına uygun olarak bu dosyada belgelenir.
 
 ## [Yayınlanmamış]
+- **Paket Yöneticisi Çalışma Zamanı (Runtime) ve Monorepo Fallback Düzeltmesi (`pnpm` / `yarn` / `npm` -> `bun`):**
+  - **Sistem Varlığı Doğrulaması (`isCommandAvailable` & `resolveEffectivePackageManager`):** `pnpm` veya `yarn` yapılandırmalı monorepo projelerinde sistemde `pnpm` kurulu olmadığında arayüzde Bun sürümünün pnpm gibi gösterilmesi (`pnpm 1.3.14 ✓`) ve paket kurulumunda `'pnpm' is not recognized` hatası alınması kökten giderildi.
+  - **Dinamik Fallback:** Sistemde istenen araç (`pnpm`, `npm` vb.) bulunamadığında otomatik olarak sistemde mevcut olan `bun` paket yöneticisine düşülür; UI ve kurulum planı gerçekte çalışan aracı (`bun 1.3.14 ✓`, `bun install`) gösterir.
+  - **Süreç Yönlendirici Shims (`bin/shims/`):** Proje içi `package.json` script'lerinde doğrudan `pnpm ...` yazan projelerin (örn. monorepo `--parallel --filter` script'leri) Bun yüklü sistemlerde pnpm kurulu olmadan da çalışabilmesi için `bin/shims` dizini alt süreç PATH'ine otomatik eklenir ve çağrılar `bun`'a yönlendirilir.
 - **Kurumsal Ortam ve Çift Paket Yöneticisi Desteği (Bun / bunx & npm / npx):** İş ve kurumsal bilgisayarlarda `npm` ve `npx` komutlarının kısıtlı olduğu veya bulunmadığı ortamlar için `bun` ve `bunx` birinci sınıf alternatif olarak entegre edildi.
   - **Başlatıcılar (`kurulum.bat` / `kurulum.sh`):** `npx` bulunamadığında otomatik olarak `bunx github:sirrakadembasti/setup` zincirine düşer; Node.js bulunmadığında `bun` çalışma ortamını kullanır. Windows Batch içindeki parantez kaçışları `[` `]` formatına getirilerek `. was unexpected at this time` sözdizimi hatası giderildi.
   - **Ön Kontrol Betikleri (`bin/kurulum.bat` / `bin/kurulum.sh`):** `npm` yoksa doğrudan `bun` paket yöneticisine fallback yapar (`[TAMAM] bun <sürüm> [npm bulunamadı, bun kullanılacak]`); Node.js LTS yoksa Bun'ı çalışma ortamı olarak kabul eder.

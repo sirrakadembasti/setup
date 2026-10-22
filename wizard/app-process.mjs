@@ -4,35 +4,18 @@ import os from "node:os";
 import path from "node:path";
 import { detectPackageManager, loadSetupConfig } from "../scripts/detect-project.mjs";
 import { resolveStepCommand } from "../scripts/polyglot.mjs";
+import {
+  clearCommandAvailabilityCache,
+  isCommandAvailable,
+  resolveEffectivePackageManager,
+} from "../scripts/setup-bootstrap-lib.mjs";
+
+export { clearCommandAvailabilityCache, isCommandAvailable, resolveEffectivePackageManager };
 
 /**
  * Hedef uygulamanın başlatma komutunu bulan ve (masaüstü için) süreci yöneten ortak kod.
  * Hem `server.mjs` (HTTP) hem `core.mjs` (gömülü/IPC) tarafından kullanılır.
  */
-
-const cmdAvailabilityCache = new Map();
-export function isCommandAvailable(cmd) {
-  if (cmdAvailabilityCache.has(cmd)) return cmdAvailabilityCache.get(cmd);
-  try {
-    const isWin = process.platform === "win32";
-    const checkCmd = isWin ? "where" : "which";
-    const res = spawnSync(checkCmd, [cmd], { stdio: "ignore", windowsHide: true });
-    const available = res.status === 0;
-    cmdAvailabilityCache.set(cmd, available);
-    return available;
-  } catch {
-    cmdAvailabilityCache.set(cmd, false);
-    return false;
-  }
-}
-
-export function resolveEffectivePackageManager(pm) {
-  let effective = ["pnpm", "yarn", "bun", "npm"].includes(pm) ? pm : "npm";
-  if (effective === "npm" && !isCommandAvailable("npm") && isCommandAvailable("bun")) {
-    effective = "bun";
-  }
-  return effective;
-}
 
 export function resolvePnpmInvocation(args) {
   const pnpmScript = process.env.npm_execpath;
@@ -136,9 +119,7 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
     }
     // python için proje içi .venv varsa onun yorumlayıcısı kullanılır
     let startCmd = resolveStepCommand(root, cfg.start);
-    if (startCmd === "npm" && !isCommandAvailable("npm") && isCommandAvailable("bun")) {
-      startCmd = "bun";
-    }
+    startCmd = resolveEffectivePackageManager(startCmd);
     return wrapShimCommand(
       startCmd,
       Array.isArray(cfg.start.args) ? cfg.start.args : [],

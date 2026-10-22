@@ -1,0 +1,21 @@
+#!/bin/sh
+THIS_DIR="$(cd "$(dirname "$0")" && pwd)"
+REAL_BUNX=""
+OLD_IFS="$IFS"
+IFS=":"
+for p in $PATH; do
+  if [ "$p" != "$THIS_DIR" ] && [ -x "$p/bunx" ]; then
+    REAL_BUNX="$p/bunx"
+    break
+  fi
+done
+IFS="$OLD_IFS"
+
+if [ -n "$REAL_BUNX" ]; then
+  exec "$REAL_BUNX" "$@"
+elif command -v npx >/dev/null 2>&1; then
+  exec npx --yes "$@"
+else
+  echo "[HATA] Sistemde ne bunx ne de npx programı bulunamadı." >&2
+  exit 1
+fi

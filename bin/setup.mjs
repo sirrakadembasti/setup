@@ -16,6 +16,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { buildInstallPlan, detectProject } from "../scripts/detect-project.mjs";
 import { initProject } from "../scripts/setup-api.mjs";
+import { resolveEffectivePackageManager } from "../scripts/setup-bootstrap-lib.mjs";
 import { getVersion, parseSemver } from "../scripts/version.mjs";
 
 const VALID_COMMANDS = new Set(["detect", "plan", "setup", "wizard", "init", "version", "help"]);
@@ -134,15 +135,19 @@ function main() {
   }
 
   const detection = detectProject(args.root);
-  const plan = buildInstallPlan(detection);
+  const effectivePm = resolveEffectivePackageManager(detection.packageManager);
+  const plan = buildInstallPlan({ ...detection, packageManager: effectivePm });
 
   if (args.command === "detect" || args.command === "plan") {
-    console.log(JSON.stringify({ version: getVersion(), detection, plan }, null, 2));
+    console.log(JSON.stringify({ version: getVersion(), detection: { ...detection, packageManager: effectivePm }, plan }, null, 2));
     process.exit(plan.canInstall ? 0 : 1);
     return;
   }
 
-  console.log(`[setup v${getVersion()}] Proje: ${detection.projectName} (${detection.kind}, paket yöneticisi: ${detection.packageManager})`);
+  const pmNote = effectivePm !== detection.packageManager
+    ? ` (${detection.packageManager} algılandı, sistemde ${effectivePm} etkin)`
+    : "";
+  console.log(`[setup v${getVersion()}] Proje: ${detection.projectName} (${detection.kind}, paket yöneticisi: ${effectivePm}${pmNote})`);
   console.log(`[setup] Kök: ${detection.root}`);
   if (plan.canInstall && !fs.existsSync(path.join(detection.root, "setup.config.json"))) {
     initProject(detection.root, { overwrite: false, updatePackageJson: false, createLaunchers: false });

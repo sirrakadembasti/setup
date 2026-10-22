@@ -6,13 +6,16 @@ import path from "node:path";
 import test from "node:test";
 import {
   CLEAN_INSTALL_CONFIRMATION,
+  clearCommandAvailabilityCache,
   createVerifiedBackup,
   describePortConflict,
   findListeningProcess,
   getSetupPaths,
   inspectInstallationState,
+  isCommandAvailable,
   readConfiguredPort,
   resetInstallation,
+  resolveEffectivePackageManager,
   stopPortProcess,
   validateRuntime,
 } from "./setup-bootstrap-lib.mjs";
@@ -278,4 +281,71 @@ test("setup-bootstrap --check-only python-server (Senaryo 4) dizininde senaryo v
     "plan.steps Python bağımlılık adımını içermeli",
   );
 });
+
+test("isCommandAvailable ve resolveEffectivePackageManager paket yöneticisi denetimini doğru yapar", () => {
+  clearCommandAvailabilityCache();
+  assert.equal(isCommandAvailable("kesinlikle_olmayan_komut_12345"), false);
+  assert.equal(isCommandAvailable(null), false);
+  assert.equal(isCommandAvailable(""), false);
+
+  // Bu makinede bun kurulu, pnpm ve npm kurulu değil
+  const hasBun = isCommandAvailable("bun");
+  const hasPnpm = isCommandAvailable("pnpm");
+  if (hasBun && !hasPnpm) {
+    assert.equal(resolveEffectivePackageManager("pnpm"), "bun");
+    assert.equal(resolveEffectivePackageManager("npm"), "bun");
+    assert.equal(resolveEffectivePackageManager("yarn"), "bun");
+  }
+});
+
+test("bin/shims dizinindeki yönlendiriciler pnpm, npm, npx ve bunx komutlarını kapsar", () => {
+  const shimsDir = path.join(process.cwd(), "bin", "shims");
+  assert.ok(fs.existsSync(shimsDir), "bin/shims dizini mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "pnpm.cmd")), "pnpm.cmd mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "pnpm")), "pnpm bash shimi mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "npm.cmd")), "npm.cmd mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "npm")), "npm bash shimi mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "npx.cmd")), "npx.cmd mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "bunx.cmd")), "bunx.cmd mevcut olmalı");
+});
+
+test("setup-bootstrap --check-only pnpm projesinde sistemde yalnız bun varsa bun olarak raporlar", async (t) => {
+  const { spawnSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-pnpm-monorepo-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({ name: "pnpm-app", private: true, packageManager: "pnpm@10.32.0" }),
+    "utf8",
+  );
+  fs.writeFileSync(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n", "utf8");
+  fs.writeFileSync(
+    path.join(root, "setup.config.json"),
+    JSON.stringify({
+      name: "pnpm-app",
+      packageManager: "pnpm",
+      install: { command: "pnpm", args: ["install"] },
+    }),
+    "utf8",
+  );
+
+  const bootstrapScript = path.join(process.cwd(), "scripts", "setup-bootstrap.mjs");
+  const res = spawnSync(process.execPath, [bootstrapScript, "--check-only"], {
+    env: { ...process.env, SETUP_PROJECT_ROOT: root },
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.equal(res.status, 0, res.stderr);
+  const status = JSON.parse(res.stdout);
+
+  if (isCommandAvailable("bun") && !isCommandAvailable("pnpm")) {
+    assert.equal(status.runtime.packageManager, "bun");
+    assert.ok(status.runtime.packageManagerVersion, "bun sürümü okunabilmeli");
+    assert.ok(
+      status.plan.steps.some((step) => step.id === "dependencies" && /bun install/i.test(step.label)),
+      "pnpm eksikken plan adımı bun install olarak güncellenmeli",
+    );
+  }
+});
+
 

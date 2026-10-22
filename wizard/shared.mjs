@@ -2,6 +2,7 @@ import crypto, { timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseDeploymentConfig, buildDeploymentArtifacts, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { getSetupPaths } from "../scripts/setup-bootstrap-lib.mjs";
 import { buildLoginUrl, detectPackageManager, parseEnvExample } from "../scripts/detect-project.mjs";
@@ -29,12 +30,21 @@ export function writable(target) {
   }
 }
 
+const wizardDir = path.dirname(fileURLToPath(import.meta.url));
+const shimsDir = path.resolve(wizardDir, "..", "bin", "shims");
+
 /** Alt süreç çalıştırır ve çıktısını döndürür. */
 export function runCommand(command, args, cwd, extraEnv = {}) {
   return new Promise((resolve, reject) => {
+    const env = { ...process.env, ...extraEnv };
+    if (fs.existsSync(shimsDir)) {
+      const pathKey = process.platform === "win32" ? "Path" : "PATH";
+      const currentPath = env[pathKey] || process.env[pathKey] || "";
+      env[pathKey] = `${shimsDir}${path.delimiter}${currentPath}`;
+    }
     const child = spawn(command, args, {
       cwd,
-      env: { ...process.env, ...extraEnv },
+      env,
       windowsHide: true,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],

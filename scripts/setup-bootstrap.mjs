@@ -9,9 +9,11 @@ import {
   CLEAN_INSTALL_CONFIRMATION,
   describePortConflict,
   inspectInstallationState,
+  isCommandAvailable,
   isLocalPortOpen,
   readConfiguredPort,
   resetInstallation,
+  resolveEffectivePackageManager,
   stopPortProcess,
   validateRuntime,
 } from "./setup-bootstrap-lib.mjs";
@@ -46,7 +48,8 @@ function readProjectPackageJson(root) {
 
 const packageJson = readProjectPackageJson(projectRoot);
 const displayProjectName = process.env.SETUP_PROJECT_NAME || packageJson.name || setupConfig?.name || "Uygulama";
-const activePackageManager = setupConfig?.packageManager || detectPackageManager(projectRoot, packageJson);
+const configuredPm = setupConfig?.packageManager || detectPackageManager(projectRoot, packageJson);
+const activePackageManager = resolveEffectivePackageManager(configuredPm);
 
 const job = {
   type: null,
@@ -128,9 +131,14 @@ function resolveWizardInvocation() {
   if (fs.existsSync(serverPkgPath)) {
     try {
       const serverPkg = JSON.parse(fs.readFileSync(serverPkgPath, "utf8"));
-      if (serverPkg?.scripts?.setup && activePackageManager === "pnpm") {
+      if (serverPkg?.scripts?.setup) {
         const filterName = serverPkg.name || "server";
-        return pmInvocation("pnpm", ["--filter", filterName, "run", "setup"]);
+        if (activePackageManager === "pnpm") {
+          return pmInvocation("pnpm", ["--filter", filterName, "run", "setup"]);
+        }
+        if (activePackageManager === "bun") {
+          return pmInvocation("bun", ["run", "--filter", filterName, "setup"]);
+        }
       }
     } catch {
       /* yerleşik sihirbaza düş */
@@ -141,33 +149,18 @@ function resolveWizardInvocation() {
 }
 
 function getPackageManagerVersion(pm = activePackageManager) {
+  if (!pm || !isCommandAvailable(pm)) return "";
   const invocation = pmInvocation(pm, ["--version"]);
-  const result = spawnSync(invocation.command, invocation.args, {
-    cwd: projectRoot,
-    encoding: "utf8",
-    windowsHide: true,
-    shell: false,
-  });
-  if (result.status === 0) return String(result.stdout || "").trim();
-  if (pm !== "npm") {
-    const fallback = pmInvocation("npm", ["--version"]);
-    const fbRes = spawnSync(fallback.command, fallback.args, {
+  try {
+    const result = spawnSync(invocation.command, invocation.args, {
       cwd: projectRoot,
       encoding: "utf8",
       windowsHide: true,
       shell: false,
     });
-    if (fbRes.status === 0) return String(fbRes.stdout || "").trim();
-  }
-  if (pm !== "bun") {
-    const bunFallback = pmInvocation("bun", ["--version"]);
-    const bRes = spawnSync(bunFallback.command, bunFallback.args, {
-      cwd: projectRoot,
-      encoding: "utf8",
-      windowsHide: true,
-      shell: false,
-    });
-    if (bRes.status === 0) return String(bRes.stdout || "").trim();
+    if (result.status === 0) return String(result.stdout || "").trim();
+  } catch {
+    /* hata durumunda boş dön */
   }
   return "";
 }
@@ -184,24 +177,8 @@ function resolveDefaultInstallCommand() {
   if (setupConfig?.install && Object.prototype.hasOwnProperty.call(setupConfig.install, "command")) {
     let cmd = setupConfig.install.command;
     const args = Array.isArray(setupConfig.install.args) ? setupConfig.install.args : ["install"];
-    if (cmd === "npm") {
-      const npmCheck = spawnSync(pmInvocation("npm", ["--version"]).command, pmInvocation("npm", ["--version"]).args, {
-        cwd: projectRoot,
-        encoding: "utf8",
-        windowsHide: true,
-        shell: false,
-      });
-      if (npmCheck.status !== 0) {
-        const bunCheck = spawnSync(pmInvocation("bun", ["--version"]).command, pmInvocation("bun", ["--version"]).args, {
-          cwd: projectRoot,
-          encoding: "utf8",
-          windowsHide: true,
-          shell: false,
-        });
-        if (bunCheck.status === 0) {
-          cmd = "bun";
-        }
-      }
+    if (cmd && ["npm", "pnpm", "yarn", "bun"].includes(cmd)) {
+      cmd = resolveEffectivePackageManager(cmd);
     }
     return {
       command: cmd,
@@ -213,39 +190,13 @@ function resolveDefaultInstallCommand() {
   }
   const languageProfile = !hasNodePackageJson ? resolveLanguageProfile(projectRoot, detection.kind, detection.ports.app) : null;
   if (languageProfile) return { steps: languageProfile.steps };
-  let chosenPm = activePackageManager;
-  if (chosenPm === "npm") {
-    const npmCheck = spawnSync(pmInvocation("npm", ["--version"]).command, pmInvocation("npm", ["--version"]).args, {
-      cwd: projectRoot,
-      encoding: "utf8",
-      windowsHide: true,
-      shell: false,
-    });
-    if (npmCheck.status !== 0) {
-      const bunCheck = spawnSync(pmInvocation("bun", ["--version"]).command, pmInvocation("bun", ["--version"]).args, {
-        cwd: projectRoot,
-        encoding: "utf8",
-        windowsHide: true,
-        shell: false,
-      });
-      if (bunCheck.status === 0) {
-        chosenPm = "bun";
-      }
-    }
-  }
+  const chosenPm = resolveEffectivePackageManager(activePackageManager);
   return { command: chosenPm, args: ["install"] };
 }
 
 function runtimeStatus() {
-  let effectivePm = activePackageManager;
-  let pmVer = getPackageManagerVersion(effectivePm);
-  if (!pmVer && effectivePm === "npm") {
-    const bunVer = getPackageManagerVersion("bun");
-    if (bunVer) {
-      effectivePm = "bun";
-      pmVer = bunVer;
-    }
-  }
+  const effectivePm = resolveEffectivePackageManager(activePackageManager);
+  const pmVer = getPackageManagerVersion(effectivePm);
   const base = validateRuntime(process.version, pmVer, {
     packageManager: effectivePm,
   });
@@ -285,6 +236,12 @@ function startSubprocessJob(type, invocation, successMessage) {
     SETUP_PROJECT_ROOT: projectRoot,
     SETUP_PROJECT_NAME: displayProjectName,
   };
+  const shimsDir = path.join(setupRoot, "bin", "shims");
+  if (fs.existsSync(shimsDir)) {
+    const pathKey = process.platform === "win32" ? "Path" : "PATH";
+    const currentPath = childEnv[pathKey] || process.env[pathKey] || "";
+    childEnv[pathKey] = `${shimsDir}${path.delimiter}${currentPath}`;
+  }
   if (type === "wizard") {
     if (wizardPort === port) {
       throw new Error(`Kurulum sihirbazı portu (${wizardPort}) kurulum başlangıcı ile aynı olamaz. SETUP_WIZARD_PORT değerini değiştirin.`);
@@ -405,12 +362,13 @@ async function readJson(req) {
 }
 
 function publicStatus() {
+  const effectivePm = resolveEffectivePackageManager(activePackageManager);
   return {
     project: displayProjectName,
     directory: projectRoot,
     kind: detection.kind,
     scenario: detection.scenario,
-    plan: installPlan,
+    plan: buildInstallPlan({ ...detection, packageManager: effectivePm }),
     platform: `${process.platform}/${process.arch}`,
     hostname: os.hostname(),
     runtime: runtimeStatus(),

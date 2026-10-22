@@ -1,0 +1,21 @@
+#!/bin/sh
+THIS_DIR="$(cd "$(dirname "$0")" && pwd)"
+REAL_PNPM=""
+OLD_IFS="$IFS"
+IFS=":"
+for p in $PATH; do
+  if [ "$p" != "$THIS_DIR" ] && [ -x "$p/pnpm" ]; then
+    REAL_PNPM="$p/pnpm"
+    break
+  fi
+done
+IFS="$OLD_IFS"
+
+if [ -n "$REAL_PNPM" ]; then
+  exec "$REAL_PNPM" "$@"
+elif command -v bun >/dev/null 2>&1; then
+  exec bun "$@"
+else
+  echo "[HATA] Sistemde ne pnpm ne de bun programı bulunamadı." >&2
+  exit 1
+fi
