@@ -128,15 +128,15 @@ setup/
 │   ├── core.mjs              # Framework-agnostik kurulum çekirdeği, Express guard ve çalışma anı okuyucusu
 │   ├── server.mjs            # 5050 Web Kurulum Sihirbazı sunucusu ve yerleşik statik dosya sunucusu
 │   ├── ui.mjs                # 5 adımlı sihirbaz arayüzü
-│   ├── ui.ts                 # Sihirbaz HTML şablonu (ui.mjs çalışma anında okur)
+│   ├── ui.html.mjs           # Sihirbaz HTML şablonu
+│   ├── shared.mjs            # Kurulum adımları ve ortak doğrulama mantığı
+│   ├── app-process.mjs       # Uygulama başlatma ve masaüstü süreç denetleyicisi
 │   └── config.mjs            # Doğrulama şemaları, scrypt parola doğrulama ve .env üreticisi
 ├── utils/
 │   ├── project-paths.mjs
 │   └── deployment-config.mjs
-├── templates/
-│   └── setup.config.json     # Örnek eklenti yapılandırma şablonu
-└── docs/
-    └── entegrasyon.md        # GitHub repo entegrasyon ve özelleştirme rehberi (ENTEGRASYON.md ile senkronize)
+└── templates/
+    └── setup.config.json     # Örnek eklenti yapılandırma şablonu
 ```
 
 ## Programatik API Kullanımı

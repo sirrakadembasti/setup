@@ -1,7 +1,11 @@
-export function renderSetupPage(csrfToken: string, options: { title?: string } = {}) {
+export function renderSetupPage(csrfToken, options = {}) {
   const pageTitle = String(options.title || "Uygulama Kurulum Sihirbazı")
     .replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch] || ch));
-  const boot = JSON.stringify({ csrfToken }).replace(/</g, "\\u003c");
+  const boot = JSON.stringify({
+    csrfToken,
+    apiBase: String(options.apiBase || "/api"),
+    embedded: Boolean(options.embedded),
+  }).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${pageTitle}</title>

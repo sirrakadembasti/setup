@@ -1094,9 +1094,9 @@ test("SETUP_ALLOWED_ORIGINS (Tauri/Sidecar CORS + Origin izni) ve CLI --port / -
 
 
 
-test("Senaryo 2 (SPA/Static): /api/status senaryo + .env.example döndürür, opsiyonel admin ve customEnv ile kurulum tamamlanır ve ui.ts sabit :5173 içermez", async (t) => {
+test("Senaryo 2 (SPA/Static): /api/status senaryo + .env.example döndürür, opsiyonel admin ve customEnv ile kurulum tamamlanır ve ui.html.mjs sabit :5173 içermez", async (t) => {
   const html = renderSetupPage("csrf_token_test");
-  assert.equal(html.includes("127.0.0.1:5173/auth"), false, "ui.ts sabit 127.0.0.1:5173/auth içermemeli");
+  assert.equal(html.includes("127.0.0.1:5173/auth"), false, "ui.html.mjs sabit 127.0.0.1:5173/auth içermemeli");
   assert.match(html, /id="scenarioInfo"/);
   assert.match(html, /id="customEnvSection"/);
 
