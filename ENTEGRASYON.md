@@ -35,6 +35,10 @@
 7. [Alt Klasör veya Git Submodule Olarak Ekleme](#2-alt-klasör-veya-git-submodule-olarak-ekleme)
 8. [`setup.config.json` ile Özelleştirme](#3-setupconfigjson-ile-özelleştirme)
 9. [Güvenlik Standartları](#4-güvenlik-standartları)
+10. [Programatik API Kullanımı (ESM)](#5-programatik-api-kullanımı-esm)
+11. [CLI Seçenekleri ve Parametreleri](#6-cli-seçenekleri-ve-parametreleri)
+12. [Dizin ve Dosya Mimarisi](#7-dizin-ve-dosya-mimarisi)
+13. [Sürümleme ve Testler](#8-sürümleme-ve-testler)
 
 ---
 
@@ -796,3 +800,134 @@ Sihirbaz arayüzündeki e-posta adımı, sunucu dışına gerçek bir SMTP soket
 ## Çekirdek ve Sunucu Mimarisi (`wizard/shared.mjs`)
 
 HTTP sihirbaz sunucusu (`wizard/server.mjs`) ve gömülü/IPC kurulum çekirdeği (`wizard/core.mjs`), kurulum yürütücüsü ve doğrulama mantığını [`wizard/shared.mjs`](wizard/shared.mjs) üzerinden paylaşır. Arayüz şablonu saf ESM olarak [`wizard/ui.html.mjs`](wizard/ui.html.mjs) dosyasında tutulur ve [`wizard/ui.mjs`](wizard/ui.mjs) üzerinden re-export edilir.
+
+---
+
+## 5. Programatik API Kullanımı (ESM)
+
+Eklenti, Node.js veya Bun projeleri içinden doğrudan bir JavaScript kütüphanesi olarak çağrılabilir:
+
+```js
+import {
+  inspect,
+  initProject,
+  detectProject,
+  buildInstallPlan,
+  createSetupWizardCore,
+  mountSetupGuard,
+  readSetupRuntimeConfig,
+  verifyAdminCredentials,
+} from "setup";
+
+// 1. Hedef depoyu analiz et ve kurulum planını al
+const { version, detection, plan } = await inspect("/path/to/repo");
+
+// 2. Hedef projeye setup.config.json ve başlatıcıları entegre et
+initProject("/path/to/repo", {
+  overwrite: false,
+  updatePackageJson: false,
+  createLaunchers: true,
+});
+
+// 3. Çalışma anında kurulum durumunu ve ortam ayarlarını oku
+const runtime = readSetupRuntimeConfig("/path/to/repo");
+if (runtime.installed) {
+  console.log("Uygulama portu:", runtime.ports.app);
+}
+
+// 4. Kurulumda oluşturulan ilk yöneticinin kimliğini doğrula (scrypt hash)
+const isValid = verifyAdminCredentials("/path/to/repo", "admin@ornek.com", "Parola123!");
+```
+
+---
+
+## 6. CLI Seçenekleri ve Parametreleri
+
+`bin/setup.mjs` komut satırı arayüzü aşağıdaki komut ve parametreleri destekler:
+
+```bash
+# Komutlar:
+node bin/setup.mjs          # Kurulum başlatıcı arayüzünü açar (port 5049)
+node bin/setup.mjs wizard   # Doğrudan kurulum sihirbazını açar (port 5050)
+node bin/setup.mjs init     # Hedef repoya yapılandırma ve başlatıcıları ekler
+node bin/setup.mjs detect   # Proje analizini yapar ve JSON planı çıktılar
+node bin/setup.mjs version  # Sürüm bilgisini gösterir
+node bin/setup.mjs help     # Yardım kılavuzunu gösterir
+
+# Seçenekler / Bayraklar:
+--root <yol>             # Hedef uygulama kök dizini (varsayılan: aktif dizin)
+--port <numara>          # Sihirbaz veya başlatıcı portunu özelleştirir
+--data-dir <yol>         # Kurulum verileri ve .env için harici dizin belirler
+--force, -f              # init sırasında mevcut yapılandırma ve başlatıcıların üzerine yazar
+--no-launchers           # init sırasında kurulum.bat / kurulum.sh üretmez
+--update-package-json    # init sırasında package.json içine "setup" script'i ekler
+--no-open                # Tarayıcıyı otomatik olarak açmaz
+--check-only             # Yalnızca durum JSON çıktısını yazdırıp çıkar
+```
+
+---
+
+## 7. Dizin ve Dosya Mimarisi
+
+```text
+setup/
+├── VERSION                   # Aktif sürüm (1.0.0)
+├── CHANGELOG.md              # Sürüm değişiklik günlüğü
+├── ENTEGRASYON.md            # Tüm mimariler için kapsamlı entegrasyon ve API kılavuzu
+├── README.md                 # Hızlı başlangıç ve son kullanıcı özeti
+├── package.json
+├── bin/
+│   ├── setup.mjs             # Ana CLI aracı (setup, wizard, init, detect, version)
+│   ├── kurulum.sh            # Bash/POSIX başlatıcı (npm/npx ve bun/bunx dual fallback)
+│   └── kurulum.bat           # Windows UTF-8 başlatıcı (npm/npx ve bun/bunx dual fallback)
+├── scripts/
+│   ├── detect-project.mjs    # Otomatik mimari, kaynak doğrulama, paket yöneticisi ve .env tespiti
+│   ├── polyglot.mjs          # Python/Go/C#/Rust kurulum, doğrulama ve başlatma profilleri
+│   ├── run-steps.mjs         # Çok adımlı polyglot kurulum çalıştırıcısı
+│   ├── setup-bootstrap.mjs   # 5049 Web Kurulum Başlatıcısı sunucusu
+│   ├── setup-bootstrap-lib.mjs # Ön kontrol, port çakışması ve yedekleme mantığı
+│   ├── find-port-holder.mjs  # 4 katmanlı port dinleyici PID tespit modülü
+│   ├── version.mjs           # SemVer sürüm yönetimi ve Git etiketleme
+│   ├── setup-api.mjs         # Programatik ESM API dışa aktarımları
+│   └── *.test.mjs            # Birim, güvenlik ve E2E test dosyaları
+├── wizard/
+│   ├── core.mjs              # Framework-agnostik sihirbaz çekirdeği ve Express guard
+│   ├── server.mjs            # 5050 Web Kurulum Sihirbazı sunucusu ve SPA statik dosya sunucusu
+│   ├── ui.mjs                # 5 adımlı sihirbaz arayüz bağlayıcısı
+│   ├── ui.html.mjs           # Sihirbaz arayüzü HTML/CSS/JS şablonu
+│   ├── shared.mjs            # Kurulum adımları ve ortak doğrulama mantığı
+│   ├── app-process.mjs       # Uygulama başlatma ve masaüstü süreç denetleyicisi
+│   └── config.mjs            # Şema doğrulamaları, scrypt hash ve .env üreticisi
+├── utils/
+│   ├── project-paths.mjs     # Proje yol çözümleyicisi
+│   └── deployment-config.mjs # Nginx ve dağıtım şablon üreticisi
+└── templates/
+    └── setup.config.json     # Yapılandırma şablonu
+```
+
+---
+
+## 8. Sürümleme ve Testler
+
+### Sürüm Yönetimi (`scripts/version.mjs`)
+`VERSION`, `package.json`, `CHANGELOG.md` ve Git etiketlerini tek komutla yönetir:
+
+```bash
+node scripts/version.mjs get            # Mevcut sürümü gösterir
+node scripts/version.mjs bump patch     # 1.0.0 -> 1.0.1 artırır
+node scripts/version.mjs bump minor     # 1.0.0 -> 1.1.0 artırır
+node scripts/version.mjs bump major     # 1.0.0 -> 2.0.0 artırır
+# --tag bayrağı ile git tag eklenir:
+node scripts/version.mjs bump patch --tag
+```
+
+### Testleri Çalıştırma
+Sıfır bağımlılıklı yerleşik Node test çalıştırıcısı ile tüm birim, senaryo ve E2E testleri:
+
+```bash
+# Node ile:
+node --test scripts/setup-bootstrap.test.mjs scripts/find-port-holder.test.mjs scripts/detect-project.test.mjs scripts/wizard.test.mjs
+
+# veya Bun ile:
+bun test
+```
