@@ -23,7 +23,7 @@ const VALID_COMMANDS = new Set(["detect", "plan", "setup", "wizard", "init", "ve
 const PASSTHROUGH_FLAGS = new Set(["--no-open", "--check-only", "--force"]);
 
 export function parseArgs(argv) {
-  const args = { command: "setup", root: process.cwd(), force: false, launchers: true, updatePackageJson: false, port: null, dataDir: null, error: null };
+  const args = { command: "setup", root: process.cwd(), force: false, launchers: true, updatePackageJson: false, copyTools: false, port: null, dataDir: null, error: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--root") {
@@ -61,6 +61,8 @@ export function parseArgs(argv) {
       args.command = "version";
     } else if (a === "--force" || a === "-f") {
       args.force = true;
+    } else if (a === "--copy-tools" || a === "--tools" || a === "--offline") {
+      args.copyTools = true;
     } else if (VALID_COMMANDS.has(a)) {
       args.command = a;
     } else if (PASSTHROUGH_FLAGS.has(a)) {
@@ -126,11 +128,17 @@ function main() {
     return;
   }
   if (args.command === "init") {
-    const res = initProject(args.root, { overwrite: args.force, updatePackageJson: args.updatePackageJson, createLaunchers: args.launchers });
+    const res = initProject(args.root, {
+      overwrite: args.force,
+      updatePackageJson: args.updatePackageJson,
+      createLaunchers: args.launchers,
+      copyTools: args.copyTools,
+    });
     console.log(`[setup] ${res.message}`);
+    if (res.toolsCopied) console.log("[setup] Çevrimdışı (offline) kurulum dosyaları tools/setup dizinine kopyalandı.");
     if (res.launchersCreated) console.log("[setup] Başlatıcılar: kurulum.bat (Windows) / kurulum.sh (Linux/macOS)");
     if (res.packageJsonUpdated) console.log("[setup] package.json içine \"setup\" script'i eklendi.");
-    process.exit(res.created || res.launchersCreated ? 0 : 1);
+    process.exit(res.created || res.launchersCreated || res.toolsCopied ? 0 : 1);
     return;
   }
 

@@ -4,9 +4,13 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildInstallPlan, detectPackageManager, detectProject, detectScenarioProfile, DEFAULT_PORTS, loadSetupConfig, parseEnvExample } from "./detect-project.mjs";
 import { resolveLanguageProfile } from "./polyglot.mjs";
 import { getVersion, parseSemver } from "./version.mjs";
+
+const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
+const setupRoot = path.resolve(scriptRoot, "..");
 
 export { buildInstallPlan, detectPackageManager, detectProject, detectScenarioProfile, DEFAULT_PORTS, loadSetupConfig, parseEnvExample };
 export { getVersion, parseSemver };
@@ -78,9 +82,25 @@ function writeLaunchers(resolved, overwrite) {
       "      echo [HATA] setup calistirmak icin npx [Node.js] veya bunx [Bun] gereklidir.",
       "      echo Node.js: https://nodejs.org",
       "      echo Bun:     https://bun.sh",
+      "      pause",
       "      exit /b 1",
       "    )",
       "  )",
+      ")",
+      "if errorlevel 1 (",
+      "  echo.",
+      "  echo ============================================================",
+      "  echo [HATA] Kurulum baslatilamadi (Cikis kodu: %errorlevel%).",
+      "  echo.",
+      "  echo Bu durum genellikle sirket agindaki SSL/guvenlik duvari",
+      "  echo GitHub'dan indirmeyi engellediginde olusur.",
+      "  echo.",
+      "  echo COZUM (Cevrimdisi / Offline Kullanim):",
+      "  echo   1. 'setup' klasorunu bu projenin icine 'tools\\setup' olarak kopyalayin.",
+      "  echo   2. 'kurulum.bat' dosyasini yeniden calistirin.",
+      "  echo ============================================================",
+      "  pause",
+      "  exit /b %errorlevel%",
       ")",
       "",
     ].join("\r\n");
@@ -110,6 +130,14 @@ function writeLaunchers(resolved, overwrite) {
       "  printf '%s\\n' 'Bun:     https://bun.sh' >&2",
       "  exit 1",
       "fi",
+      "if [ $? -ne 0 ]; then",
+      "  printf '\\n%s\\n' '============================================================'",
+      "  printf '%s\\n' '[HATA] Kurulum başlatılamadı.'",
+      "  printf '%s\\n' 'GitHub indirmesi başarısız olduysa setup klasörünü projenize'",
+      "  printf '%s\\n' \"'tools/setup' olarak kopyalayıp tekrar deneyiniz.\"",
+      "  printf '%s\\n' '============================================================'",
+      "  exit 1",
+      "fi",
       "",
     ].join("\n");
     fs.writeFileSync(shPath, shContent, { encoding: "utf8", mode: 0o755 });
@@ -135,12 +163,28 @@ export function initProject(root = process.cwd(), options = {}) {
   const detection = detectProject(resolved);
   const configPath = path.join(resolved, "setup.config.json");
 
+  let toolsCopied = false;
+  if (options.copyTools && resolved !== setupRoot) {
+    const targetToolsDir = path.join(resolved, "tools", "setup");
+    fs.mkdirSync(targetToolsDir, { recursive: true });
+    const items = ["bin", "scripts", "wizard", "utils", "CHANGELOG.md", "README.md", "ENTEGRASYON.md", "package.json", "VERSION"];
+    for (const item of items) {
+      const src = path.join(setupRoot, item);
+      const dst = path.join(targetToolsDir, item);
+      if (fs.existsSync(src)) {
+        fs.cpSync(src, dst, { recursive: true, force: true });
+      }
+    }
+    toolsCopied = true;
+  }
+
   if (fs.existsSync(configPath) && !options.overwrite) {
     const launchersCreated = options.createLaunchers === false ? false : writeLaunchers(resolved, false);
     return {
       created: false,
       configPath,
       launchersCreated,
+      toolsCopied,
       detection,
       message: launchersCreated
         ? "setup.config.json zaten mevcut; eksik başlatıcılar (kurulum.bat / kurulum.sh) eklendi. Yapılandırmanın üzerine yazmak için --force kullanın."
@@ -299,6 +343,7 @@ export function initProject(root = process.cwd(), options = {}) {
     configPath,
     packageJsonUpdated,
     launchersCreated,
+    toolsCopied,
     config,
     detection,
     message: `setup.config.json oluşturuldu (${configPath}).`,
