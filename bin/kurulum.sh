@@ -37,6 +37,7 @@ if command -v node >/dev/null 2>&1; then
       if command -v bun >/dev/null 2>&1; then
         bun_version=$(bun --version 2>/dev/null || true)
         printf '[UYARI] Node.js %s (18/20/22/24 LTS önerilir). Sistemde Bun %s mevcut.\n' "$node_version" "$bun_version"
+        JS_RUNNER="bun"
       else
         printf '[UYUMSUZ] Node.js %s bulundu. Node.js 18, 20, 22 veya 24 LTS gereklidir.\n' "$node_version"
         has_error=1

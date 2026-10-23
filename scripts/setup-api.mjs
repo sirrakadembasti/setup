@@ -222,10 +222,22 @@ export function initProject(root = process.cwd(), options = {}) {
   const languageProfile = resolveLanguageProfile(resolved, detection.kind, detection.ports.app);
   if (languageProfile) {
     const [primary] = languageProfile.steps.filter((step) => !step.skipIfExists);
+    const hasNodeDeps = existingPkg && (
+      (existingPkg.dependencies && Object.keys(existingPkg.dependencies).length > 0) ||
+      (existingPkg.devDependencies && Object.keys(existingPkg.devDependencies).length > 0)
+    );
+    const steps = [...languageProfile.steps];
+    if (hasNodeDeps) {
+      steps.push({
+        label: `Node paketlerini kur (${pm} install)`,
+        command: pm,
+        args: installArgs,
+      });
+    }
     install = {
       command: primary.command,
       args: primary.args,
-      steps: languageProfile.steps,
+      steps,
       requireWorkspaces: false,
     };
     start = languageProfile.start;

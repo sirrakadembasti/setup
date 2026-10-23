@@ -61,6 +61,121 @@ export function detectPackageManager(root, pkg = null) {
   return "npm";
 }
 
+export function parseEnvContent(content) {
+  const result = [];
+  if (!content) return result;
+  const lines = content.split(/\r?\n/);
+  let i = 0;
+  let lastComment = "";
+
+  while (i < lines.length) {
+    const rawLine = lines[i];
+    const line = rawLine.trim();
+
+    if (!line) {
+      lastComment = "";
+      i++;
+      continue;
+    }
+
+    if (line.startsWith("#")) {
+      lastComment = line.replace(/^#+\s*/, "").trim();
+      i++;
+      continue;
+    }
+
+    const match = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/s);
+    if (!match) {
+      i++;
+      continue;
+    }
+
+    const key = match[1];
+    let valPart = match[2];
+
+    if (valPart.startsWith('"')) {
+      let val = valPart.slice(1);
+      let endIdx = -1;
+      for (let c = 0; c < val.length; c++) {
+        if (val[c] === '"' && (c === 0 || val[c - 1] !== '\\')) {
+          endIdx = c;
+          break;
+        }
+      }
+      if (endIdx !== -1) {
+        val = val.slice(0, endIdx);
+      } else {
+        const multiline = [val];
+        i++;
+        while (i < lines.length) {
+          const nextLine = lines[i];
+          let foundQuote = -1;
+          for (let c = 0; c < nextLine.length; c++) {
+            if (nextLine[c] === '"' && (c === 0 || nextLine[c - 1] !== '\\')) {
+              foundQuote = c;
+              break;
+            }
+          }
+          if (foundQuote !== -1) {
+            multiline.push(nextLine.slice(0, foundQuote));
+            break;
+          } else {
+            multiline.push(nextLine);
+            i++;
+          }
+        }
+        val = multiline.join("\n");
+      }
+      try {
+        val = JSON.parse(`"${val.replace(/\\"/g, '"').replace(/"/g, '\\"')}"`);
+      } catch {}
+      result.push({ key, value: String(val), comment: lastComment || null });
+      lastComment = "";
+      i++;
+      continue;
+    }
+
+    if (valPart.startsWith("'")) {
+      let val = valPart.slice(1);
+      let endIdx = val.indexOf("'");
+      if (endIdx !== -1) {
+        val = val.slice(0, endIdx);
+      } else {
+        const multiline = [val];
+        i++;
+        while (i < lines.length) {
+          const nextLine = lines[i];
+          const foundQuote = nextLine.indexOf("'");
+          if (foundQuote !== -1) {
+            multiline.push(nextLine.slice(0, foundQuote));
+            break;
+          } else {
+            multiline.push(nextLine);
+            i++;
+          }
+        }
+        val = multiline.join("\n");
+      }
+      result.push({ key, value: String(val), comment: lastComment || null });
+      lastComment = "";
+      i++;
+      continue;
+    }
+
+    let val = valPart;
+    const commentMatch = val.match(/\s+#.*$/);
+    if (commentMatch) {
+      val = val.slice(0, commentMatch.index);
+    }
+    val = val.trim();
+    result.push({ key, value: String(val), comment: lastComment || null });
+    lastComment = "";
+    i++;
+  }
+
+  return result;
+}
+
 export function parseEnvExample(root) {
   const candidates = [
     path.join(root, ".env.example"),
@@ -73,54 +188,101 @@ export function parseEnvExample(root) {
   if (!found) return { file: null, variables: [] };
 
   const content = fs.readFileSync(found, "utf8");
-  const variables = [];
-  let lastComment = "";
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) {
-      lastComment = "";
-      continue;
-    }
-    if (line.startsWith("#")) {
-      lastComment = line.replace(/^#+\s*/, "").trim();
-      continue;
-    }
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (match) {
-      const key = match[1];
-      const rawVal = match[2].trim().replace(/^["']|["']$/g, "");
-      variables.push({
-        key,
-        defaultValue: rawVal,
-        description: lastComment || null,
-      });
-      lastComment = "";
-    }
-  }
+  const parsed = parseEnvContent(content);
+  const variables = parsed.map((item) => ({
+    key: item.key,
+    defaultValue: item.value,
+    description: item.comment,
+  }));
   return {
     file: path.relative(root, found).replaceAll(path.sep, "/"),
     variables,
   };
 }
 
+export function parsePnpmWorkspaceYaml(content) {
+  const patterns = [];
+  if (!content) return patterns;
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const m = line.match(/^\s*-\s*['"]?([^'"]+)['"]?\s*$/);
+    if (m) {
+      patterns.push(m[1].trim());
+    }
+  }
+  return patterns;
+}
+
+export function findWorkspacePackageDirs(root, patterns = []) {
+  const dirs = [];
+  const visited = new Set();
+
+  for (const rawPat of patterns) {
+    if (!rawPat) continue;
+    const pat = rawPat.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (pat.endsWith("/*") || pat.endsWith("/**")) {
+      const parentRel = pat.slice(0, pat.lastIndexOf("/"));
+      const parentAbs = path.join(root, parentRel);
+      if (fs.existsSync(parentAbs) && fs.statSync(parentAbs).isDirectory()) {
+        try {
+          for (const ent of fs.readdirSync(parentAbs, { withFileTypes: true })) {
+            if (ent.isDirectory() && !ent.name.startsWith(".")) {
+              const subDir = path.join(parentAbs, ent.name);
+              if (fs.existsSync(path.join(subDir, "package.json")) && !visited.has(subDir)) {
+                visited.add(subDir);
+                dirs.push(path.relative(root, subDir).replaceAll(path.sep, "/"));
+              }
+            }
+          }
+        } catch {}
+      }
+    } else {
+      const targetAbs = path.join(root, pat);
+      if (fs.existsSync(path.join(targetAbs, "package.json")) && !visited.has(targetAbs)) {
+        visited.add(targetAbs);
+        dirs.push(path.relative(root, targetAbs).replaceAll(path.sep, "/"));
+      }
+    }
+  }
+
+  return dirs;
+}
+
 function detectWorkspaces(root) {
   const pkg = readJsonSafe(path.join(root, "package.json"));
   const pm = detectPackageManager(root, pkg);
-  if (!pkg) return { isWorkspace: false, packages: [], packageManager: pm, name: null, scripts: {} };
-  const workspaces = pkg.workspaces || pkg.packages;
-  const packages = Array.isArray(workspaces)
-    ? workspaces
-    : workspaces && Array.isArray(workspaces.packages)
-      ? workspaces.packages
-      : [];
-  const hasPnpmWorkspaceYaml = exists(root, "pnpm-workspace.yaml");
+  const pnpmYamlPath = path.join(root, "pnpm-workspace.yaml");
+  const hasPnpmWorkspaceYaml = fs.existsSync(pnpmYamlPath);
+  let rawPatterns = [];
+
+  if (pkg) {
+    const ws = pkg.workspaces || pkg.packages;
+    if (Array.isArray(ws)) rawPatterns.push(...ws);
+    else if (ws && Array.isArray(ws.packages)) rawPatterns.push(...ws.packages);
+  }
+
+  if (hasPnpmWorkspaceYaml) {
+    try {
+      const pnpmYamlText = fs.readFileSync(pnpmYamlPath, "utf8");
+      rawPatterns.push(...parsePnpmWorkspaceYaml(pnpmYamlText));
+    } catch {}
+  }
+
+  if (rawPatterns.length === 0 && (hasPnpmWorkspaceYaml || exists(root, "turbo.json") || exists(root, "lerna.json"))) {
+    rawPatterns.push("apps/*", "packages/*");
+  }
+
+  const packageDirs = findWorkspacePackageDirs(root, rawPatterns);
+  const isWorkspace = packageDirs.length > 0 || rawPatterns.length > 0 || hasPnpmWorkspaceYaml;
+
   return {
-    isWorkspace: packages.length > 0 || hasPnpmWorkspaceYaml,
-    packages,
+    isWorkspace,
+    packages: packageDirs.length > 0 ? packageDirs : rawPatterns,
+    packageDirs,
     packageManager: pm,
-    declaredPackageManager: pkg.packageManager || null,
-    name: pkg.name || null,
-    scripts: pkg.scripts || {},
+    declaredPackageManager: pkg?.packageManager || null,
+    name: pkg?.name || null,
+    scripts: pkg?.scripts || {},
   };
 }
 
@@ -259,7 +421,7 @@ function hasServerScript(pkg) {
   });
 }
 
-function detectStack(root, usage) {
+function detectStack(root, usage, workspaces = {}) {
   const rootPkg = readJsonSafe(path.join(root, "package.json"));
   const hasServerSubdir =
     exists(root, "server", "package.json") ||
@@ -277,6 +439,54 @@ function detectStack(root, usage) {
     exists(root, "src", "server.ts") ||
     hasServerScript(rootPkg);
 
+  const hasWorkspaceServer =
+    Array.isArray(workspaces?.packageDirs) &&
+    workspaces.packageDirs.some((dir) => {
+      if (/api|server|backend/i.test(dir)) return true;
+      const pkg = readJsonSafe(path.join(root, dir, "package.json"));
+      return (
+        hasDependency(pkg, "express") ||
+        hasDependency(pkg, "fastify") ||
+        hasDependency(pkg, "koa") ||
+        hasDependency(pkg, "hono") ||
+        hasServerScript(pkg)
+      );
+    });
+
+  const hasWorkspaceClient =
+    Array.isArray(workspaces?.packageDirs) &&
+    workspaces.packageDirs.some((dir) => {
+      if (/web|client|frontend|ui/i.test(dir)) return true;
+      const pkg = readJsonSafe(path.join(root, dir, "package.json"));
+      return (
+        hasDependency(pkg, "react") ||
+        hasDependency(pkg, "vue") ||
+        hasDependency(pkg, "vite") ||
+        hasDependency(pkg, "next") ||
+        hasDependency(pkg, "nuxt") ||
+        hasDependency(pkg, "@sveltejs/kit") ||
+        hasDependency(pkg, "astro")
+      );
+    });
+
+  const hasWorkspacePrisma =
+    Array.isArray(workspaces?.packageDirs) &&
+    workspaces.packageDirs.some((dir) => {
+      const pkg = readJsonSafe(path.join(root, dir, "package.json"));
+      return (
+        exists(root, dir, "prisma", "schema.prisma") ||
+        exists(root, dir, "schema.prisma") ||
+        hasDependency(pkg, "prisma") ||
+        hasDependency(pkg, "@prisma/client")
+      );
+    });
+
+  const hasServerFramework =
+    isPackageInUse(usage.express) ||
+    isPackageInUse(usage.fastify) ||
+    isPackageInUse(usage.koa) ||
+    isPackageInUse(usage.hono);
+
   const nextjs = isPackageInUse(usage.next) || exists(root, "next.config.js") || exists(root, "next.config.mjs");
   const nuxt = isPackageInUse(usage.nuxt) || exists(root, "nuxt.config.ts") || exists(root, "nuxt.config.js");
   const sveltekit = isPackageInUse(usage["@sveltejs/kit"]) || exists(root, "svelte.config.js");
@@ -286,11 +496,12 @@ function detectStack(root, usage) {
     exists(root, "index.html") || exists(root, "public", "index.html") || exists(root, "dist", "index.html");
 
   return {
-    nodeServer: hasServerSubdir || hasRootServerEntry,
+    nodeServer: hasServerSubdir || hasRootServerEntry || hasWorkspaceServer || hasServerFramework,
     hasServerSubdir,
     client:
       exists(root, "client", "package.json") ||
       exists(root, "client", "src") ||
+      hasWorkspaceClient ||
       isPackageInUse(usage.react) ||
       isPackageInUse(usage.vue) ||
       isPackageInUse(usage.next) ||
@@ -298,7 +509,10 @@ function detectStack(root, usage) {
       sveltekit ||
       astro ||
       staticHtml,
-    prisma: exists(root, "server", "prisma", "schema.prisma") || exists(root, "prisma", "schema.prisma"),
+    prisma:
+      exists(root, "server", "prisma", "schema.prisma") ||
+      exists(root, "prisma", "schema.prisma") ||
+      hasWorkspacePrisma,
     vite:
       exists(root, "client", "vite.config.ts") ||
       exists(root, "client", "vite.config.js") ||
@@ -418,6 +632,63 @@ function detectDevServerPort(root) {
   return null;
 }
 
+export function detectSourcePort(root, stack = {}) {
+  // Go source port detection
+  if (stack.go || exists(root, "go.mod") || exists(root, "main.go")) {
+    const candidates = [
+      path.join(root, "main.go"),
+      path.join(root, "server.go"),
+      path.join(root, "app.go"),
+    ];
+    try {
+      const cmdDir = path.join(root, "cmd");
+      if (fs.existsSync(cmdDir)) {
+        for (const sub of fs.readdirSync(cmdDir, { withFileTypes: true })) {
+          if (sub.isDirectory()) {
+            candidates.push(path.join(cmdDir, sub.name, "main.go"));
+          }
+        }
+      }
+    } catch {}
+
+    for (const f of candidates) {
+      if (fs.existsSync(f)) {
+        try {
+          const src = fs.readFileSync(f, "utf8");
+          const m = src.match(/(?:ListenAndServe(?:TLS)?\s*\(\s*(?:["'](?:[a-zA-Z0-9_.-]+)?:(\d{2,5})["']|.*?:(\d{2,5}))|flag\.(?:Int|IntVar)\s*\([^)]*?"port"[^)]*?,\s*(\d{2,5})\b)/);
+          const portNum = Number(m?.[1] || m?.[2] || m?.[3]);
+          if (validPort(portNum)) return portNum;
+          const simpleMatch = src.match(/["']:(8080|8000|3000|80|443|5000|8888|9000)["']/);
+          if (simpleMatch && validPort(Number(simpleMatch[1]))) return validPort(Number(simpleMatch[1]));
+        } catch {}
+      }
+    }
+  }
+
+  // Rust source port detection
+  if (stack.rust || exists(root, "Cargo.toml")) {
+    const candidates = [
+      path.join(root, "src", "main.rs"),
+      path.join(root, "src", "bin", "main.rs"),
+      path.join(root, "src", "server.rs"),
+    ];
+    for (const f of candidates) {
+      if (fs.existsSync(f)) {
+        try {
+          const src = fs.readFileSync(f, "utf8");
+          const m = src.match(/(?:bind\s*\(\s*["'](?:[a-zA-Z0-9_.-]+)?:(\d{2,5})["']|["'](?:127\.0\.0\.1|0\.0\.0\.0|localhost):(\d{2,5})["']|SocketAddr[a-zA-Z0-9_:]*,\s*(\d{2,5})\s*\))/);
+          const portNum = Number(m?.[1] || m?.[2] || m?.[3]);
+          if (validPort(portNum)) return portNum;
+          const simpleMatch = src.match(/["'](?:127\.0\.0\.1|0\.0\.0\.0|localhost):(8080|8000|3000|80|443|5000|8888|9000)["']/);
+          if (simpleMatch && validPort(Number(simpleMatch[1]))) return validPort(Number(simpleMatch[1]));
+        } catch {}
+      }
+    }
+  }
+
+  return null;
+}
+
 /**
  * Giriş yolu ve (varsa) ayrı geliştirme sunucusu portu. Sabit varsayım yok:
  * `SETUP_LOGIN_PATH` / `setup.config.json` (`app.loginPath`) ve `SETUP_DEV_PORT` /
@@ -531,12 +802,19 @@ export function detectProject(root = process.cwd()) {
   const validPkg = hasValidPackageJson(resolved);
   const setupConfig = loadSetupConfig(resolved);
   const workspaces = detectWorkspaces(resolved);
-  const dependencyUsage = detectDependencyUsage(resolved, [
+  const candidatePkgs = [
     readJsonSafe(path.join(resolved, "package.json")),
     readJsonSafe(path.join(resolved, "server", "package.json")),
     readJsonSafe(path.join(resolved, "client", "package.json")),
-  ].filter(Boolean));
-  const stack = detectStack(resolved, dependencyUsage);
+  ];
+  if (Array.isArray(workspaces.packageDirs)) {
+    for (const relDir of workspaces.packageDirs) {
+      const p = readJsonSafe(path.join(resolved, relDir, "package.json"));
+      if (p) candidatePkgs.push(p);
+    }
+  }
+  const dependencyUsage = detectDependencyUsage(resolved, candidatePkgs.filter(Boolean));
+  const stack = detectStack(resolved, dependencyUsage, workspaces);
   const install = detectInstallEvidence(resolved);
   const runtime = detectRuntimeArtifacts(resolved);
 
@@ -584,7 +862,7 @@ export function detectProject(root = process.cwd()) {
     ports: {
       bootstrap: Number(process.env.SETUP_BOOTSTRAP_PORT) || Number(cfgPorts.bootstrap) || DEFAULT_PORTS.bootstrap,
       wizard: Number(process.env.SETUP_WIZARD_PORT) || Number(cfgPorts.wizard) || DEFAULT_PORTS.wizard,
-      app: Number(process.env.SETUP_APP_PORT) || Number(cfgPorts.app) || detectEnvExamplePort(runtime) || DEFAULT_PORTS.app,
+      app: Number(process.env.SETUP_APP_PORT) || Number(cfgPorts.app) || detectEnvExamplePort(runtime) || detectSourcePort(resolved, stack) || DEFAULT_PORTS.app,
     },
     confidence: kind === "unknown" || kind === "directory" ? 0 : workspaces.isWorkspace ? 1 : 0.85,
   };

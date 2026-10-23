@@ -9,7 +9,7 @@ for /f "delims=" %%I in ('where pnpm 2^>nul') do (
 )
 where bun >nul 2>&1
 if not errorlevel 1 (
-  bun %*
+  bun "%SELF_DIR%pnpm-shim.mjs" %*
   exit /b !errorlevel!
 )
 echo [HATA] Sistemde ne pnpm ne de bun calistirilabilir programi bulunamadi. >&2

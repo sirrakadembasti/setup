@@ -2,10 +2,49 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
+import { detectProject, loadSetupConfig } from "./detect-project.mjs";
 
 export const SUPPORTED_NODE_MAJORS = Object.freeze([18, 20, 22, 24]);
 export const CLEAN_INSTALL_CONFIRMATION = "SETUP VERİLERİNİ SİL";
+
+function safeFolderName(name) {
+  const cleaned = String(name || "app").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
+  return cleaned || "app";
+}
+
+/** İşletim sistemine göre kullanıcı uygulama verisi kök dizini (SETUP_USER_DATA_HOME ile değiştirilebilir). */
+export function userDataHome({ env = process.env, platform = process.platform, homedir = os.homedir() } = {}) {
+  if (env.SETUP_USER_DATA_HOME) return path.resolve(env.SETUP_USER_DATA_HOME);
+  if (platform === "win32") return env.APPDATA || path.join(homedir, "AppData", "Roaming");
+  if (platform === "darwin") return path.join(homedir, "Library", "Application Support");
+  return env.XDG_CONFIG_HOME || path.join(homedir, ".config");
+}
+
+export function resolveDesktopDataDir({ detection, setupConfig = null, explicit = null, env = process.env, platform = process.platform, homedir = os.homedir() } = {}) {
+  if (!detection?.scenario?.isDesktop) return explicit || null;
+  if (explicit) return explicit;
+  if (env.SETUP_DATA_DIR) return null;
+  if (typeof setupConfig?.paths?.dataDir === "string" && setupConfig.paths.dataDir.trim()) return null;
+  const name = safeFolderName(setupConfig?.name || detection.projectName);
+  return path.join(userDataHome({ env, platform, homedir }), name);
+}
+
+function resolveEffectiveDataDir(projectRoot, options = {}) {
+  if (options.dataDir) return path.resolve(projectRoot, options.dataDir);
+  if (process.env.SETUP_DATA_DIR) return path.resolve(projectRoot, process.env.SETUP_DATA_DIR);
+  const detection = options.detection || detectProject(projectRoot);
+  const setupConfig = options.setupConfig || loadSetupConfig(projectRoot);
+  return resolveDesktopDataDir({
+    detection,
+    setupConfig,
+    explicit: null,
+    env: options.userDataHome ? { ...process.env, SETUP_USER_DATA_HOME: options.userDataHome } : (options.env || process.env),
+    platform: options.platform || process.platform,
+    homedir: options.userDataHome ? options.userDataHome : undefined,
+  });
+}
 
 const cmdAvailabilityCache = new Map();
 
@@ -174,8 +213,22 @@ function hasNonEmptyNodeModules(dir) {
   }
 }
 
-export function checkDependencies(projectRoot) {
-  const paths = getSetupPaths(projectRoot);
+function hasPackageDependencies(dir) {
+  const pkgFile = path.join(dir, "package.json");
+  if (!fs.existsSync(pkgFile)) return false;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgFile, "utf8"));
+    const deps = pkg.dependencies || {};
+    const devDeps = pkg.devDependencies || {};
+    return Object.keys(deps).length > 0 || Object.keys(devDeps).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function checkDependencies(projectRoot, options = {}) {
+  const dataDir = resolveEffectiveDataDir(projectRoot, options);
+  const paths = getSetupPaths(projectRoot, { ...options, dataDir });
   const root = paths.projectRoot;
   const hasRootPkg = fs.existsSync(path.join(root, "package.json"));
   const serverDir = path.join(root, "server");
@@ -183,10 +236,6 @@ export function checkDependencies(projectRoot) {
   const serverEntry = fs.existsSync(path.join(serverDir, "package.json"));
   const clientEntry = fs.existsSync(path.join(clientDir, "package.json"));
   const hasAnyPackageJson = hasRootPkg || serverEntry || clientEntry;
-  const rootPackages = hasAnyPackageJson ? hasNonEmptyNodeModules(root) : true;
-  const serverModules = serverEntry ? fs.existsSync(path.join(serverDir, "node_modules")) : true;
-  const clientModules = clientEntry ? fs.existsSync(path.join(clientDir, "node_modules")) : true;
-  const nodeReady = !hasAnyPackageJson ? true : rootPackages && serverModules && clientModules;
 
   // Çok dilli (Python, Rust, Go) bağımlılık tespiti
   const hasPython =
@@ -212,6 +261,15 @@ export function checkDependencies(projectRoot) {
     ? fs.existsSync(path.join(root, "go.sum")) || fs.existsSync(path.join(root, "vendor"))
     : true;
 
+  const isPolyglot = hasPython || hasRust || hasGo;
+  const rootHasDeps = hasPackageDependencies(root);
+  const rootPackages = hasAnyPackageJson
+    ? (isPolyglot ? (rootHasDeps ? hasNonEmptyNodeModules(root) : true) : hasNonEmptyNodeModules(root))
+    : true;
+  const serverModules = serverEntry ? fs.existsSync(path.join(serverDir, "node_modules")) : true;
+  const clientModules = clientEntry ? fs.existsSync(path.join(clientDir, "node_modules")) : true;
+  const nodeReady = !hasAnyPackageJson ? true : rootPackages && serverModules && clientModules;
+
   const ready = nodeReady && pythonReady && rustReady && goReady;
 
   return {
@@ -227,9 +285,10 @@ export function checkDependencies(projectRoot) {
   };
 }
 
-export function inspectInstallationState(projectRoot) {
-  const paths = getSetupPaths(projectRoot);
-  const deps = checkDependencies(projectRoot);
+export function inspectInstallationState(projectRoot, options = {}) {
+  const dataDir = resolveEffectiveDataDir(projectRoot, options);
+  const paths = getSetupPaths(projectRoot, { ...options, dataDir });
+  const deps = checkDependencies(projectRoot, { ...options, dataDir });
   const evidence = {
     installationLock: fs.existsSync(paths.lock),
     environmentFile: anyExists(paths.env, paths.rootEnv),
@@ -245,7 +304,7 @@ export function inspectInstallationState(projectRoot) {
   if (evidence.installationLock) state = "installed";
   else if (Object.entries(evidence).some(([key, present]) => key !== "dependenciesInstalled" && present)) state = "partial";
 
-  return { state, evidence, dependencies: deps };
+  return { state, evidence, dependencies: deps, paths };
 }
 
 export function validateRuntime(nodeVersion, packageManagerVersion = null, options = {}) {
@@ -253,7 +312,10 @@ export function validateRuntime(nodeVersion, packageManagerVersion = null, optio
   const nodeMajor = Number(normalizedNode.split(".")[0]);
   const allowedMajors = Array.isArray(options.supportedNodeMajors) && options.supportedNodeMajors.length > 0
     ? options.supportedNodeMajors
-    : SUPPORTED_NODE_MAJORS;
+    : null;
+  const nodeSupported = allowedMajors
+    ? allowedMajors.includes(nodeMajor)
+    : Number.isInteger(nodeMajor) && nodeMajor >= 18;
   const normalizedPm = String(packageManagerVersion || "").trim();
   const pmSupported = options.requiredPackageManagerVersion
     ? normalizedPm === options.requiredPackageManagerVersion
@@ -261,8 +323,8 @@ export function validateRuntime(nodeVersion, packageManagerVersion = null, optio
 
   return {
     nodeVersion: normalizedNode || null,
-    nodeSupported: allowedMajors.includes(nodeMajor),
-    supportedNodeMajors: [...allowedMajors],
+    nodeSupported,
+    supportedNodeMajors: allowedMajors ? [...allowedMajors] : [...SUPPORTED_NODE_MAJORS],
     packageManager: options.packageManager || "npm",
     packageManagerVersion: normalizedPm || null,
     packageManagerSupported: pmSupported,
@@ -357,8 +419,9 @@ function timestamp() {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
 
-export function createVerifiedBackup(projectRoot, backupName = `reinstall-${timestamp()}`) {
-  const paths = getSetupPaths(projectRoot);
+export function createVerifiedBackup(projectRoot, backupName = `reinstall-${timestamp()}`, options = {}) {
+  const dataDir = resolveEffectiveDataDir(projectRoot, options);
+  const paths = getSetupPaths(projectRoot, { ...options, dataDir });
   fs.mkdirSync(paths.backupsRoot, { recursive: true });
   const backupRoot = path.join(paths.backupsRoot, backupName);
   assertInside(paths.backupsRoot, backupRoot);
@@ -366,17 +429,22 @@ export function createVerifiedBackup(projectRoot, backupName = `reinstall-${time
   fs.mkdirSync(backupRoot, { recursive: false, mode: 0o700 });
 
   const copied = [];
+  const isExternalOutsideRoot = Boolean(paths.dataRoot && !isInside(paths.projectRoot, paths.dataRoot));
   try {
     for (const item of backupItems(paths)) {
       if (!fs.existsSync(item.source)) continue;
-      assertInside(paths.projectRoot, item.source);
-      assertNoUnsafeSymlinks(item.source, paths.projectRoot);
+      const isExternalData = Boolean(isExternalOutsideRoot && isInside(paths.dataRoot, item.source));
+      if (!isExternalData) {
+        assertInside(paths.projectRoot, item.source);
+        assertNoUnsafeSymlinks(item.source, paths.projectRoot);
+      }
       const destination = path.join(backupRoot, item.destination);
       assertInside(backupRoot, destination);
       fs.mkdirSync(path.dirname(destination), { recursive: true });
       fs.cpSync(item.source, destination, { recursive: true, errorOnExist: true, dereference: true });
 
-      const sourceFiles = collectFiles(item.source, item.source, paths.projectRoot);
+      const sourceBase = isExternalData ? paths.dataRoot : paths.projectRoot;
+      const sourceFiles = collectFiles(item.source, item.source, sourceBase);
       const destinationFiles = collectFiles(destination, destination, backupRoot);
       if (sourceFiles.length !== destinationFiles.length) throw new Error(`Yedek dosya sayısı doğrulanamadı: ${item.destination}`);
       for (const sourceFile of sourceFiles) {
@@ -387,7 +455,9 @@ export function createVerifiedBackup(projectRoot, backupName = `reinstall-${time
         const destinationHash = hashFile(destinationFile);
         if (sourceHash !== destinationHash) throw new Error(`Yedek özeti eşleşmedi: ${item.destination}`);
         copied.push({
-          source: path.relative(paths.projectRoot, sourceFile.absolute).replaceAll(path.sep, "/"),
+          source: isExternalData
+            ? `data:${path.relative(paths.dataRoot, sourceFile.absolute).replaceAll(path.sep, "/")}`
+            : path.relative(paths.projectRoot, sourceFile.absolute).replaceAll(path.sep, "/"),
           backup: path.relative(backupRoot, destinationFile).replaceAll(path.sep, "/"),
           bytes: fs.statSync(sourceFile.absolute).size,
           sha256: sourceHash,
@@ -398,6 +468,7 @@ export function createVerifiedBackup(projectRoot, backupName = `reinstall-${time
     const manifest = {
       createdAt: new Date().toISOString(),
       projectRoot: paths.projectRoot,
+      dataRoot: paths.dataRoot,
       reason: "Temiz kurulum öncesi zorunlu doğrulanmış yedek",
       files: copied,
     };
@@ -428,9 +499,10 @@ export function resetInstallation(projectRoot, options = {}) {
     throw new Error("Zorunlu yedek onayı verilmedi.");
   }
 
-  const current = inspectInstallationState(projectRoot);
+  const current = inspectInstallationState(projectRoot, options);
   if (current.state === "fresh") throw new Error("Temizlenecek mevcut veya yarım kurulum bulunamadı.");
-  const paths = getSetupPaths(projectRoot);
+  const dataDir = resolveEffectiveDataDir(projectRoot, options);
+  const paths = getSetupPaths(projectRoot, { ...options, dataDir });
   for (const envCandidate of [paths.env, paths.rootEnv]) {
     if (fs.existsSync(envCandidate)) {
       const match = fs.readFileSync(envCandidate, "utf8").match(/^\s*DATABASE_URL\s*=\s*["']?([^"'\r\n]+)["']?\s*$/m);
@@ -439,7 +511,7 @@ export function resetInstallation(projectRoot, options = {}) {
       }
     }
   }
-  const backup = createVerifiedBackup(projectRoot);
+  const backup = createVerifiedBackup(projectRoot, undefined, options);
 
   const removable = [
     paths.env,
@@ -459,12 +531,17 @@ export function resetInstallation(projectRoot, options = {}) {
     paths.adminConfig,
     paths.setupArtifacts,
   ];
+  const isExternalOutsideRoot = Boolean(paths.dataRoot && !isInside(paths.projectRoot, paths.dataRoot));
   for (const target of removable) {
-    assertInside(paths.projectRoot, target);
+    if (!fs.existsSync(target)) continue;
+    const isExternalData = Boolean(isExternalOutsideRoot && isInside(paths.dataRoot, target));
+    if (!isExternalData) {
+      assertInside(paths.projectRoot, target);
+    }
     fs.rmSync(target, { recursive: true, force: true });
   }
   clearUploads(paths.uploadsRoot);
-  return { ...backup, state: inspectInstallationState(projectRoot) };
+  return { ...backup, state: inspectInstallationState(projectRoot, options) };
 }
 
 export function readConfiguredPort(projectRoot) {
@@ -496,7 +573,9 @@ export function isLocalPortOpen(port, timeoutMs = 600) {
 }
 
 export function stopPortProcess(port, options = {}) {
-  const holder = findListeningProcess(port);
+  const holder = typeof options.findProcess === "function"
+    ? options.findProcess(port)
+    : findListeningProcess(port);
   if (!holder?.pid) {
     return { stopped: false, pid: null, message: `127.0.0.1:${port} için süreç bulunamadı.` };
   }
@@ -504,13 +583,13 @@ export function stopPortProcess(port, options = {}) {
     return { stopped: false, pid: holder.pid, message: "Kendi kurulum başlatıcı sürecinizi durduramazsınız." };
   }
   if (options.requireNodeOrSetupProcess) {
-    const descriptor = `${holder.name || ""} ${holder.commandLine || ""}`.toLowerCase();
-    if (descriptor.trim() && !/node|npm|pnpm|yarn|bun|tsx|setup|wizard/.test(descriptor)) {
+    const descriptor = `${holder.name || ""} ${holder.commandLine || ""}`.toLowerCase().trim();
+    if (!descriptor || !/node|npm|pnpm|yarn|bun|tsx|setup|wizard/.test(descriptor)) {
       return {
         stopped: false,
         pid: holder.pid,
         name: holder.name,
-        message: `PID ${holder.pid} (${holder.name || "bilinmeyen"}) bir Node/kurulum süreci olmadığı için güvenlik amacıyla otomatik durdurulmadı.`,
+        message: `PID ${holder.pid} (${holder.name || "bilinmeyen"}) bir Node/kurulum süreci olarak doğrulanamadığı için güvenlik amacıyla otomatik durdurulmadı.`,
       };
     }
   }

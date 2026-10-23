@@ -148,7 +148,7 @@ function pythonProfile(root, port) {
 
 // ---------------------------------------------------------------- Go
 
-function goProfile(root) {
+function goProfile(root, port = 5000) {
   const steps = [
     { label: "Modülleri indir (go mod download)", command: "go", args: ["mod", "download"] },
     { label: "Derlemeyi doğrula (go build ./...)", command: "go", args: ["build", "./..."] },
@@ -163,7 +163,7 @@ function goProfile(root) {
       /* cmd/ yok */
     }
   }
-  return { language: "go", steps, start: { command: "go", args: ["run", target] } };
+  return { language: "go", steps, start: { command: "go", args: ["run", target] }, port };
 }
 
 // ---------------------------------------------------------------- .NET
@@ -226,13 +226,13 @@ export function findRustRunPackage(root) {
   return null;
 }
 
-function rustProfile(root) {
+function rustProfile(root, port = 5000) {
   const pkg = findRustRunPackage(root);
   const steps = [
     { label: "Bağımlılıkları indir (cargo fetch)", command: "cargo", args: ["fetch"] },
     { label: "Derlemeyi doğrula (cargo check)", command: "cargo", args: ["check"] },
   ];
-  return { language: "rust", steps, start: { command: "cargo", args: ["run", ...(pkg ? ["-p", pkg] : [])] } };
+  return { language: "rust", steps, start: { command: "cargo", args: ["run", ...(pkg ? ["-p", pkg] : [])] }, port };
 }
 
 /**
@@ -245,9 +245,9 @@ export function resolveLanguageProfile(root, kind, port = 5000) {
   const language = LANGUAGE_KINDS[kind];
   if (!language) return null;
   if (language === "python") return pythonProfile(root, port);
-  if (language === "go") return goProfile(root);
+  if (language === "go") return goProfile(root, port);
   if (language === "dotnet") return dotnetProfile(root, port);
-  return rustProfile(root);
+  return rustProfile(root, port);
 }
 
 /**

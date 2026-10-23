@@ -2490,3 +2490,412 @@ test("wizard/server E2E: /api/test-database ve /api/test-email uç noktaları ca
   assert.equal(emailData.reachable, true);
   assert.match(emailData.message, /SMTP sunucusu/);
 });
+
+test("Bulgu 2.2: CORE_ENV_KEYS EMAIL_PASS, EMAIL_FROM, ADMIN_PASSWORD_HASH ve RETENTION_*_LOG_DAYS anahtarlarını eksiksiz içerir", async () => {
+  const { CORE_ENV_KEYS } = await import("../wizard/config.mjs");
+  assert.ok(CORE_ENV_KEYS, "CORE_ENV_KEYS export edilmiş olmalı");
+  const expectedKeys = [
+    "EMAIL_PASS",
+    "EMAIL_FROM",
+    "ADMIN_PASSWORD_HASH",
+    "RETENTION_ACTION_LOG_DAYS",
+    "RETENTION_READ_NOTIFICATION_DAYS",
+    "RETENTION_EMAIL_LOG_DAYS",
+    "RETENTION_PASSWORD_RESET_DAYS",
+    "EMAIL_CONNECTION_TIMEOUT",
+    "EMAIL_GREETING_TIMEOUT",
+    "EMAIL_SOCKET_TIMEOUT",
+  ];
+  for (const k of expectedKeys) {
+    assert.ok(CORE_ENV_KEYS.has(k), `CORE_ENV_KEYS '${k}' anahtarını içermeli`);
+  }
+
+  const { renderSetupPage } = await import("../wizard/ui.html.mjs");
+  const html = renderSetupPage("csrf-token");
+  for (const k of expectedKeys) {
+    assert.ok(html.includes(`'${k}'`), `renderSetupPage HTML çıktısındaki CORE_ENV_KEYS kümesi '${k}' anahtarını içermeli`);
+  }
+});
+
+test("Bulgu 2.4: resolveAppStartInvocation setup.config.json olmadan çok dilli (Python, Go, Rust) projeleri başlatabilir", async (t) => {
+  const { resolveAppStartInvocation } = await import("../wizard/app-process.mjs");
+
+  // Python projesi
+  const pyDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-py-"));
+  t.after(() => fs.rmSync(pyDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(pyDir, "main.py"), "from fastapi import FastAPI\napp = FastAPI()\n", "utf8");
+  fs.writeFileSync(path.join(pyDir, "requirements.txt"), "fastapi\nuvicorn\n", "utf8");
+  const pyInv = resolveAppStartInvocation(pyDir);
+  assert.ok(pyInv, "Python projesi için başlatma komutu bulunmalı");
+  assert.match(pyInv.command, /python/i);
+  assert.ok(pyInv.args.some(a => a.includes("uvicorn") || a.includes("main.py") || a.includes("app")));
+
+  // Go projesi
+  const goDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-go-"));
+  t.after(() => fs.rmSync(goDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(goDir, "go.mod"), "module example.com/demo\ngo 1.22\n", "utf8");
+  fs.writeFileSync(path.join(goDir, "main.go"), "package main\nfunc main() {}\n", "utf8");
+  const goInv = resolveAppStartInvocation(goDir);
+  assert.ok(goInv, "Go projesi için başlatma komutu bulunmalı");
+  assert.equal(goInv.command, "go");
+  assert.deepEqual(goInv.args, ["run", "."]);
+
+  // Rust projesi
+  const rsDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-rs-"));
+  t.after(() => fs.rmSync(rsDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(rsDir, "Cargo.toml"), '[package]\nname = "demo"\nversion = "0.1.0"\n', "utf8");
+  fs.mkdirSync(path.join(rsDir, "src"));
+  fs.writeFileSync(path.join(rsDir, "src", "main.rs"), "fn main() {}\n", "utf8");
+  const rsInv = resolveAppStartInvocation(rsDir);
+  assert.ok(rsInv, "Rust projesi için başlatma komutu bulunmalı");
+  assert.equal(rsInv.command, "cargo");
+  assert.deepEqual(rsInv.args, ["run"]);
+});
+
+test("Bulgu 2.3: bin/shims pnpm monorepo bayraklarını (--filter, -r, --parallel) bun'a çevirir ve yarn shim'lerini barındırır", async () => {
+  const shimsDir = path.resolve(process.cwd(), "bin", "shims");
+  assert.ok(fs.existsSync(path.join(shimsDir, "yarn")), "bin/shims/yarn mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "yarn.cmd")), "bin/shims/yarn.cmd mevcut olmalı");
+
+  const { translatePnpmArgs } = await import("../bin/shims/pnpm-shim.mjs");
+  assert.deepEqual(translatePnpmArgs(["--filter", "frontend", "build"]), ["run", "--filter", "frontend", "build"]);
+  assert.deepEqual(translatePnpmArgs(["--filter=frontend", "build"]), ["run", "--filter=frontend", "build"]);
+  assert.deepEqual(translatePnpmArgs(["-r", "build"]), ["run", "--workspaces", "build"]);
+  assert.deepEqual(translatePnpmArgs(["-r", "run", "build"]), ["run", "--workspaces", "build"]);
+  assert.deepEqual(translatePnpmArgs(["-r", "--parallel", "build"]), ["run", "--workspaces", "--parallel", "build"]);
+  assert.deepEqual(translatePnpmArgs(["--parallel", "-r", "run", "build"]), ["run", "--workspaces", "--parallel", "build"]);
+  assert.deepEqual(translatePnpmArgs(["install"]), ["install"]);
+  assert.deepEqual(translatePnpmArgs(["add", "axios"]), ["add", "axios"]);
+});
+
+test("Bulgu 2.1: Sihirbaz varsayılan olarak 20s sonra kapanmaz, #startApp ve yerleşik statik sunucu korunur", async (t) => {
+  const { createSetupServer } = await import("../wizard/server.mjs");
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-autoclose-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(tmpRoot, "public"), { recursive: true });
+  fs.writeFileSync(path.join(tmpRoot, "public", "index.html"), "<h1>Static App</h1>\n", "utf8");
+
+  let completedCalled = false;
+  const token = "x".repeat(32);
+  const server = createSetupServer(token, {
+    projectRoot: tmpRoot,
+    dataDir: tmpRoot,
+    autoClose: false,
+    onComplete: () => {
+      completedCalled = true;
+      server.close();
+    },
+  });
+  t.after(() => server.stopSpawnedApp?.());
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  assert.equal(loginRes.status, 303);
+  const cookiePair = loginRes.headers.get("set-cookie").split(";")[0];
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const html = await pageRes.text();
+  const csrf = JSON.parse(html.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  // /api/apply çağır
+  const applyRes = await fetch(`${baseUrl}/api/apply`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      ...VALID_PAYLOAD,
+      server: { host: "127.0.0.1", port: 5001 },
+    }),
+  });
+  assert.equal(applyRes.status, 202);
+
+  // applyJob.status === "success" olana kadar bekle
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    const statusRes = await (await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } })).json();
+    if (statusRes.apply?.status === "success") break;
+  }
+
+  // autoClose: false olduğunda onComplete tetiklenmemeli
+  assert.equal(completedCalled, false, "autoClose: false iken onComplete tetiklenmemeli");
+
+  // /api/start-app çağır (statik sunucu başlatılmalı)
+  const startRes = await fetch(`${baseUrl}/api/start-app`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+  });
+  assert.equal(startRes.status, 200);
+  const startData = await startRes.json();
+  assert.equal(startData.reachable, true);
+
+  // Statik sunucunun içeriği yanıtlaması beklenir
+  const staticContent = await (await fetch("http://127.0.0.1:5001/")).text();
+  assert.match(staticContent, /Static App/);
+});
+
+test("Bulgu 3.3: parseDotEnvFile ve parseEnvExample export öneki, satır içi yorumlar ve çok satırlı tırnaklı değerleri destekler", async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-env-parse-"));
+  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+
+  const envContent = [
+    'export PORT=4000',
+    'API_URL=http://localhost:3000 # local endpoint',
+    'SECRET_KEY="my-secret" # key comment',
+    'MULTI_LINE="first line',
+    'second line',
+    'third line"',
+    "SINGLE_MULTI='line A",
+    "line B'",
+    'PLAIN_VAR=simple_value',
+  ].join("\n");
+
+  fs.writeFileSync(path.join(tmpDir, ".env"), envContent, "utf8");
+  const { parseDotEnvFile } = await import("../wizard/app-process.mjs");
+  const parsed = parseDotEnvFile(path.join(tmpDir, ".env"));
+
+  assert.equal(parsed.PORT, "4000", "export önekli anahtar parse edilmeli");
+  assert.equal(parsed.API_URL, "http://localhost:3000", "tırnaksız satır içi yorum temizlenmeli");
+  assert.equal(parsed.SECRET_KEY, "my-secret", "tırnaklı değer ve yorum temizlenmeli");
+  assert.equal(parsed.MULTI_LINE, "first line\nsecond line\nthird line", "çok satırlı çift tırnaklı değer parse edilmeli");
+  assert.equal(parsed.SINGLE_MULTI, "line A\nline B", "çok satırlı tek tırnaklı değer parse edilmeli");
+  assert.equal(parsed.PLAIN_VAR, "simple_value");
+
+  // parseEnvExample testi
+  fs.writeFileSync(path.join(tmpDir, ".env.example"), envContent, "utf8");
+  const { parseEnvExample } = await import("../scripts/detect-project.mjs");
+  const res = parseEnvExample(tmpDir);
+  const byKey = Object.fromEntries(res.variables.map((v) => [v.key, v.defaultValue]));
+  assert.equal(byKey.PORT, "4000");
+  assert.equal(byKey.API_URL, "http://localhost:3000");
+  assert.equal(byKey.MULTI_LINE, "first line\nsecond line\nthird line");
+});
+
+test("Bulgu 3.4: E-posta adımı Google Workspace kurumsal alan adlarını ve özel SMTP adreslerini kabul eder", async () => {
+  const { validateStepData } = await import("../wizard/shared.mjs");
+  const { parseSetupPayload } = await import("../wizard/config.mjs");
+
+  // 1. Google Workspace: provider "gmail" ama alan adı @sirket.com
+  const workspaceEmail = {
+    enabled: true,
+    provider: "gmail",
+    user: "yonetici@kurum.com.tr",
+    fromEmail: "bildirim@kurum.com.tr",
+    fromName: "Kurum Bilgi",
+    password: "abcd efgh ijkl mnop", // 16 haneli Google uygulama parolası
+  };
+  const issues = validateStepData("email", workspaceEmail);
+  assert.deepEqual(issues, [], "Google Workspace e-posta adresi reddedilmemeli");
+
+  const parsed = parseSetupPayload({
+    ...VALID_PAYLOAD,
+    email: workspaceEmail,
+  });
+  assert.equal(parsed.email.user, "yonetici@kurum.com.tr");
+  assert.equal(parsed.email.fromEmail, "bildirim@kurum.com.tr");
+});
+
+test("Bulgu 3.5: validateRuntime ve sihirbaz Node.js 23, 25, 26 gibi modern sürümleri (>=18) destekler", async () => {
+  const { validateRuntime } = await import("../scripts/setup-bootstrap-lib.mjs");
+  assert.equal(validateRuntime("v23.1.0", "10.2.0").nodeSupported, true, "Node 23 desteklenmeli");
+  assert.equal(validateRuntime("v25.0.0", "10.2.0").nodeSupported, true, "Node 25 desteklenmeli");
+  assert.equal(validateRuntime("v26.0.0", "10.2.0").nodeSupported, true, "Node 26 desteklenmeli");
+  assert.equal(validateRuntime("v16.20.0", "9.15.1").nodeSupported, false, "Node 16 desteklenmemeli");
+});
+
+test("Bulgu 3.2: Go ve Rust profilleri portu iletir ve kaynak koddan dinleme portu tespit edilir", async (t) => {
+  const { resolveLanguageProfile } = await import("../scripts/polyglot.mjs");
+  const { detectProject } = await import("../scripts/detect-project.mjs");
+
+  // Go projesi: main.go içinde :8080 dinleniyor
+  const goDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-go-port-"));
+  t.after(() => fs.rmSync(goDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(goDir, "go.mod"), "module demo\ngo 1.22\n", "utf8");
+  fs.writeFileSync(path.join(goDir, "main.go"), 'package main\nimport "net/http"\nfunc main() { http.ListenAndServe(":8080", nil) }\n', "utf8");
+
+  const goDetection = detectProject(goDir);
+  assert.equal(goDetection.ports.app, 8080, "Go kodundaki :8080 portu algılanmalı");
+
+  const goProf = resolveLanguageProfile(goDir, "go-server", 8080);
+  assert.ok(goProf.start.command, "Go başlatma komutu olmalı");
+
+  // Rust projesi: main.rs içinde 8080 portu
+  const rsDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-rs-port-"));
+  t.after(() => fs.rmSync(rsDir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(rsDir, "Cargo.toml"), '[package]\nname = "rsapp"\nversion = "0.1.0"\n', "utf8");
+  fs.mkdirSync(path.join(rsDir, "src"));
+  fs.writeFileSync(path.join(rsDir, "src", "main.rs"), 'fn main() { let addr = "127.0.0.1:8080"; }\n', "utf8");
+
+  const rsDetection = detectProject(rsDir);
+  assert.equal(rsDetection.ports.app, 8080, "Rust kodundaki 8080 portu algılanmalı");
+});
+
+test("Bulgu 3.1: Monorepo pnpm-workspace.yaml ve apps/* / packages/* paketlerini algılar, derler ve migration uygular", async (t) => {
+  const { detectProject } = await import("../scripts/detect-project.mjs");
+  const { checkDependencies } = await import("../scripts/setup-bootstrap-lib.mjs");
+  const { executeSetupApply } = await import("../wizard/shared.mjs");
+
+  const monoDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-monorepo-"));
+  t.after(() => fs.rmSync(monoDir, { recursive: true, force: true }));
+
+  // Root package.json + pnpm-workspace.yaml
+  fs.writeFileSync(path.join(monoDir, "package.json"), JSON.stringify({ name: "my-monorepo", private: true }), "utf8");
+  fs.writeFileSync(path.join(monoDir, "pnpm-workspace.yaml"), "packages:\n  - 'apps/*'\n  - 'packages/*'\n", "utf8");
+
+  // apps/web (React/Vite)
+  fs.mkdirSync(path.join(monoDir, "apps", "web"), { recursive: true });
+  fs.writeFileSync(path.join(monoDir, "apps", "web", "package.json"), JSON.stringify({
+    name: "web",
+    scripts: { build: "node -e \"console.log('BUILD_WEB')\"" },
+    dependencies: { react: "^18.0.0" }
+  }), "utf8");
+
+  // apps/api (Express)
+  fs.mkdirSync(path.join(monoDir, "apps", "api"), { recursive: true });
+  fs.writeFileSync(path.join(monoDir, "apps", "api", "package.json"), JSON.stringify({
+    name: "api",
+    scripts: { build: "node -e \"console.log('BUILD_API')\"" },
+    dependencies: { express: "^4.18.0" }
+  }), "utf8");
+
+  // packages/db (Prisma / migrate)
+  fs.mkdirSync(path.join(monoDir, "packages", "db"), { recursive: true });
+  fs.writeFileSync(path.join(monoDir, "packages", "db", "package.json"), JSON.stringify({
+    name: "db",
+    scripts: { "db:migrate": "node -e \"console.log('MIGRATE_DB')\"" },
+    dependencies: { prisma: "^5.0.0" }
+  }), "utf8");
+
+  // 1. detectProject monorepo paketlerini ve bağımlılıklarını algılamalı
+  const detection = detectProject(monoDir);
+  assert.equal(detection.workspaces.isWorkspace, true, "Workspace olarak tanınmalı");
+  assert.ok(detection.workspaces.packages.length >= 2, "apps/* ve packages/* taranmış olmalı");
+  assert.equal(detection.stack.nodeServer, true, "apps/api içindeki express algılanmalı");
+  assert.equal(detection.stack.client, true, "apps/web içindeki react algılanmalı");
+
+  // 2. executeSetupApply monorepo derleme ve migration adımlarını çalıştırmalı
+  const steps = [];
+  const markStep = (id, status, detail) => steps.push({ id, status, detail });
+
+  await executeSetupApply({
+    projectRoot: monoDir,
+    detection,
+    options: {},
+    applyJob: { logs: [] },
+    payload: {
+      ...VALID_PAYLOAD,
+      buildClient: true,
+      database: { provider: "sqlite" },
+    },
+    markStep,
+  });
+
+  const buildServerStep = steps.find(s => s.id === "buildServer" && s.status === "done");
+  assert.ok(buildServerStep, "buildServer tamamlanmalı");
+  const migrateStep = steps.find(s => s.id === "migrate" && s.status === "done");
+  assert.ok(migrateStep, "migrate tamamlanmalı");
+});
+
+test("Bulgu 4.1: createStaticAppServer akış ile yanıt verir ve symlink ile dışarı çıkışı 403 ile engeller", async (t) => {
+  const staticDir = fs.mkdtempSync(path.join(os.tmpdir(), "static-app-"));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "static-outside-"));
+  t.after(() => {
+    fs.rmSync(staticDir, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  fs.writeFileSync(path.join(staticDir, "index.html"), "<h1>Static App Content</h1>", "utf8");
+  fs.writeFileSync(path.join(outsideDir, "secret.txt"), "TOP_SECRET_OUTSIDE", "utf8");
+
+  let symlinkCreated = false;
+  try {
+    fs.symlinkSync(path.join(outsideDir, "secret.txt"), path.join(staticDir, "link-to-secret.txt"));
+    symlinkCreated = true;
+  } catch {}
+
+  const server = createStaticAppServer(staticDir);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const okRes = await fetch(`http://127.0.0.1:${port}/index.html`);
+  assert.equal(okRes.status, 200);
+  const text = await okRes.text();
+  assert.equal(text, "<h1>Static App Content</h1>");
+
+  if (symlinkCreated) {
+    const symRes = await fetch(`http://127.0.0.1:${port}/link-to-secret.txt`);
+    assert.equal(symRes.status, 403, "Symlink ile dizin dışına çıkış engellenmeli");
+  }
+});
+
+test("Bulgu 4.2: wizard/core ve wizard/server Origin başlığı yokken veya yabancı origin varken POST isteklerini 403 ile reddeder", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "core-origin-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot });
+
+  // 1. Yabancı origin ile gelen POST isteği reddedilmeli
+  const foreignRes = await core.handle({
+    method: "POST",
+    headers: {
+      host: "localhost:5050",
+      origin: "http://attacker.example.com",
+      "x-setup-csrf": core.csrfToken,
+    },
+    path: "/api/validate-step",
+    body: { step: "admin", data: { name: "A", email: "a@a.com", password: "Pass" } },
+  });
+  assert.equal(foreignRes.status, 403, "Yabancı origin 403 dönmeli");
+
+  // 2. HTTP isteği (host başlığı var) fakat origin ve referer hiç yoksa 403 dönmeli
+  const noOriginHttpRes = await core.handle({
+    method: "POST",
+    headers: {
+      host: "localhost:5050",
+      "x-setup-csrf": core.csrfToken,
+    },
+    path: "/api/validate-step",
+    body: { step: "admin", data: { name: "A", email: "a@a.com", password: "Pass" } },
+  });
+  assert.equal(noOriginHttpRes.status, 403, "HTTP isteğinde origin/referer yoksa 403 dönmeli");
+});
+
+test("Bulgu 4.3: stopPortProcess requireNodeOrSetupProcess devredeyken süreç adı/komutu boşsa süreci sonlandırmaz", async (t) => {
+  const { stopPortProcess } = await import("../scripts/setup-bootstrap-lib.mjs");
+  const mockFind = () => ({ pid: 12345, name: "", commandLine: "" });
+  const result = stopPortProcess(9999, {
+    requireNodeOrSetupProcess: true,
+    findProcess: mockFind,
+  });
+  assert.equal(result.stopped, false, "Doğrulanamayan süreç durdurulmamalı");
+  assert.match(result.message, /doğrulanamadığı|güvenlik amacıyla/i);
+});
+
+test("Bulgu 4.4: checkRateLimit / createRateLimiter süresi dolan kayıtları temizler ve bellek sızıntısını önler", async (t) => {
+  const { createRateLimiter } = await import("../wizard/shared.mjs");
+  const limiter = createRateLimiter({ maxBuckets: 50 });
+
+  for (let i = 0; i < 100; i++) {
+    limiter.checkRateLimit(`ip:${i}`, 10, 50);
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  limiter.checkRateLimit("ip:new", 10, 60_000);
+  assert.ok(limiter.size <= 50, `Limiter boyutu sınırlandırılmış olmalı, mevcut: ${limiter.size}`);
+});
+
+
+

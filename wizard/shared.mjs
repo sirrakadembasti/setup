@@ -493,14 +493,19 @@ export function validateStepData(step, data, options = {}) {
           issues.push({ code: "custom", message: "Geçerli bir SMTP parolası girin.", path: ["email", "password"] });
         }
       } else {
-        if (!/@gmail\.com$/i.test(user)) {
-          issues.push({ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: ["email.user"] });
+        const NON_GOOGLE_DOMAINS = /@(yahoo|hotmail|outlook|live|icloud|yandex|mail\.ru)\.[a-z.]+$/i;
+        if (!user || user.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user) || /[\r\n\0]/.test(user)) {
+          issues.push({ code: "invalid_email", message: "Geçerli bir e-posta adresi girin.", path: ["email.user"] });
+        } else if (NON_GOOGLE_DOMAINS.test(user)) {
+          issues.push({ code: "invalid_gmail", message: "Gmail veya Google Workspace ile uyumlu bir e-posta adresi girin.", path: ["email.user"] });
         }
-        if (!/@gmail\.com$/i.test(fromEmail)) {
-          issues.push({ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: ["email.fromEmail"] });
+        if (!fromEmail || fromEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail) || /[\r\n\0]/.test(fromEmail)) {
+          issues.push({ code: "invalid_email", message: "Geçerli bir gönderen e-posta adresi girin.", path: ["email.fromEmail"] });
+        } else if (NON_GOOGLE_DOMAINS.test(fromEmail)) {
+          issues.push({ code: "invalid_gmail", message: "Gmail veya Google Workspace ile uyumlu bir e-posta adresi girin.", path: ["email.fromEmail"] });
         }
         if (password.length < 16 || password.length > 128) {
-          issues.push({ code: "custom", message: "Geçerli Gmail uygulama parolası girin.", path: ["email", "password"] });
+          issues.push({ code: "custom", message: "Geçerli Gmail / Google Workspace uygulama parolası (16 karakter) girin.", path: ["email", "password"] });
         }
       }
 
@@ -750,6 +755,21 @@ export async function executeSetupApply({
         await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
         markStep("buildServer", "done", "root build");
         summary.push("Proje derlemesi tamamlandı.");
+      } else if (Array.isArray(detection?.workspaces?.packageDirs)) {
+        const serverPackageDir = detection.workspaces.packageDirs.find((dir) => {
+          if (!/api|server|backend/i.test(dir)) return false;
+          const pkg = readJsonFileSafe(path.join(projectRoot, dir, "package.json"));
+          return Boolean(pkg?.scripts?.build);
+        });
+        if (serverPackageDir) {
+          markStep("buildServer", "running");
+          const inv = pmRunInvocation(pm, "build", path.join(projectRoot, serverPackageDir));
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
+          markStep("buildServer", "done", `${serverPackageDir} build`);
+          summary.push("Sunucu derlemesi tamamlandı.");
+        } else {
+          markStep("buildServer", "skipped", "Derleme betiği yok.");
+        }
       } else {
         markStep("buildServer", "skipped", "Derleme betiği yok.");
       }
@@ -766,6 +786,21 @@ export async function executeSetupApply({
         await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
         markStep("buildClient", "done", "build:client");
         summary.push("İstemci derlemesi tamamlandı.");
+      } else if (Array.isArray(detection?.workspaces?.packageDirs)) {
+        const clientPackageDir = detection.workspaces.packageDirs.find((dir) => {
+          if (!/web|client|frontend|ui/i.test(dir)) return false;
+          const pkg = readJsonFileSafe(path.join(projectRoot, dir, "package.json"));
+          return Boolean(pkg?.scripts?.build);
+        });
+        if (clientPackageDir) {
+          markStep("buildClient", "running");
+          const inv = pmRunInvocation(pm, "build", path.join(projectRoot, clientPackageDir));
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
+          markStep("buildClient", "done", `${clientPackageDir} build`);
+          summary.push("İstemci derlemesi tamamlandı.");
+        } else {
+          markStep("buildClient", "skipped", "İstemci derleme betiği yok.");
+        }
       } else {
         markStep("buildClient", "skipped", "İstemci derleme betiği yok.");
       }
@@ -779,8 +814,20 @@ export async function executeSetupApply({
     } else {
       const serverMigrateScript = MIGRATE_SCRIPT_CANDIDATES.find((name) => Boolean(serverPkg?.scripts?.[name]));
       const rootMigrateScript = MIGRATE_SCRIPT_CANDIDATES.find((name) => Boolean(rootPkg?.scripts?.[name]));
-      const migrateScript = serverMigrateScript || rootMigrateScript;
-      const migrateDir = serverMigrateScript ? path.join(projectRoot, "server") : projectRoot;
+      let migrateScript = serverMigrateScript || rootMigrateScript;
+      let migrateDir = serverMigrateScript ? path.join(projectRoot, "server") : projectRoot;
+
+      if (!migrateScript && Array.isArray(detection?.workspaces?.packageDirs)) {
+        for (const relDir of detection.workspaces.packageDirs) {
+          const pkg = readJsonFileSafe(path.join(projectRoot, relDir, "package.json"));
+          const found = MIGRATE_SCRIPT_CANDIDATES.find((name) => Boolean(pkg?.scripts?.[name]));
+          if (found) {
+            migrateScript = found;
+            migrateDir = path.join(projectRoot, relDir);
+            break;
+          }
+        }
+      }
 
       if (migrateScript) {
         markStep("migrate", "running", migrateScript);
@@ -909,3 +956,50 @@ export async function executeSetupApply({
     }
   }
 }
+
+export function createRateLimiter(options = {}) {
+  const maxBuckets = Number(options.maxBuckets ?? 1000);
+  const buckets = new Map();
+
+  function prune(now) {
+    for (const [key, entry] of buckets.entries()) {
+      if (now >= entry.resetAt) {
+        buckets.delete(key);
+      }
+    }
+    if (buckets.size > maxBuckets) {
+      const excess = buckets.size - maxBuckets;
+      let count = 0;
+      for (const key of buckets.keys()) {
+        buckets.delete(key);
+        count++;
+        if (count >= excess) break;
+      }
+    }
+  }
+
+  function checkRateLimit(key, limit, windowMs) {
+    const now = Date.now();
+    if (buckets.size >= Math.max(10, Math.floor(maxBuckets / 2))) {
+      prune(now);
+    }
+    const entry = buckets.get(key);
+    if (!entry || now >= entry.resetAt) {
+      buckets.set(key, { count: 1, resetAt: now + windowMs });
+      return true;
+    }
+    entry.count += 1;
+    return entry.count <= limit;
+  }
+
+  return {
+    checkRateLimit,
+    get size() {
+      return buckets.size;
+    },
+    clear() {
+      buckets.clear();
+    },
+  };
+}
+

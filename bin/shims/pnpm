@@ -14,7 +14,7 @@ IFS="$OLD_IFS"
 if [ -n "$REAL_PNPM" ]; then
   exec "$REAL_PNPM" "$@"
 elif command -v bun >/dev/null 2>&1; then
-  exec bun "$@"
+  exec bun "$THIS_DIR/pnpm-shim.mjs" "$@"
 else
   echo "[HATA] Sistemde ne pnpm ne de bun programı bulunamadı." >&2
   exit 1

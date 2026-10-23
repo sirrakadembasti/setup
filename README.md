@@ -64,7 +64,7 @@ node /path/to/setup/bin/setup.mjs init --offline
 |---|---|---|
 | **Senaryo 1** | **Node.js Sunucu** | Express.js, Fastify, Koa, Hono |
 | **Senaryo 2** | **SPA & Statik Web** | React, Vue, Vite, Saf HTML/JS |
-| **Senaryo 3** | **Full-Stack (SSR)** | Next.js (App Router), Nuxt, SvelteKit, Astro |
+| **Senaryo 3** | **Full-Stack (SSR & Monorepo)** | Next.js (App Router), Nuxt, SvelteKit, Astro, pnpm/npm/yarn/bun workspaces (`apps/*`, `packages/*`) |
 | **Senaryo 4** | **Çok Dilli Backend** | Python (FastAPI, Django, Flask), Go, C# .NET, Rust |
 | **Senaryo 5** | **Masaüstü** | Electron (gömülü IPC), Tauri (Sidecar) |
 
@@ -72,15 +72,17 @@ node /path/to/setup/bin/setup.mjs init --offline
 
 ## 🌟 Temel Avantajlar
 
-- **Sıfır Bağımlılık:** Yalnızca Node.js (>=18) veya Bun yerleşik modüllerini kullanır; `npm install` gerektirmez.
-- **Dual npm / bunx Desteği:** İş ortamlarında `npm` çalışmasa dahi sistemdeki `bun` algılanarak kurulumdan derlemeye tüm süreç sorunsuz tamamlanır.
+- **Sıfır Bağımlılık ve Genişletilmiş Sürüm Desteği:** Yalnızca Node.js (>=18, Node 20, 22, 24, 25, 26+) veya Bun yerleşik modüllerini kullanır; `npm install` gerektirmez.
+- **Dual npm / bunx & Shims Desteği:** İş ortamlarında `npm` çalışmasa dahi sistemdeki `bun` algılanarak kurulumdan derlemeye tüm süreç sorunsuz tamamlanır; `bin/shims` (`pnpm`, `yarn`, `bunx`) sayesinde monorepo alt scriptleri şeffafça Bun'a yönlendirilir.
+- **Monorepo (Workspaces) Desteği:** `pnpm-workspace.yaml`, `apps/*` ve `packages/*` mimarisindeki monorepoların bağımlılıkları, derleme adımları (`buildServer`, `buildClient`) ve migration'ları (`packages/db`) otomatik algılanır ve işletilir.
 - **Dinamik Paket Yöneticisi Fallback'i:** Proje `pnpm` veya `yarn` istese bile sistemde o araç yoksa ve yalnızca `bun` varsa, kurulum ve derleme otomatik olarak `bun`'a yönlendirilir; alt script çağrıları (`bin/shims`) çökmeden çalışır.
-- **Esnek Veritabanı ve Kurumsal SMTP:** SQLite'ın yanı sıra PostgreSQL, MySQL ve Özel Bağlantı Dizesi (Connection String) desteği; Google Gmail ve kurumsal SMTP sunucuları (Microsoft 365, Exchange vb.) ile tam uyumluluk.
+- **Esnek Veritabanı ve Kurumsal SMTP / Google Workspace:** SQLite'ın yanı sıra PostgreSQL, MySQL ve Özel Bağlantı Dizesi (Connection String) desteği; Google Workspace kurumsal alan adları (`@sirket.com`) ve genel SMTP sunucuları ile tam uyumluluk.
+- **Gelişmiş .env Ayrıştırması:** Standart POSIX `export ` önekleri, satır içi yorumlar (`# comment`) ve çok satırlı tırnaklı dizgeler bozulmadan ayrıştırılır.
 - **Canlı Ağ Sınaması (Active Pre-Apply Probing):** Veritabanı (TCP port) ve SMTP sunucusuna (ESMTP 220 banner okuma) arayüzden tek tıkla canlı bağlantı testi.
 - **Canlı İşlem Günlüğü ve Güvenli Sır Maskeleme:** Kurulum adımları esnasında derleme ve migration çıktıları arayüzdeki canlı terminal konsolundan izlenir; parolalar ve bağlantı sırları (`******`) otomatik sansürlenir.
-- **Çok Dilli Migration ve Tohumlama (Seeding):** Node.js script'lerinin yanı sıra Django, Alembic, .NET EF, Rust migration'ları ve otomatik `seed` betiği yürütümü.
+- **Çok Dilli Migration ve Tohumlama (Seeding):** Node.js script'lerinin yanı sıra Django, Alembic, .NET EF, Rust migration'ları, kaynak koddan port tespiti ve otomatik `seed` betiği yürütümü.
 - **Yeniden Yapılandırma Modu (`--reconfigure`):** Kurulu sistemi yıkıcı temiz kuruluma zorlamadan ayarları, portları ve `.env` dosyasını güvenle güncelleme imkanı.
-- **Güvenli:** Tarayıcı uygulamalarına gizli anahtarları sızdırmaz, CSRF ve timing-safe korumalıdır.
+- **Güvenli ve Yüksek Performanslı:** Tarayıcı uygulamalarına gizli anahtarları sızdırmaz, CSRF, origin tutarlılığı, bellek sızıntısız rate limiting (`createRateLimiter`), akış tabanlı statik dosya sunumu (`createReadStream`) ve symlink sınır kontrolü (`realpathSync`) içerir.
 - **Esnek:** Doğrudan CLI ile kullanılabileceği gibi Express middleware'i, Next.js API Route'u veya Electron IPC içine gömülebilir.
 
 ---

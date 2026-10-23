@@ -193,15 +193,31 @@ export function createSetupWizardCore(options = {}) {
 
     if (enforceCsrf && method !== "GET" && method !== "HEAD") {
       const origin = String(headers.origin || "").trim();
+      const referer = String(headers.referer || "").trim();
       const host = String(headers.host || "").trim().toLowerCase();
-      let originOk = true;
-      if (origin) {
+      let effectiveOrigin = origin;
+      if (!effectiveOrigin && referer) {
         try {
-          originOk = allowedOrigins.includes(origin) || (Boolean(host) && new URL(origin).host.toLowerCase() === host);
+          effectiveOrigin = new URL(referer).origin;
+        } catch {}
+      }
+
+      let originOk = false;
+      if (effectiveOrigin) {
+        try {
+          const parsed = new URL(effectiveOrigin);
+          const isLocalhost =
+            ["http:", "https:"].includes(parsed.protocol) &&
+            ["127.0.0.1", "localhost"].includes(parsed.hostname);
+          const matchesHost = Boolean(host) && parsed.host.toLowerCase() === host;
+          originOk = allowedOrigins.includes(effectiveOrigin) || matchesHost || (isLocalhost && !host);
         } catch {
           originOk = false;
         }
+      } else if (!host && !options.requireOrigin) {
+        originOk = true;
       }
+
       const csrf = String(headers["x-setup-csrf"] || "");
       if (!originOk || !equalSecret(csrf, csrfToken)) {
         return { status: 403, headers: jsonHeaders, body: { ok: false, message: "Kurulum isteği güvenlik doğrulamasından geçmedi." } };
@@ -275,7 +291,7 @@ export function createSetupWizardCore(options = {}) {
             toolchain: toolchain.details,
           },
           checks: {
-            nodeSupported: [18, 20, 22, 24].includes(Number(process.versions.node.split(".")[0])),
+            nodeSupported: Number(process.versions.node.split(".")[0]) >= 18,
             dataWritable: writable(currentPaths.dataRoot),
             uploadsWritable: writable(currentPaths.uploadsRoot),
             notInstalled: isReconfigure ? true : !installed,

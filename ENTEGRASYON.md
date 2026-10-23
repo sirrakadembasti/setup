@@ -781,10 +781,14 @@ Hedef reponun kök dizinindeki `setup.config.json` üzerinden portları, kurulum
 
 - **Yerel Dinleme:** Kurulum sunucuları (`5049` ve `5050`) yalnızca `127.0.0.1` arayüzünü dinler; uzak sunucularda SSH tüneli (`ssh -L 5049:127.0.0.1:5049 -L 5050:127.0.0.1:5050 user@sunucu`) ile güvenle erişilir.
 - **Kriptografik Oturum, CSRF ve Beyaz Liste CORS:** Her oturumda 24 baytlık tek kullanımlık token üretilir, `HttpOnly` + `SameSite=Strict` çerezleri (`setup.bootstrap`, `setup.wizard`) ve `crypto.timingSafeEqual` doğrulaması kullanılır. Yalnızca `SETUP_ALLOWED_ORIGINS` ile açıkça izin verilen masaüstü/SPA kökenlerine CORS yanıtı dönülür.
+- **Origin ve Referer Doğrulama Tutarlılığı:** `wizard/server.mjs` ve `wizard/core.mjs` üzerindeki tüm mutasyon uçları (`POST`, `PUT`, `DELETE`), tarayıcıdan gelen `Origin` veya `Referer` başlığının `allowedOrigins` veya sunucu `Host` başlığı ile tam eşleştiğini doğrular; Origin bilgisi içermeyen web tabanlı mutasyon istekleri reddedilir.
+- **Süreç Durdurma Güvenlik Kilidi:** `stopPortProcess` port çakışmalarını çözerken hedef sürecin `node`, `npm`, `pnpm`, `yarn`, `bun`, `setup` veya `wizard` süreci olduğunu açıkça doğrular; süreç tanımlayıcısı okunamayan bilinmeyen sistem veya veritabanı servisleri otomatik sonlandırılmaz.
+- **Bellek Sızıntısız İstek Sınırlama (Rate Limiting):** `createRateLimiter` altyapısı, IP bazlı sayaçları TTL süresi dolduğunda otomatik temizler (`prune`) ve maksimum anahtar kotası (`maxBuckets: 1000`) uygulayarak uzun süre açık kalan sunucularda bellek sızıntısını önler.
+- **Akış Tabanlı Statik Sunucu ve Symlink İzolasyonu:** `createStaticAppServer`, dosyaları senkron olarak belleğe almak yerine `createReadStream` ile akış halinde sunar; `fs.realpathSync` sınır kontrolü ile statik dizin dışına işaret eden sembolik bağlantılar (symlink traversal) `403 Forbidden` ile engellenir.
 - **Güvenli Günlük & Sır Maskeleme:** Kurulum terminal günlüğünde (`applyJob.logs`), yönetici parolası, veritabanı parolası, e-posta parolası ve bağlantı URL'lerindeki (`postgresql://user:pass@host`) kimlik bilgileri `******` ile otomatik olarak sansürlenir.
 - **Canlı Ağ Sınaması (Active Pre-Apply Probing):** Veritabanı (`/api/test-database`) ve SMTP sunucusu (`/api/test-email`) için form onaylanmadan önce soket/el sıkışma düzeyinde aktif bağlantı testi yapılır; hatalı bilgiler erken yakalanır.
 - **SPA Gizli Bilgi İzolasyonu:** Statik ve SPA projelerinde üretilen `runtime-config.json` ve `env-config.js` dosyalarına yalnız `VITE_`, `PUBLIC_`, `NEXT_PUBLIC_` ve `REACT_APP_` önekli değişkenler dahil edilir; `SESSION_SECRET`, `ADMIN_PASSWORD_HASH`, `EMAIL_PASS` ve `DATABASE_URL` kesinlikle dışarıda bırakılır.
-- **Doğrulanmış Yedekleme:** Temiz kurulum öncesinde mevcut `.env`, veritabanı ve yüklenen dosyalar SHA-256 özetleriyle `backups/reinstall-<tarih>/manifest.json` altına yedeklenir.
+- **Doğrulanmış Yedekleme:** Temiz kurulum öncesinde mevcut `.env`, veritabanı ve yüklenen dosyalar SHA-256 özetleriyle `backups/reinstall-<tarih>/manifest.json` altına yedeklenir. Harici veri dizini (`--data-dir`) kullanımlarında da güvenli alan istisnası ile sorunsuz çalışır.
 
 
 ## Giriş yolu, dev portu ve `.env` kapsamı
@@ -901,7 +905,7 @@ setup/
 │   ├── setup.mjs             # Ana CLI aracı (setup, wizard, init, detect, version)
 │   ├── kurulum.sh            # Bash/POSIX başlatıcı (npm/npx ve bun/bunx dual fallback)
 │   ├── kurulum.bat           # Windows UTF-8 başlatıcı (npm/npx ve bun/bunx dual fallback)
-│   └── shims/                # Alt süreçler için şeffaf yönlendiriciler (pnpm, npm, npx, bunx)
+│   └── shims/                # Alt süreçler için şeffaf yönlendiriciler (pnpm, pnpm-shim.mjs, yarn, npm, npx, bunx)
 ├── scripts/
 │   ├── detect-project.mjs    # Otomatik mimari, kaynak doğrulama, paket yöneticisi ve .env tespiti
 │   ├── polyglot.mjs          # Python/Go/C#/Rust kurulum, doğrulama ve başlatma profilleri

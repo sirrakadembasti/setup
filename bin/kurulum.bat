@@ -68,6 +68,7 @@ if errorlevel 1 (
     if not errorlevel 1 (
       for /f "delims=" %%V in ('bun --version 2^>nul') do set "BUN_VERSION=%%V"
       echo [UYARI] Node.js !NODE_VERSION! [18, 20, 22, 24 LTS onerilir]. Sistemde Bun !BUN_VERSION! mevcut.
+      set "JS_RUNNER=bun"
     ) else (
       echo [UYUMSUZ] Node.js !NODE_VERSION! bulundu. Node.js 18, 20, 22 veya 24 LTS gereklidir.
       set "HAS_ERROR=1"

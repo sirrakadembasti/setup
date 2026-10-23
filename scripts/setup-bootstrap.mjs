@@ -13,6 +13,7 @@ import {
   isLocalPortOpen,
   readConfiguredPort,
   resetInstallation,
+  resolveDesktopDataDir,
   resolveEffectivePackageManager,
   stopPortProcess,
   validateRuntime,
@@ -25,6 +26,7 @@ import {
 } from "./detect-project.mjs";
 import { resolveLanguageProfile } from "./polyglot.mjs";
 import { normalizeProcessEnv } from "../wizard/app-process.mjs";
+import { createRateLimiter } from "../wizard/shared.mjs";
 
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
 const setupRoot = path.resolve(scriptRoot, "..");
@@ -65,16 +67,9 @@ let packagesReady = !detection.scenario.requiresDependencies || setupConfig?.ins
 let wizardChild = null;
 let server;
 
-const rateBuckets = new Map();
+const bootstrapLimiter = createRateLimiter({ maxBuckets: 1000 });
 function checkRateLimit(key, limit, windowMs) {
-  const now = Date.now();
-  const entry = rateBuckets.get(key);
-  if (!entry || now >= entry.resetAt) {
-    rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  entry.count += 1;
-  return entry.count <= limit;
+  return bootstrapLimiter.checkRateLimit(key, limit, windowMs);
 }
 
 function digest(value) {
@@ -175,6 +170,12 @@ const hasNodePackageJson =
   fs.existsSync(path.join(projectRoot, "server", "package.json")) ||
   fs.existsSync(path.join(projectRoot, "client", "package.json"));
 
+const bootstrapDataDir = resolveDesktopDataDir({
+  detection,
+  setupConfig,
+  explicit: null,
+});
+
 function resolveDefaultInstallCommand() {
   if (Array.isArray(setupConfig?.install?.steps) && setupConfig.install.steps.length > 0) {
     return { steps: setupConfig.install.steps };
@@ -193,8 +194,19 @@ function resolveDefaultInstallCommand() {
   if (!detection.scenario.requiresDependencies) {
     return { command: null, args: [] };
   }
-  const languageProfile = !hasNodePackageJson ? resolveLanguageProfile(projectRoot, detection.kind, detection.ports.app) : null;
-  if (languageProfile) return { steps: languageProfile.steps };
+  const languageProfile = resolveLanguageProfile(projectRoot, detection.kind, detection.ports.app);
+  if (languageProfile) {
+    if (hasNodePackageJson) {
+      const chosenPm = resolveEffectivePackageManager(activePackageManager);
+      return {
+        steps: [
+          ...languageProfile.steps,
+          { label: `Node paketlerini kur (${chosenPm} install)`, command: chosenPm, args: ["install"] },
+        ],
+      };
+    }
+    return { steps: languageProfile.steps };
+  }
   const chosenPm = resolveEffectivePackageManager(activePackageManager);
   return { command: chosenPm, args: ["install"] };
 }
@@ -277,7 +289,7 @@ function startSubprocessJob(type, invocation, successMessage) {
       job.status = "success";
       job.message = successMessage;
       if (type === "dependencies") {
-        const deps = inspectInstallationState(projectRoot).dependencies;
+        const deps = inspectInstallationState(projectRoot, { dataDir: bootstrapDataDir }).dependencies;
         packagesReady = deps.ready;
         if (!packagesReady) {
           job.status = "error";
@@ -373,7 +385,7 @@ function publicStatus() {
     platform: `${process.platform}/${process.arch}`,
     hostname: os.hostname(),
     runtime: runtimeStatus(),
-    installation: inspectInstallationState(projectRoot),
+    installation: inspectInstallationState(projectRoot, { dataDir: bootstrapDataDir }),
     job,
     packagesReady,
     bootstrapPort: port,
@@ -502,7 +514,7 @@ async function handler(req, res) {
     if (requestUrl.pathname === "/api/wizard") {
       const payload = await readJson(req);
       const isReconfigure = Boolean(payload?.reconfigure || process.env.SETUP_RECONFIGURE === "true");
-      const current = inspectInstallationState(projectRoot);
+      const current = inspectInstallationState(projectRoot, { dataDir: bootstrapDataDir });
       if (current.state === "installed" && !isReconfigure) {
         throw new Error("Uygulama zaten kurulu (installation.lock var). Yeniden yapılandırmak için 'Yeniden Yapılandır' seçeneğini veya sıfırlamak için 'Temiz Kuruluma Geç' adımını kullanın.");
       }
@@ -545,7 +557,7 @@ async function handler(req, res) {
       const configuredPort = readConfiguredPort(projectRoot);
       if (await isLocalPortOpen(configuredPort)) throw new Error(`Uygulama ${configuredPort} portunda çalışıyor. Önce servisi durdurun.`);
       const payload = await readJson(req);
-      const result = resetInstallation(projectRoot, payload);
+      const result = resetInstallation(projectRoot, { ...payload, dataDir: bootstrapDataDir });
       job.type = "reset";
       job.status = "success";
       job.message = "Doğrulanmış yedek alındı; temiz kurulum için ortam hazır.";

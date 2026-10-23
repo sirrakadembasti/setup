@@ -19,6 +19,7 @@ export { normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, resolveAppStartI
 
 import {
   createApplyState,
+  createRateLimiter,
   detectRequiredToolchain,
   digest,
   equalSecret,
@@ -32,6 +33,7 @@ import {
 } from "./shared.mjs";
 
 export {
+  createRateLimiter,
   equalSecret,
   buildPublicFrontendConfig,
   writePublicFrontendArtifacts,
@@ -60,7 +62,7 @@ function normalizeAllowedOrigins(raw) {
 
 export function sameOrigin(req, expectedPort, allowedOrigins = []) {
   try {
-    const origin = req.headers.origin;
+    const origin = req.headers.origin || (req.headers.referer ? (() => { try { return new URL(req.headers.referer).origin; } catch { return ""; } })() : "");
     if (!origin) return false;
     const originStr = String(origin).trim();
     if (Array.isArray(allowedOrigins) && allowedOrigins.includes(originStr)) {
@@ -90,6 +92,13 @@ const STATIC_MIME_TYPES = {
 
 export function createStaticAppServer(staticDir) {
   const rootDir = path.resolve(staticDir);
+  let realRootDir;
+  try {
+    realRootDir = fs.realpathSync(rootDir);
+  } catch {
+    realRootDir = rootDir;
+  }
+
   return http.createServer((req, res) => {
     if (req.method !== "GET" && req.method !== "HEAD") {
       res.statusCode = 405;
@@ -117,12 +126,40 @@ export function createStaticAppServer(staticDir) {
         return res.end("Not Found");
       }
     }
-    const ext = path.extname(targetFile).toLowerCase();
+
+    let realTargetFile;
+    try {
+      realTargetFile = fs.realpathSync(targetFile);
+    } catch {
+      res.statusCode = 404;
+      return res.end("Not Found");
+    }
+
+    const realCheck = path.relative(realRootDir, realTargetFile);
+    if (realCheck.startsWith("..") || path.isAbsolute(realCheck)) {
+      res.statusCode = 403;
+      return res.end("Forbidden");
+    }
+
+    const ext = path.extname(realTargetFile).toLowerCase();
     res.setHeader("Content-Type", STATIC_MIME_TYPES[ext] || "application/octet-stream");
     res.setHeader("X-Content-Type-Options", "nosniff");
+    try {
+      const stat = fs.statSync(realTargetFile);
+      res.setHeader("Content-Length", stat.size);
+    } catch {}
     res.statusCode = 200;
     if (req.method === "HEAD") return res.end();
-    res.end(fs.readFileSync(targetFile));
+    const stream = fs.createReadStream(realTargetFile);
+    stream.on("error", () => {
+      if (!res.headersSent) {
+        res.statusCode = 500;
+        res.end("Internal Server Error");
+      } else {
+        res.destroy();
+      }
+    });
+    stream.pipe(res);
   });
 }
 
@@ -221,6 +258,7 @@ export function createSetupServer(token, options = {}) {
   let appChild = null;
   let appChildStderr = "";
   let spawnedStaticServer = null;
+  let completeTimer = null;
   const isDesktop = Boolean(detection.scenario.isDesktop);
   const desktopApp = createDesktopAppController({
     projectRoot,
@@ -231,16 +269,9 @@ export function createSetupServer(token, options = {}) {
     startInvocation: options.startAppInvocation || null,
   });
 
-  const rateBuckets = new Map();
+  const serverLimiter = createRateLimiter({ maxBuckets: 1000 });
   function checkRateLimit(key, limit, windowMs) {
-    const now = Date.now();
-    const entry = rateBuckets.get(key);
-    if (!entry || now >= entry.resetAt) {
-      rateBuckets.set(key, { count: 1, resetAt: now + windowMs });
-      return true;
-    }
-    entry.count += 1;
-    return entry.count <= limit;
+    return serverLimiter.checkRateLimit(key, limit, windowMs);
   }
 
   function markStep(id, status, detail) {
@@ -424,7 +455,7 @@ export function createSetupServer(token, options = {}) {
             toolchain: toolchain.details,
           },
           checks: {
-            nodeSupported: [18, 20, 22, 24].includes(Number(process.versions.node.split(".")[0])),
+            nodeSupported: Number(process.versions.node.split(".")[0]) >= 18,
             dataWritable: writable(dataRoot),
             uploadsWritable: writable(path.join(serverRoot, "uploads")),
             notInstalled: isReconfigure ? true : !fs.existsSync(lockPath),
@@ -470,6 +501,10 @@ export function createSetupServer(token, options = {}) {
       }
 
       if (req.method === "POST" && reqUrl.pathname === "/api/start-app") {
+        if (completeTimer) {
+          clearTimeout(completeTimer);
+          completeTimer = null;
+        }
         if (applyJob.status !== "success" && !fs.existsSync(lockPath)) {
           return sendJson(res, 409, { message: "Uygulamayı başlatmadan önce kurulum adımlarını tamamlayın." });
         }
@@ -595,7 +630,15 @@ export function createSetupServer(token, options = {}) {
               applyJob.status = "success";
               applyJob.message = "Kurulum tamamlandı. Birazdan giriş sayfasına yönlendirileceksiniz.";
               applyJob.finishedAt = new Date().toISOString();
-              if (options.onComplete) setTimeout(() => options.onComplete(), 20_000);
+              const shouldAutoClose = options.autoClose === true || process.env.SETUP_AUTO_CLOSE === "true" || process.env.SETUP_AUTO_CLOSE === "1";
+              if (options.onComplete && shouldAutoClose) {
+                const autoCloseDelay = typeof options.autoCloseDelay === "number" ? options.autoCloseDelay : 20_000;
+                completeTimer = setTimeout(() => {
+                  if (!spawnedStaticServer && (!appChild || appChild.exitCode !== null)) {
+                    options.onComplete();
+                  }
+                }, autoCloseDelay);
+              }
             } catch (error) {
               applyJob.status = "error";
               applyJob.message = error instanceof Error ? error.message : "Kurulum tamamlanamadı.";
@@ -622,7 +665,13 @@ export function createSetupServer(token, options = {}) {
     return sendJson(res, 404, { message: "Uç nokta bulunamadı." });
   });
 
+  server.hasSpawnedApp = () => Boolean(spawnedStaticServer || (appChild && appChild.exitCode === null));
+
   server.stopSpawnedApp = async () => {
+    if (completeTimer) {
+      clearTimeout(completeTimer);
+      completeTimer = null;
+    }
     if (spawnedStaticServer) {
       const srv = spawnedStaticServer;
       spawnedStaticServer = null;
@@ -682,11 +731,15 @@ export function startSetupWizard(options = {}) {
     dataDir,
     reconfigure: isReconfigure,
     ...options,
-    onComplete: () => server.close(),
+    onComplete: () => {
+      if (!server.hasSpawnedApp?.()) {
+        server.close();
+      }
+    },
   });
   server.listen(port, host, () => {
     console.log(`Kurulum sihirbazı: http://${host}:${port}/setup?token=${token}`);
-    console.log("Bu bağlantıyı paylaşmayın. Kurulum tamamlandığında sihirbaz otomatik kapanır.");
+    console.log("Bu bağlantıyı paylaşmayın. Kurulum tamamlandıktan sonra uygulamayı başlatabilirsiniz.");
   });
   return server;
 }

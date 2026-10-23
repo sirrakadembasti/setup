@@ -299,7 +299,7 @@ test("isCommandAvailable ve resolveEffectivePackageManager paket yöneticisi den
   }
 });
 
-test("bin/shims dizinindeki yönlendiriciler pnpm, npm, npx ve bunx komutlarını kapsar", () => {
+test("bin/shims dizinindeki yönlendiriciler pnpm, npm, npx, yarn ve bunx komutlarını kapsar", () => {
   const shimsDir = path.join(process.cwd(), "bin", "shims");
   assert.ok(fs.existsSync(shimsDir), "bin/shims dizini mevcut olmalı");
   assert.ok(fs.existsSync(path.join(shimsDir, "pnpm.cmd")), "pnpm.cmd mevcut olmalı");
@@ -308,6 +308,8 @@ test("bin/shims dizinindeki yönlendiriciler pnpm, npm, npx ve bunx komutların�
   assert.ok(fs.existsSync(path.join(shimsDir, "npm")), "npm bash shimi mevcut olmalı");
   assert.ok(fs.existsSync(path.join(shimsDir, "npx.cmd")), "npx.cmd mevcut olmalı");
   assert.ok(fs.existsSync(path.join(shimsDir, "bunx.cmd")), "bunx.cmd mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "yarn.cmd")), "yarn.cmd mevcut olmalı");
+  assert.ok(fs.existsSync(path.join(shimsDir, "yarn")), "yarn bash shimi mevcut olmalı");
 });
 
 test("setup-bootstrap --check-only pnpm projesinde sistemde yalnız bun varsa bun olarak raporlar", async (t) => {
@@ -417,6 +419,99 @@ test("setup-bootstrap: kurulu projede (installation.lock) --check-only installed
   const status = JSON.parse(res.stdout);
   assert.equal(status.installation?.state, "installed");
 });
+
+test("setup-bootstrap: masaüstü senaryosunda resolveDesktopDataDir ile kullanıcı veri dizinindeki kilit installed algılanır ve sıfırlanabilir", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-desktop-bootstrap-"));
+  const userDataHomeDir = fs.mkdtempSync(path.join(os.tmpdir(), "kur-user-data-"));
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(userDataHomeDir, { recursive: true, force: true });
+  });
+
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+    name: "masaustu-app",
+    devDependencies: { electron: "^30.0.0" },
+    scripts: { start: "electron ." },
+  }), "utf8");
+
+  const desktopDataDir = path.join(userDataHomeDir, "masaustu-app");
+  fs.mkdirSync(desktopDataDir, { recursive: true });
+  fs.writeFileSync(path.join(desktopDataDir, "installation.lock"), "locked\n", "utf8");
+  fs.writeFileSync(path.join(desktopDataDir, ".env"), "PORT=5000\n", "utf8");
+
+  const state = inspectInstallationState(root, { userDataHome: userDataHomeDir });
+  assert.equal(state.state, "installed");
+  assert.equal(state.evidence.installationLock, true);
+
+  const resetResult = resetInstallation(root, {
+    confirmation: CLEAN_INSTALL_CONFIRMATION,
+    backupAcknowledged: true,
+    userDataHome: userDataHomeDir,
+  });
+  assert.equal(fs.existsSync(path.join(desktopDataDir, "installation.lock")), false);
+  assert.equal(resetResult.state.state, "fresh");
+});
+
+test("setup-bootstrap-lib: harici dataDir (--data-dir / SETUP_DATA_DIR) ile createVerifiedBackup ve resetInstallation çökmeden çalışır", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-ext-root-"));
+  const extData = fs.mkdtempSync(path.join(os.tmpdir(), "kur-ext-data-"));
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(extData, { recursive: true, force: true });
+  });
+
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "ext-app" }), "utf8");
+  fs.writeFileSync(path.join(extData, "installation.lock"), "locked\n", "utf8");
+  fs.writeFileSync(path.join(extData, "app.db"), "ext-db-content", "utf8");
+  fs.writeFileSync(path.join(extData, ".env"), "PORT=5000\n", "utf8");
+
+  const state = inspectInstallationState(root, { dataDir: extData });
+  assert.equal(state.state, "installed");
+
+  const backup = createVerifiedBackup(root, "ext-backup-test", { dataDir: extData });
+  assert.ok(fs.existsSync(path.join(backup.backupRoot, "manifest.json")));
+
+  const resetRes = resetInstallation(root, {
+    confirmation: CLEAN_INSTALL_CONFIRMATION,
+    backupAcknowledged: true,
+    dataDir: extData,
+  });
+  assert.equal(fs.existsSync(path.join(extData, "installation.lock")), false);
+  assert.equal(fs.existsSync(path.join(extData, "app.db")), false);
+  assert.equal(resetRes.state.state, "fresh");
+});
+
+test("hibrit projeler: package.json + Python projesinde initProject ve checkDependencies deadlock oluşturmaz", async (t) => {
+  const { initProject } = await import("./setup-api.mjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-hybrid-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  fs.writeFileSync(path.join(root, "requirements.txt"), "fastapi==0.115.0\n", "utf8");
+  fs.writeFileSync(path.join(root, "main.py"), "print('hello')\n", "utf8");
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+    name: "hybrid-app",
+    dependencies: { tailwindcss: "^3.0.0" },
+  }), "utf8");
+
+  initProject(root, { overwrite: true, createLaunchers: false });
+  const cfg = JSON.parse(fs.readFileSync(path.join(root, "setup.config.json"), "utf8"));
+  assert.ok(Array.isArray(cfg.install?.steps), "install.steps bir dizi olmalı");
+  const hasPythonStep = cfg.install.steps.some(s => s.command === "python" || s.command === "pip" || s.label?.includes("Python") || s.label?.includes(".venv"));
+  const hasNodeStep = cfg.install.steps.some(s => ["npm", "pnpm", "yarn", "bun"].includes(s.command) || s.label?.includes("Node") || s.label?.includes("Paket"));
+  assert.ok(hasPythonStep, "Python adımı bulunmalı");
+  assert.ok(hasNodeStep, "Node paket kurulum adımı bulunmalı");
+});
+
+test("kurulum.bat ve kurulum.sh: Node LTS uyumsuzken Bun varsa JS_RUNNER bun olarak güncellenir", () => {
+  const batPath = path.join(process.cwd(), "bin", "kurulum.bat");
+  const shPath = path.join(process.cwd(), "bin", "kurulum.sh");
+  const bat = fs.readFileSync(batPath, "utf8");
+  const sh = fs.readFileSync(shPath, "utf8");
+
+  assert.match(bat, /Sistemde Bun !BUN_VERSION! mevcut[\s\S]*?set\s+"JS_RUNNER=bun"/i);
+  assert.match(sh, /Sistemde Bun %s mevcut[\s\S]*?JS_RUNNER="bun"/i);
+});
+
 
 
 

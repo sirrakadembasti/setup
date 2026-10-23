@@ -1,0 +1,21 @@
+#!/bin/sh
+THIS_DIR="$(cd "$(dirname "$0")" && pwd)"
+REAL_YARN=""
+OLD_IFS="$IFS"
+IFS=":"
+for p in $PATH; do
+  if [ "$p" != "$THIS_DIR" ] && [ -x "$p/yarn" ]; then
+    REAL_YARN="$p/yarn"
+    break
+  fi
+done
+IFS="$OLD_IFS"
+
+if [ -n "$REAL_YARN" ]; then
+  exec "$REAL_YARN" "$@"
+elif command -v bun >/dev/null 2>&1; then
+  exec bun "$@"
+else
+  echo "[HATA] Sistemde ne yarn ne de bun programı bulunamadı." >&2
+  exit 1
+fi

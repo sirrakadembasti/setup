@@ -1,6 +1,45 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { normalizeBasePath, parseDeploymentConfig } from "../utils/deployment-config.mjs";
 
+export const CORE_ENV_KEYS = new Set([
+  "PORT",
+  "HOST",
+  "NODE_ENV",
+  "DATABASE_URL",
+  "SESSION_SECRET",
+  "ADMIN_NAME",
+  "ADMIN_EMAIL",
+  "ADMIN_PASSWORD",
+  "ADMIN_PASSWORD_HASH",
+  "EMAIL_ENABLED",
+  "EMAIL_HOST",
+  "EMAIL_PORT",
+  "EMAIL_USER",
+  "EMAIL_PASS",
+  "EMAIL_PASSWORD",
+  "EMAIL_FROM",
+  "EMAIL_FROM_EMAIL",
+  "EMAIL_FROM_NAME",
+  "EMAIL_SECURE",
+  "EMAIL_CONNECTION_TIMEOUT",
+  "EMAIL_GREETING_TIMEOUT",
+  "EMAIL_SOCKET_TIMEOUT",
+  "RETENTION_ENABLED",
+  "RETENTION_ACTION_DAYS",
+  "RETENTION_ACTION_LOG_DAYS",
+  "RETENTION_NOTIFICATION_DAYS",
+  "RETENTION_READ_NOTIFICATION_DAYS",
+  "RETENTION_EMAIL_DAYS",
+  "RETENTION_EMAIL_LOG_DAYS",
+  "RETENTION_PASSWORD_DAYS",
+  "RETENTION_PASSWORD_RESET_DAYS",
+  "FRONTEND_URL",
+  "APP_BASE_PATH",
+  "ALLOWED_ORIGINS",
+  "TRUST_PROXY_HOPS",
+  "ALLOW_RUNTIME_DEPLOYMENT_CHANGES",
+]);
+
 export class ValidationError extends Error {
   constructor(issues) {
     super("Girilen bilgiler doğrulanamadı.");
@@ -20,13 +59,15 @@ function validateCleanText(value, fieldPath, max, min = 1) {
   return str;
 }
 
+const NON_GOOGLE_DOMAINS = /@(yahoo|hotmail|outlook|live|icloud|yandex|mail\.ru)\.[a-z.]+$/i;
+
 function validateEmail(value, fieldPath, requireGmail = false) {
   const str = String(value ?? "").trim();
   if (!str || str.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(str) || /[\r\n\0]/.test(str)) {
     throw new ValidationError([{ code: "invalid_email", message: "Geçerli bir e-posta adresi girin.", path: [fieldPath] }]);
   }
-  if (requireGmail && !/@gmail\.com$/i.test(str)) {
-    throw new ValidationError([{ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: [fieldPath] }]);
+  if (requireGmail && NON_GOOGLE_DOMAINS.test(str)) {
+    throw new ValidationError([{ code: "invalid_gmail", message: "Gmail veya Google Workspace ile uyumlu bir e-posta adresi girin.", path: [fieldPath] }]);
   }
   return str;
 }

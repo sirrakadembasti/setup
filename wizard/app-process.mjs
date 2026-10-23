@@ -2,15 +2,23 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { detectPackageManager, loadSetupConfig } from "../scripts/detect-project.mjs";
-import { resolveStepCommand } from "../scripts/polyglot.mjs";
+import { detectPackageManager, detectProject, loadSetupConfig, parseEnvContent } from "../scripts/detect-project.mjs";
+import { resolveLanguageProfile, resolveStepCommand } from "../scripts/polyglot.mjs";
 import {
   clearCommandAvailabilityCache,
   isCommandAvailable,
+  resolveDesktopDataDir,
   resolveEffectivePackageManager,
+  userDataHome,
 } from "../scripts/setup-bootstrap-lib.mjs";
 
-export { clearCommandAvailabilityCache, isCommandAvailable, resolveEffectivePackageManager };
+export {
+  clearCommandAvailabilityCache,
+  isCommandAvailable,
+  resolveDesktopDataDir,
+  resolveEffectivePackageManager,
+  userDataHome,
+};
 
 /**
  * Ortam değişkenlerini normalize eder.
@@ -128,23 +136,9 @@ export function parseDotEnvFile(envFilePath) {
   } catch {
     return vars;
   }
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
-    if (!match) continue;
-    const key = match[1];
-    let val = match[2].trim();
-    if (val.startsWith('"') && val.endsWith('"')) {
-      try {
-        val = JSON.parse(val);
-      } catch {
-        val = val.slice(1, -1);
-      }
-    } else if (val.startsWith("'") && val.endsWith("'")) {
-      val = val.slice(1, -1);
-    }
-    vars[key] = String(val);
+  const items = parseEnvContent(content);
+  for (const item of items) {
+    vars[item.key] = item.value;
   }
   return vars;
 }
@@ -184,7 +178,9 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
     }
     // python için proje içi .venv varsa onun yorumlayıcısı kullanılır
     let startCmd = resolveStepCommand(root, cfg.start);
-    startCmd = resolveEffectivePackageManager(startCmd);
+    if (["pnpm", "yarn", "bun", "npm"].includes(String(startCmd).toLowerCase().trim())) {
+      startCmd = resolveEffectivePackageManager(startCmd);
+    }
     return wrapShimCommand(
       startCmd,
       Array.isArray(cfg.start.args) ? cfg.start.args : [],
@@ -227,6 +223,20 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
     }
   }
 
+  const detection = detectProject(root);
+  const langProfile = resolveLanguageProfile(root, detection.kind, detection.ports?.app || 5000);
+  if (langProfile?.start?.command) {
+    let startCmd = resolveStepCommand(root, langProfile.start);
+    if (["pnpm", "yarn", "bun", "npm"].includes(String(startCmd).toLowerCase().trim())) {
+      startCmd = resolveEffectivePackageManager(startCmd);
+    }
+    return wrapShimCommand(
+      startCmd,
+      Array.isArray(langProfile.start.args) ? langProfile.start.args : [],
+      langProfile.start.cwd || root,
+    );
+  }
+
   for (const relStatic of ["dist", "build", "public", "."]) {
     const candidateDir = path.resolve(root, relStatic);
     if (fs.existsSync(path.join(candidateDir, "index.html"))) {
@@ -238,33 +248,6 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
   }
 
   return null;
-}
-
-function safeFolderName(name) {
-  const cleaned = String(name || "app").toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "");
-  return cleaned || "app";
-}
-
-/** İşletim sistemine göre kullanıcı uygulama verisi kök dizini (SETUP_USER_DATA_HOME ile değiştirilebilir). */
-export function userDataHome({ env = process.env, platform = process.platform, homedir = os.homedir() } = {}) {
-  if (env.SETUP_USER_DATA_HOME) return path.resolve(env.SETUP_USER_DATA_HOME);
-  if (platform === "win32") return env.APPDATA || path.join(homedir, "AppData", "Roaming");
-  if (platform === "darwin") return path.join(homedir, "Library", "Application Support");
-  return env.XDG_CONFIG_HOME || path.join(homedir, ".config");
-}
-
-/**
- * Masaüstü senaryosunda yerel veri dizinini seçer: açıkça verilen `dataDir`, `SETUP_DATA_DIR` veya
- * `setup.config.json` `paths.dataDir` varsa onlara dokunmaz (`explicit` aynen döner / `null`);
- * hiçbiri yoksa kullanıcı verisi dizininde `<proje-adı>` klasörünü verir. Diğer senaryolarda `explicit` döner.
- */
-export function resolveDesktopDataDir({ detection, setupConfig = null, explicit = null, env = process.env, platform = process.platform, homedir = os.homedir() } = {}) {
-  if (!detection?.scenario?.isDesktop) return explicit || null;
-  if (explicit) return explicit;
-  if (env.SETUP_DATA_DIR) return null;
-  if (typeof setupConfig?.paths?.dataDir === "string" && setupConfig.paths.dataDir.trim()) return null;
-  const name = safeFolderName(setupConfig?.name || detection.projectName);
-  return path.join(userDataHome({ env, platform, homedir }), name);
 }
 
 /**
