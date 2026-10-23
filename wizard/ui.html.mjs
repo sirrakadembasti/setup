@@ -69,8 +69,60 @@ export function renderSetupPage(csrfToken, options = {}) {
   </div>
 </section>
 <section class="pane">
-  <h2>Veritabanı ve saklama <span class="help" tabindex="0" data-tip="SQLite dosyaları veri dizini altında tutulur. Saklama politikası eski operasyon kayıtlarını otomatik temizler.">?</span></h2>
-  <div class="warn"><strong>Varsayılan yerel sağlayıcı SQLite'tır.</strong> Operasyon kayıtları için saklama sürelerini aşağıdan yapılandırabilirsiniz.</div>
+  <h2>Veritabanı ve saklama <span class="help" tabindex="0" data-tip="SQLite, PostgreSQL, MySQL veya özel bağlantı dizesi ile veritabanı ayarlanır. Saklama politikası eski operasyon kayıtlarını otomatik temizler.">?</span></h2>
+  <div class="grid" style="margin-bottom:16px">
+    <div class="full">
+      <div class="lbl-row">
+        <label for="dbProvider">Veritabanı Sağlayıcısı</label>
+        <span class="help" tabindex="0" data-tip="Yerel geliştirme için SQLite uygundur. Kurumsal ve yüksek trafikli ortamlar için PostgreSQL veya MySQL önerilir.">?</span>
+      </div>
+      <select name="dbProvider" id="dbProvider">
+        <option value="sqlite">SQLite (Yerel dosya tabanlı - Önerilen Başlangıç)</option>
+        <option value="postgres">PostgreSQL</option>
+        <option value="mysql">MySQL / MariaDB</option>
+        <option value="custom">Özel Bağlantı Dizesi (Connection String)</option>
+      </select>
+    </div>
+    <div id="dbSqliteWrap" class="full">
+      <div class="tip-note" style="margin:0;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px">
+        <strong>SQLite Seçildi:</strong> Veritabanı dosyası proje veri dizininde (<code>data/app.db</code>) otomatik tutulur. Harici veritabanı sunucusu kurulumu gerekmez.
+      </div>
+    </div>
+    <div id="dbServerWrap" class="full hidden grid" style="gap:14px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc">
+      <div>
+        <div class="lbl-row"><label for="dbHost">Veritabanı Sunucu Adresi (Host)</label><span class="help" tabindex="0" data-tip="Örn: localhost, 127.0.0.1 veya uzak DB sunucusu.">?</span></div>
+        <input name="dbHost" id="dbHost" value="localhost" placeholder="localhost">
+      </div>
+      <div>
+        <div class="lbl-row"><label for="dbPort" id="lblDbPort">Port</label><span class="help" tabindex="0" data-tip="PostgreSQL için varsayılan 5432, MySQL için 3306.">?</span></div>
+        <input name="dbPort" id="dbPort" type="number" min="1" max="65535" value="5432">
+      </div>
+      <div>
+        <div class="lbl-row"><label for="dbName">Veritabanı Adı</label><span class="help" tabindex="0" data-tip="Uygulamanın bağlanacağı veritabanı.">?</span></div>
+        <input name="dbName" id="dbName" value="app_db" placeholder="app_db">
+      </div>
+      <div>
+        <div class="lbl-row"><label for="dbUser" id="lblDbUser">Kullanıcı Adı</label><span class="help" tabindex="0" data-tip="Veritabanı yetkili kullanıcısı (örn: postgres veya root).">?</span></div>
+        <input name="dbUser" id="dbUser" value="postgres" placeholder="postgres">
+      </div>
+      <div class="full">
+        <div class="lbl-row"><label for="dbPassword">Veritabanı Parolası</label><span class="help" tabindex="0" data-tip="Veritabanı kullanıcısının parolası. Parola yoksa boş bırakılabilir.">?</span></div>
+        <div class="pwd-wrap">
+          <input name="dbPassword" id="dbPassword" type="password" autocomplete="new-password" spellcheck="false">
+          <button type="button" class="pwd-toggle" data-pwd="dbPassword" aria-label="Parolayı göster/gizle" title="Parolayı göster/gizle">👁️</button>
+        </div>
+      </div>
+    </div>
+    <div id="dbCustomWrap" class="full hidden" style="padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc">
+      <div class="lbl-row"><label for="dbUrl">Bağlantı Dizesi (Connection String / URL)</label><span class="help" tabindex="0" data-tip="Tam veritabanı URL'si, örn: postgresql://kullanici:sifre@localhost:5432/app_db">?</span></div>
+      <input name="dbUrl" id="dbUrl" placeholder="postgresql://user:password@localhost:5432/app_db">
+    </div>
+    <div class="full" style="display:flex;align-items:center;gap:12px;margin-top:6px">
+      <button type="button" class="secondary" id="btnTestDb" style="padding:8px 14px;font-size:13px">🔍 Veritabanı Bağlantısını Sına</button>
+      <span id="testDbResult" style="font-size:12px"></span>
+    </div>
+  </div>
+  <div class="warn">Operasyon kayıtları için saklama sürelerini aşağıdan yapılandırabilirsiniz.</div>
   <div class="grid">
     <div class="full">
       <div class="lbl-row"><label><input name="retention" type="checkbox"> Operasyon kayıtları için saklama politikasını etkinleştir</label><span class="help" tabindex="0" data-tip="Açıksa eski işlem / bildirim / e-posta logları belirli gün sayısından sonra silinir. Kapatırsanız kayıtlar birikir.">?</span></div>
@@ -112,28 +164,55 @@ export function renderSetupPage(csrfToken, options = {}) {
         <button type="button" class="pwd-toggle" data-pwd="adminPassword" aria-label="Parolayı göster/gizle" title="Parolayı göster/gizle">👁️</button>
       </div>
       <div class="pwd-rules" id="pwdRules" aria-live="polite"></div>
-    </div>
-    <div class="full">
-      <div class="lbl-row"><label><input name="emailEnabled" id="emailEnabled" type="checkbox"> Gmail parola sıfırlama e-postalarını etkinleştir</label><span class="help" tabindex="0" data-tip="İsteğe bağlı. Kullanıcılar parola unutunca e-posta alır. Kapalıyken sıfırlama e-postası gönderilmez.">?</span></div>
-    </div>
-    <div>
-      <div class="lbl-row"><label for="emailUser">Gmail hesabı</label><span class="help" tabindex="0" data-tip="Gönderim için Gmail adresi (yalnız @gmail.com).">?</span></div>
-      <input name="emailUser" id="emailUser" type="email" placeholder="hesap@gmail.com">
-    </div>
-    <div>
-      <div class="lbl-row"><label for="fromEmail">Gönderen e-posta</label><span class="help" tabindex="0" data-tip="Kullanıcıların göreceği From adresi; genelde Gmail hesabının kendisi.">?</span></div>
-      <input name="fromEmail" id="fromEmail" type="email" placeholder="hesap@gmail.com">
-    </div>
-    <div>
-      <div class="lbl-row"><label for="emailPassword">Gmail uygulama parolası</label><span class="help" tabindex="0" data-tip="Google Hesap > Güvenlik > Uygulama parolaları ile üretilen 16 karakterli şifre. Normal Gmail parolası değildir.">?</span></div>
-      <div class="pwd-wrap">
-        <input name="emailPassword" id="emailPassword" type="password" autocomplete="new-password" spellcheck="false">
-        <button type="button" class="pwd-toggle" data-pwd="emailPassword" aria-label="Parolayı göster/gizle" title="Parolayı göster/gizle">👁️</button>
+      <div id="adminSeedNotice" class="tip-note" style="margin-top:10px;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;line-height:1.5">
+        <strong>ℹ️ Hesap Saklama Modeli:</strong> İlk yönetici hesabı <code>data/admin.json</code> ve <code>.env</code> dosyalarına scrypt özetiyle kaydedilir.
       </div>
     </div>
-    <div>
-      <div class="lbl-row"><label for="fromName">Gönderen adı</label><span class="help" tabindex="0" data-tip="E-postalarda görünen gönderen ismi.">?</span></div>
-      <input name="fromName" id="fromName" value="Sistem Bildirimi">
+    <div class="full">
+      <div class="lbl-row"><label><input name="emailEnabled" id="emailEnabled" type="checkbox"> E-posta bildirimlerini (SMTP) etkinleştir</label><span class="help" tabindex="0" data-tip="İsteğe bağlı. Parola sıfırlama ve sistem bildirimleri için Gmail veya kurumsal SMTP sunucusu kullanılır.">?</span></div>
+    </div>
+    <div id="emailFields" class="grid full hidden" style="gap:14px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc;margin-top:6px">
+      <div>
+        <div class="lbl-row"><label for="emailProvider">E-posta Sağlayıcısı</label><span class="help" tabindex="0" data-tip="Gmail kullanıyorsanız otomatik smtp.gmail.com port 587/465 seçilir. Diğer sağlayıcılar için Kurumsal / Özel SMTP seçin.">?</span></div>
+        <select name="emailProvider" id="emailProvider">
+          <option value="gmail">Google Gmail (Uygulama Parolası)</option>
+          <option value="custom">Kurumsal / Özel SMTP Sunucusu</option>
+        </select>
+      </div>
+      <div id="customSmtpHostWrap" class="hidden">
+        <div class="lbl-row"><label for="emailHost">SMTP Sunucu Adresi (Host)</label><span class="help" tabindex="0" data-tip="Örn: smtp.office365.com, mail.kurum.com veya IP adresi.">?</span></div>
+        <input name="emailHost" id="emailHost" placeholder="smtp.kurum.com">
+      </div>
+      <div id="customSmtpPortWrap" class="hidden">
+        <div class="lbl-row"><label for="emailPort">SMTP Portu</label><span class="help" tabindex="0" data-tip="Genelde STARTTLS için 587, SSL için 465, düz için 25.">?</span></div>
+        <input name="emailPort" id="emailPort" type="number" min="1" max="65535" value="587">
+      </div>
+      <div>
+        <div class="lbl-row"><label for="emailUser" id="lblEmailUser">Gmail hesabı</label><span class="help" tabindex="0" data-tip="Gönderim ve giriş için e-posta adresi veya kullanıcı adı.">?</span></div>
+        <input name="emailUser" id="emailUser" placeholder="hesap@gmail.com">
+      </div>
+      <div>
+        <div class="lbl-row"><label for="fromEmail">Gönderen e-posta (From)</label><span class="help" tabindex="0" data-tip="Kullanıcıların göreceği From adresi.">?</span></div>
+        <input name="fromEmail" id="fromEmail" type="email" placeholder="hesap@gmail.com">
+      </div>
+      <div>
+        <div class="lbl-row"><label for="emailPassword" id="lblEmailPassword">Gmail uygulama parolası</label><span class="help" tabindex="0" data-tip="Google Hesap > Güvenlik > Uygulama parolaları (16 karakter) veya SMTP parolası.">?</span></div>
+        <div class="pwd-wrap">
+          <input name="emailPassword" id="emailPassword" type="password" autocomplete="new-password" spellcheck="false">
+          <button type="button" class="pwd-toggle" data-pwd="emailPassword" aria-label="Parolayı göster/gizle" title="Parolayı göster/gizle">👁️</button>
+        </div>
+      </div>
+      <div>
+        <div class="lbl-row"><label for="fromName">Gönderen adı</label><span class="help" tabindex="0" data-tip="E-postalarda görünen gönderen ismi.">?</span></div>
+        <input name="fromName" id="fromName" value="Sistem Bildirimi">
+      </div>
+      <div id="customSmtpSecureWrap" class="full hidden">
+        <div class="lbl-row"><label><input name="emailSecure" id="emailSecure" type="checkbox"> Güvenli Bağlantı (SSL/TLS - Port 465)</label><span class="help" tabindex="0" data-tip="Port 465 (SSL) için işaretleyin; 587 (STARTTLS) için boş bırakın.">?</span></div>
+      </div>
+      <div class="full" style="display:flex;align-items:center;gap:12px;margin-top:6px">
+        <button type="button" class="secondary" id="btnTestEmail" style="padding:8px 14px;font-size:13px">✉️ SMTP Bağlantısını Sına</button>
+        <span id="testEmailResult" style="font-size:12px"></span>
+      </div>
     </div>
   </div>
 </section>
@@ -144,6 +223,13 @@ export function renderSetupPage(csrfToken, options = {}) {
   <div class="lbl-row"><label><input name="overwrite" type="checkbox"> Var olan .env dosyasını yedekleyip değiştir</label><span class="help" tabindex="0" data-tip="Daha önce .env yazılmışsa bu onay olmadan kurulum durur. Eski dosya backups altına kopyalanır.">?</span></div>
   <div class="lbl-row"><label><input name="confirm" type="checkbox" required> Girilen bilgileri kontrol ettim ve kalıcı kurulumu onaylıyorum</label><span class="help" tabindex="0" data-tip="Bu onay olmadan kurulum uygulanmaz. Ayarlar kalıcıdır; sonra yönetici panelinden düzenlenebilir.">?</span></div>
   <div id="applyProgress" class="pwd-rules hidden" aria-live="polite"></div>
+  <div id="applyConsoleWrap" class="hidden" style="margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:#1e293b;color:#f8fafc;font-size:12px">
+      <span>💻 Canlı İşlem Günlüğü (Terminal)</span>
+      <span id="logCount" style="color:var(--muted)">0 satır</span>
+    </div>
+    <pre id="applyConsole" style="margin:0;border-radius:0;max-height:200px;font-size:11px;line-height:1.45;background:#0f172a;color:#cbd5e1;overflow-y:auto"></pre>
+  </div>
   <pre id="result">Henüz uygulanmadı.</pre>
   <div id="doneBox" class="warn hidden">
     <h3 style="margin:0 0 8px">Sonraki adımlar</h3>
@@ -160,7 +246,7 @@ export function renderSetupPage(csrfToken, options = {}) {
 <script>window.__SETUP__=${boot};
 const wizard=document.getElementById('wizard'),prev=document.getElementById('prev'),next=document.getElementById('next'),apply=document.getElementById('apply'),checks=document.getElementById('checks'),result=document.getElementById('result'),pwdRules=document.getElementById('pwdRules');
 const panes=[...document.querySelectorAll('.pane')],steps=[...document.querySelectorAll('.step')];let page=0;
-const CHECK_LABELS={nodeSupported:'Desteklenen Node.js LTS',dataWritable:'Veri dizini yazılabilir',uploadsWritable:'Yükleme dizini yazılabilir',notInstalled:'Kurulum kilidi yok',envAbsent:'.env dosyası yok'};
+const CHECK_LABELS={nodeSupported:'Desteklenen Node.js LTS',dataWritable:'Veri dizini yazılabilir',uploadsWritable:'Yükleme dizini yazılabilir',notInstalled:'Kurulum kilidi yok',envAbsent:'.env dosyası yok',toolchainAvailable:'Gerekli derleyici ve araç zinciri hazır'};
 function escapeHtml(value){return String(value).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
 function passwordRules(value){
   const v=value||'';
@@ -186,6 +272,31 @@ function renderPasswordRules(){
 function fieldError(input,message){input.setCustomValidity(message||'')}
 function syncEmailRequirements(){
   const enabled=Boolean(wizard.elements.namedItem('emailEnabled')?.checked);
+  const provider=wizard.elements.namedItem('emailProvider')?.value||'gmail';
+  const isCustom=provider==='custom';
+  const fieldsBox=document.getElementById('emailFields');
+  if(fieldsBox)fieldsBox.classList.toggle('hidden',!enabled);
+  const hostWrap=document.getElementById('customSmtpHostWrap');
+  const portWrap=document.getElementById('customSmtpPortWrap');
+  const secureWrap=document.getElementById('customSmtpSecureWrap');
+  if(hostWrap)hostWrap.classList.toggle('hidden',!isCustom);
+  if(portWrap)portWrap.classList.toggle('hidden',!isCustom);
+  if(secureWrap)secureWrap.classList.toggle('hidden',!isCustom);
+
+  const hostEl=wizard.elements.namedItem('emailHost');
+  const portEl=wizard.elements.namedItem('emailPort');
+  if(hostEl)hostEl.required=enabled&&isCustom;
+  if(portEl)portEl.required=enabled&&isCustom;
+
+  const lblUser=document.getElementById('lblEmailUser');
+  const lblPwd=document.getElementById('lblEmailPassword');
+  const userEl=wizard.elements.namedItem('emailUser');
+  const fromEl=wizard.elements.namedItem('fromEmail');
+  if(lblUser)lblUser.textContent=isCustom?'SMTP Kullanıcı Adı / E-posta':'Gmail hesabı';
+  if(lblPwd)lblPwd.textContent=isCustom?'SMTP Parolası':'Gmail uygulama parolası';
+  if(userEl)userEl.placeholder=isCustom?'bildirim@kurum.com':'hesap@gmail.com';
+  if(fromEl)fromEl.placeholder=isCustom?'bildirim@kurum.com':'hesap@gmail.com';
+
   ['emailUser','fromEmail','emailPassword','fromName'].forEach(name=>{
     const el=wizard.elements.namedItem(name);
     if(!el)return;
@@ -197,18 +308,106 @@ function validateEmailFields(){
   const enabled=Boolean(wizard.elements.namedItem('emailEnabled')?.checked);
   syncEmailRequirements();
   if(!enabled)return true;
+  const provider=wizard.elements.namedItem('emailProvider')?.value||'gmail';
+  const isCustom=provider==='custom';
   const emailUser=wizard.elements.namedItem('emailUser');
   const fromEmail=wizard.elements.namedItem('fromEmail');
   const emailPwd=wizard.elements.namedItem('emailPassword');
-  for(const el of [emailUser,fromEmail]){
-    if(el){
-      const val=String(el.value||'').trim();
-      fieldError(el,/@gmail\\.com$/i.test(val)?'':'Yalnız @gmail.com adresi kullanılabilir.');
+  const emailHost=wizard.elements.namedItem('emailHost');
+  const emailPort=wizard.elements.namedItem('emailPort');
+
+  if(isCustom){
+    if(emailHost){
+      const val=String(emailHost.value||'').trim();
+      fieldError(emailHost,(val&&val.length<=253&&!/[\\s\\r\\n\\0]/.test(val))?'':'Geçerli bir SMTP host adresi girin.');
+    }
+    if(emailPort){
+      const p=Number(emailPort.value);
+      fieldError(emailPort,(Number.isInteger(p)&&p>=1&&p<=65535)?'':'Port 1-65535 aralığında olmalıdır.');
+    }
+    if(emailUser){
+      const val=String(emailUser.value||'').trim();
+      fieldError(emailUser,val?'':'SMTP kullanıcı adı girin.');
+    }
+    if(fromEmail){
+      const val=String(fromEmail.value||'').trim();
+      fieldError(fromEmail,/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(val)?'':'Geçerli bir gönderen e-posta adresi girin.');
+    }
+    if(emailPwd){
+      const cleaned=String(emailPwd.value||'').replace(/\\s/g,'');
+      fieldError(emailPwd,cleaned.length>=1?'':'SMTP parolası girin.');
+    }
+  }else{
+    for(const el of [emailUser,fromEmail]){
+      if(el){
+        const val=String(el.value||'').trim();
+        fieldError(el,/@gmail\\.com$/i.test(val)?'':'Yalnız @gmail.com adresi kullanılabilir.');
+      }
+    }
+    if(emailPwd){
+      const cleaned=String(emailPwd.value||'').replace(/\\s/g,'');
+      fieldError(emailPwd,(cleaned.length>=16&&cleaned.length<=128)?'':'En az 16 karakterli Gmail uygulama parolası girin.');
     }
   }
-  if(emailPwd){
-    const cleaned=String(emailPwd.value||'').replace(/\\s/g,'');
-    fieldError(emailPwd,(cleaned.length>=16&&cleaned.length<=128)?'':'En az 16 karakterli Gmail uygulama parolası girin.');
+  return true;
+}
+function syncDbRequirements(){
+  const prov=wizard.elements.namedItem('dbProvider')?.value||'sqlite';
+  const sqliteWrap=document.getElementById('dbSqliteWrap');
+  const serverWrap=document.getElementById('dbServerWrap');
+  const customWrap=document.getElementById('dbCustomWrap');
+  const portEl=wizard.elements.namedItem('dbPort');
+  const userEl=wizard.elements.namedItem('dbUser');
+  const lblPort=document.getElementById('lblDbPort');
+  const lblUser=document.getElementById('lblDbUser');
+
+  if(sqliteWrap)sqliteWrap.classList.toggle('hidden',prov!=='sqlite');
+  if(serverWrap)serverWrap.classList.toggle('hidden',prov!=='postgres'&&prov!=='mysql');
+  if(customWrap)customWrap.classList.toggle('hidden',prov!=='custom');
+
+  if(prov==='postgres'){
+    if(lblPort)lblPort.textContent='PostgreSQL Portu';
+    if(lblUser)lblUser.textContent='PostgreSQL Kullanıcısı';
+    if(portEl&&(portEl.value==='3306'||!portEl.value))portEl.value='5432';
+    if(userEl&&(userEl.value==='root'||!userEl.value))userEl.value='postgres';
+  }else if(prov==='mysql'){
+    if(lblPort)lblPort.textContent='MySQL Portu';
+    if(lblUser)lblUser.textContent='MySQL Kullanıcısı';
+    if(portEl&&(portEl.value==='5432'||!portEl.value))portEl.value='3306';
+    if(userEl&&(userEl.value==='postgres'||!userEl.value))userEl.value='root';
+  }
+}
+function validateDatabaseFields(){
+  const prov=wizard.elements.namedItem('dbProvider')?.value||'sqlite';
+  syncDbRequirements();
+  if(prov==='sqlite')return true;
+  if(prov==='custom'){
+    const urlEl=wizard.elements.namedItem('dbUrl');
+    if(urlEl){
+      const val=String(urlEl.value||'').trim();
+      fieldError(urlEl,(val&&!/[\\r\\n\\0]/.test(val))?'':'Geçerli bir veritabanı bağlantı dizesi girin.');
+    }
+    return true;
+  }
+  const hostEl=wizard.elements.namedItem('dbHost');
+  const portEl=wizard.elements.namedItem('dbPort');
+  const nameEl=wizard.elements.namedItem('dbName');
+  const userEl=wizard.elements.namedItem('dbUser');
+  if(hostEl){
+    const val=String(hostEl.value||'').trim();
+    fieldError(hostEl,(val&&val.length<=253&&!/[\\s\\r\\n\\0]/.test(val))?'':'Geçerli bir host adresi girin.');
+  }
+  if(portEl){
+    const p=Number(portEl.value);
+    fieldError(portEl,(Number.isInteger(p)&&p>=1&&p<=65535)?'':'Port 1-65535 aralığında olmalıdır.');
+  }
+  if(nameEl){
+    const val=String(nameEl.value||'').trim();
+    fieldError(nameEl,(val&&val.length<=100&&!/[\\s\\r\\n\\0]/.test(val))?'':'Veritabanı adı girin.');
+  }
+  if(userEl){
+    const val=String(userEl.value||'').trim();
+    fieldError(userEl,(val&&val.length<=100&&!/[\\r\\n\\0]/.test(userEl))?'':'Kullanıcı adı girin.');
   }
   return true;
 }
@@ -256,16 +455,28 @@ wizard.elements.namedItem('mode').addEventListener('change',()=>{
 });
 const emailToggle=wizard.elements.namedItem('emailEnabled');
 if(emailToggle)emailToggle.addEventListener('change',syncEmailRequirements);
-['emailUser','fromEmail','emailPassword'].forEach(n=>{
+const emailProv=wizard.elements.namedItem('emailProvider');
+if(emailProv)emailProv.addEventListener('change',()=>{syncEmailRequirements();validateEmailFields();});
+['emailUser','fromEmail','emailPassword','emailHost','emailPort'].forEach(n=>{
+  const el=wizard.elements.namedItem(n);
+  if(el)el.addEventListener('input',()=>fieldError(el,''));
+});
+const dbProv=wizard.elements.namedItem('dbProvider');
+if(dbProv)dbProv.addEventListener('change',()=>{syncDbRequirements();validateDatabaseFields();});
+['dbHost','dbPort','dbName','dbUser','dbUrl'].forEach(n=>{
   const el=wizard.elements.namedItem(n);
   if(el)el.addEventListener('input',()=>fieldError(el,''));
 });
 applyModeDefaults();
 syncEmailRequirements();
+syncDbRequirements();
 function show(n){page=n;panes.forEach((x,i)=>x.classList.toggle('on',i===n));steps.forEach((x,i)=>x.classList.toggle('on',i===n));prev.disabled=n===0;next.hidden=n===panes.length-1;apply.hidden=n!==panes.length-1}
 prev.onclick=()=>show(page-1);
 next.onclick=()=>{
   const fields=[...panes[page].querySelectorAll('input,select')];
+  if(page===2){
+    validateDatabaseFields();
+  }
   if(page===3){
     const pwd=wizard.elements.namedItem('adminPassword');
     const nameInput=wizard.elements.namedItem('adminName');
@@ -328,11 +539,19 @@ async function loadStatus(){
     if(sInfo&&s&&s.detected&&s.detected.scenario){
       sInfo.innerHTML='<strong>Algılanan Mimari:</strong> Senaryo '+escapeHtml(s.detected.scenario.number)+' — '+escapeHtml(s.detected.scenario.label)+'<div class="tip-note" style="margin-top:4px">'+escapeHtml(s.detected.scenario.summary||'')+'</div>';
     }
+    const adminSeedNotice=document.getElementById('adminSeedNotice');
+    if(adminSeedNotice&&s&&s.detected){
+      if(s.detected.seedScript){
+        adminSeedNotice.innerHTML='<strong>🌱 Veritabanı Tohumlama (Seed):</strong> Projede <code>'+escapeHtml(s.detected.seedScript)+'</code> betiği algılandı. İlk yönetici kaydedildikten sonra bu tohumlama adımı otomatik olarak çalıştırılacaktır.';
+      }else{
+        adminSeedNotice.innerHTML='<strong>ℹ️ Hesap Saklama Modeli:</strong> İlk yönetici hesabı <code>data/admin.json</code> ve <code>.env</code> (ADMIN_EMAIL, ADMIN_PASSWORD_HASH) içerisine scrypt özetiyle kaydedilir. Projede bağımsız bir seed betiği bulunmamaktadır.';
+      }
+    }
     if(s&&s.detected&&s.detected.defaultPort){
       setVal('port',s.detected.defaultPort);
       applyModeDefaults();
     }
-    const CORE_ENV_KEYS=new Set(['PORT','HOST','NODE_ENV','DATABASE_URL','SESSION_SECRET','ADMIN_NAME','ADMIN_EMAIL','ADMIN_PASSWORD','EMAIL_ENABLED','EMAIL_HOST','EMAIL_PORT','EMAIL_USER','EMAIL_PASSWORD','EMAIL_FROM_EMAIL','EMAIL_FROM_NAME','RETENTION_ENABLED','RETENTION_ACTION_DAYS','RETENTION_NOTIFICATION_DAYS','RETENTION_EMAIL_DAYS','RETENTION_PASSWORD_DAYS','FRONTEND_URL','APP_BASE_PATH','ALLOWED_ORIGINS','TRUST_PROXY_HOPS']);
+    const CORE_ENV_KEYS=new Set(['PORT','HOST','NODE_ENV','DATABASE_URL','SESSION_SECRET','ADMIN_NAME','ADMIN_EMAIL','ADMIN_PASSWORD','EMAIL_ENABLED','EMAIL_HOST','EMAIL_PORT','EMAIL_USER','EMAIL_PASSWORD','EMAIL_FROM_EMAIL','EMAIL_FROM_NAME','EMAIL_SECURE','RETENTION_ENABLED','RETENTION_ACTION_DAYS','RETENTION_NOTIFICATION_DAYS','RETENTION_EMAIL_DAYS','RETENTION_PASSWORD_DAYS','FRONTEND_URL','APP_BASE_PATH','ALLOWED_ORIGINS','TRUST_PROXY_HOPS']);
     const envVars=(s&&s.detected&&Array.isArray(s.detected.envVariables))?s.detected.envVariables.filter(v=>v&&v.key&&!CORE_ENV_KEYS.has(v.key)):[];
     const customEnvSec=document.getElementById('customEnvSection');
     const customEnvFields=document.getElementById('customEnvFields');
@@ -360,6 +579,99 @@ async function loadStatus(){
   }
 }
 loadStatus();
+const btnTestDb=document.getElementById('btnTestDb');
+const testDbResult=document.getElementById('testDbResult');
+if(btnTestDb){
+  btnTestDb.addEventListener('click',async()=>{
+    const f=new FormData(wizard);
+    const dbProvVal=f.get('dbProvider')||'sqlite';
+    let dbPayload={provider:dbProvVal};
+    if(dbProvVal==='postgres'||dbProvVal==='mysql'){
+      dbPayload={
+        provider:dbProvVal,
+        host:String(f.get('dbHost')||'localhost').trim(),
+        port:Number(f.get('dbPort')||(dbProvVal==='postgres'?5432:3306)),
+        name:String(f.get('dbName')||'app_db').trim(),
+        user:String(f.get('dbUser')||'').trim(),
+        password:String(f.get('dbPassword')||''),
+      };
+    }else if(dbProvVal==='custom'){
+      dbPayload={provider:'custom',url:String(f.get('dbUrl')||'').trim()};
+    }
+    testDbResult.textContent='Bağlantı sınanıyor…';
+    testDbResult.style.color='var(--muted)';
+    btnTestDb.disabled=true;
+    try{
+      const {ok,data}=await fetchJson(API+'/test-database',{
+        method:'POST',
+        headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},
+        body:JSON.stringify({database:dbPayload})
+      });
+      if(ok&&data&&data.ok){
+        testDbResult.textContent='✓ '+(data.message||'Veritabanı bağlantısı başarılı.');
+        testDbResult.style.color='#16a34a';
+      }else{
+        testDbResult.textContent='✕ '+(data&&data.message?data.message:'Bağlantı kurulamadı.');
+        testDbResult.style.color='#dc2626';
+      }
+    }catch(err){
+      testDbResult.textContent='✕ Sınama hatası: '+err.message;
+      testDbResult.style.color='#dc2626';
+    }finally{
+      btnTestDb.disabled=false;
+    }
+  });
+}
+
+const btnTestEmail=document.getElementById('btnTestEmail');
+const testEmailResult=document.getElementById('testEmailResult');
+if(btnTestEmail){
+  btnTestEmail.addEventListener('click',async()=>{
+    const f=new FormData(wizard);
+    const enabled=f.has('emailEnabled');
+    if(!enabled){
+      testEmailResult.textContent='ℹ️ E-posta bildirimleri etkinleştirilmemiş.';
+      testEmailResult.style.color='var(--muted)';
+      return;
+    }
+    const emailProvVal=f.get('emailProvider')||'gmail';
+    const isCustomMail=emailProvVal==='custom';
+    const emailPayload={
+      enabled:true,
+      provider:isCustomMail?'custom':'gmail',
+      host:isCustomMail?String(f.get('emailHost')||'').trim():'smtp.gmail.com',
+      port:Number(isCustomMail?(f.get('emailPort')||587):(f.has('emailSecure')?465:587)),
+      secure:isCustomMail?f.has('emailSecure'):false,
+      user:f.get('emailUser'),
+      password:f.get('emailPassword'),
+      fromEmail:f.get('fromEmail'),
+      fromName:f.get('fromName'),
+    };
+    testEmailResult.textContent='SMTP sunucusuna bağlanılıyor…';
+    testEmailResult.style.color='var(--muted)';
+    btnTestEmail.disabled=true;
+    try{
+      const {ok,data}=await fetchJson(API+'/test-email',{
+        method:'POST',
+        headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},
+        body:JSON.stringify({email:emailPayload})
+      });
+      if(ok&&data&&data.ok){
+        testEmailResult.textContent='✓ '+(data.message||'SMTP bağlantısı başarılı.');
+        testEmailResult.style.color='#16a34a';
+      }else{
+        testEmailResult.textContent='✕ '+(data&&data.message?data.message:'SMTP bağlantısı başarısız.');
+        testEmailResult.style.color='#dc2626';
+      }
+    }catch(err){
+      testEmailResult.textContent='✕ Sınama hatası: '+err.message;
+      testEmailResult.style.color='#dc2626';
+    }finally{
+      btnTestEmail.disabled=false;
+    }
+  });
+}
+
 wizard.onsubmit=async e=>{
   e.preventDefault();
   const pwd=wizard.elements.namedItem('adminPassword');
@@ -382,6 +694,10 @@ wizard.onsubmit=async e=>{
   apply.disabled=true;next.disabled=true;prev.disabled=true;
   const progressBox=document.getElementById('applyProgress');
   const doneBox=document.getElementById('doneBox');
+  const consoleBox=document.getElementById('applyConsole');
+  const consoleWrap=document.getElementById('applyConsoleWrap');
+  if(consoleBox)consoleBox.textContent='';
+  if(consoleWrap)consoleWrap.classList.add('hidden');
   progressBox.classList.remove('hidden');
   doneBox.classList.add('hidden');
   result.textContent='Kurulum uygulanıyor; adımlar ekranda canlı güncellenir. Pencereyi kapatmayın…';
@@ -394,7 +710,37 @@ wizard.onsubmit=async e=>{
     const k=el.getAttribute('data-custom-env-key');
     if(k)customEnv[k]=el.value;
   });
-  const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy')),retention:{enabled:f.has('retention'),actionLogDays:Number(f.get('actionDays')),readNotificationDays:Number(f.get('notificationDays')),emailLogDays:Number(f.get('emailDays')),passwordResetDays:Number(f.get('passwordDays'))}},server:{host:f.get('host'),port:Number(f.get('port'))},admin:isOptionalEmptyAdmin?{name:'',email:'',password:''}:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:enabled?{enabled:true,user:f.get('emailUser'),password:f.get('emailPassword'),fromEmail:f.get('fromEmail'),fromName:f.get('fromName')}:{enabled:false},customEnv,buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
+  const emailProvVal=f.get('emailProvider')||'gmail';
+  const isCustomMail=emailProvVal==='custom';
+  const emailPayload=enabled?{
+    enabled:true,
+    provider:isCustomMail?'custom':'gmail',
+    host:isCustomMail?String(f.get('emailHost')||'').trim():'smtp.gmail.com',
+    port:Number(isCustomMail?(f.get('emailPort')||587):587),
+    secure:isCustomMail?f.has('emailSecure'):false,
+    user:f.get('emailUser'),
+    password:f.get('emailPassword'),
+    fromEmail:f.get('fromEmail'),
+    fromName:f.get('fromName')
+  }:{enabled:false};
+  const dbProvVal=f.get('dbProvider')||'sqlite';
+  let dbPayload={provider:dbProvVal};
+  if(dbProvVal==='postgres'||dbProvVal==='mysql'){
+    dbPayload={
+      provider:dbProvVal,
+      host:String(f.get('dbHost')||'localhost').trim(),
+      port:Number(f.get('dbPort')||(dbProvVal==='postgres'?5432:3306)),
+      name:String(f.get('dbName')||'app_db').trim(),
+      user:String(f.get('dbUser')||'').trim(),
+      password:String(f.get('dbPassword')||''),
+    };
+  }else if(dbProvVal==='custom'){
+    dbPayload={
+      provider:'custom',
+      url:String(f.get('dbUrl')||'').trim(),
+    };
+  }
+  const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy')),retention:{enabled:f.has('retention'),actionLogDays:Number(f.get('actionDays')),readNotificationDays:Number(f.get('notificationDays')),emailLogDays:Number(f.get('emailDays')),passwordResetDays:Number(f.get('passwordDays'))}},server:{host:f.get('host'),port:Number(f.get('port'))},admin:isOptionalEmptyAdmin?{name:'',email:'',password:''}:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:emailPayload,database:dbPayload,customEnv,buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
   try{
     const start=await fetchJson(API+'/apply',{method:'POST',headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},body:JSON.stringify(payload)});
     const startData=start.data||{};
@@ -419,6 +765,19 @@ function renderApplySteps(applyJob){
     const detail=s.detail?' — '+escapeHtml(s.detail):'';
     return '<div class="'+cls+'">'+stepIcon(s.status)+' '+escapeHtml(s.label)+detail+'</div>';
   }).join('');
+}
+function renderApplyLogs(applyJob){
+  const wrap=document.getElementById('applyConsoleWrap');
+  const consoleBox=document.getElementById('applyConsole');
+  const countEl=document.getElementById('logCount');
+  if(!wrap||!consoleBox)return;
+  const logs=applyJob&&Array.isArray(applyJob.logs)?applyJob.logs:[];
+  if(logs.length>0){
+    wrap.classList.remove('hidden');
+    consoleBox.textContent=logs.join('\\n');
+    consoleBox.scrollTop=consoleBox.scrollHeight;
+    if(countEl)countEl.textContent=logs.length+' satır';
+  }
 }
 function safeHref(url){
   const str=String(url||'').trim();
@@ -511,15 +870,19 @@ function finishApplySuccess(applyJob){
     startBtn.onclick=async()=>{
       startBtn.disabled=true;
       startBtn.textContent='Başlatılıyor…';
+      note.classList.remove('error');
       note.textContent=isLocal
         ? 'Geliştirme sunucusu arka planda başlatılıyor; terminal penceresi açılmaz…'
         : 'Uygulama servisi başlatılıyor…';
       try{
-        const {data}=await fetchJson(API+'/start-app',{
+        const {ok,status,data}=await fetchJson(API+'/start-app',{
           method:'POST',
           headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},
           body:JSON.stringify(isLocal?{mode:'dev'}:{mode:'production'}),
         });
+        if(!ok||status===409){
+          throw new Error((data&&data.message)||'Uygulama başlatılamadı.');
+        }
         const url=(data&&data.loginUrl)||loginUrl;
         if(data&&data.reachable){
           note.textContent='Uygulama ayakta. Giriş sayfasına gidiliyor…';
@@ -530,6 +893,7 @@ function finishApplySuccess(applyJob){
         await watchAppHealth(url,note,isLocal);
       }catch(err){
         note.textContent=err.message||'Uygulama başlatılamadı.';
+        note.classList.add('error');
         startBtn.disabled=false;
         startBtn.textContent=isLocal?'Uygulamayı başlat (dev)':'Uygulamayı başlat';
       }
@@ -588,6 +952,7 @@ async function pollApplyProgress(){
       }
       const job=(s&&s.apply)||{status:'idle'};
       renderApplySteps(job);
+      renderApplyLogs(job);
       failures=0;
       if(job.status==='success'){finishApplySuccess(job);return}
       if(job.status==='error')throw new Error(job.message||'Kurulum tamamlanamadı.');

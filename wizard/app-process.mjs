@@ -13,6 +13,71 @@ import {
 export { clearCommandAvailabilityCache, isCommandAvailable, resolveEffectivePackageManager };
 
 /**
+ * Ortam değişkenlerini normalize eder.
+ * Windows'ta process.env case-insensitive iken düz JS nesnesinde 'Path', 'PATH', 'path'
+ * ayrı anahtarlar haline gelebilir. Bu durum spawn çağrılarında shims veya ortam yollarının
+ * çelişkili çözülmesine yol açar.
+ *
+ * Bu fonksiyon:
+ * 1. Tüm PATH türevlerini (Path, PATH, path) tek bir kanonik anahtara (Windows'ta 'Path', POSIX'te 'PATH') birleştirir.
+ * 2. İstenen öncelikli dizinleri (shims, .venv/Scripts vb.) en başa ekler, yinelenen yolları temizler.
+ * 3. extraEnv değişkenlerini güvenle harmanlar.
+ */
+export function normalizeProcessEnv(baseEnv = process.env, extraEnv = {}, prependPaths = []) {
+  const isWin = process.platform === "win32";
+  const canonicalKey = isWin ? "Path" : "PATH";
+  const pathParts = [];
+
+  for (const p of prependPaths) {
+    if (p && typeof p === "string" && p.trim()) {
+      pathParts.push(p.trim());
+    }
+  }
+
+  const envObj = {};
+  for (const [key, val] of Object.entries(baseEnv || {})) {
+    if (key.toUpperCase() === "PATH") {
+      if (val) pathParts.push(val);
+    } else {
+      envObj[key] = val;
+    }
+  }
+
+  for (const [key, val] of Object.entries(extraEnv || {})) {
+    if (key.toUpperCase() === "PATH") {
+      if (val) pathParts.push(val);
+    } else {
+      envObj[key] = val;
+    }
+  }
+
+  const fullPath = pathParts
+    .join(path.delimiter)
+    .split(path.delimiter)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const seen = new Set();
+  const deduped = [];
+  for (const entry of fullPath) {
+    const check = isWin ? entry.toLowerCase() : entry;
+    if (!seen.has(check)) {
+      seen.add(check);
+      deduped.push(entry);
+    }
+  }
+
+  envObj[canonicalKey] = deduped.join(path.delimiter);
+
+  if (isWin) {
+    delete envObj.PATH;
+    delete envObj.path;
+  }
+
+  return envObj;
+}
+
+/**
  * Hedef uygulamanın başlatma komutunu bulan ve (masaüstü için) süreci yöneten ortak kod.
  * Hem `server.mjs` (HTTP) hem `core.mjs` (gömülü/IPC) tarafından kullanılır.
  */
@@ -279,7 +344,7 @@ export function createDesktopAppController({ projectRoot, setupConfig = null, ge
       let spawnError = null;
       child = spawn(invocation.command, invocation.args, {
         cwd: invocation.cwd || projectRoot,
-        env: { ...process.env, ...envVars, ...(dataDir ? { SETUP_DATA_DIR: dataDir } : {}) },
+        env: normalizeProcessEnv(process.env, { ...envVars, ...(dataDir ? { SETUP_DATA_DIR: dataDir } : {}) }),
         detached: process.platform !== "win32",
         windowsHide: false,
         stdio: "ignore",

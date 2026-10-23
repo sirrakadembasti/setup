@@ -4,13 +4,23 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { buildServerEnv, hashAdminPassword, setupPayloadSchema, toDeploymentConfig, verifyAdminPassword } from "../wizard/config.mjs";
+import { buildDatabaseUrl, buildServerEnv, hashAdminPassword, setupPayloadSchema, toDeploymentConfig, verifyAdminPassword } from "../wizard/config.mjs";
+import {
+  detectRequiredToolchain,
+  redactSecrets,
+  testDatabaseConnection,
+  testEmailConfiguration,
+  testSmtpConnection,
+  testTcpConnection,
+  validateStepData,
+} from "../wizard/shared.mjs";
 import { buildDeploymentArtifacts } from "../utils/deployment-config.mjs";
 import { renderSetupPage } from "../wizard/ui.mjs";
 import {
   buildPublicFrontendConfig,
   createSetupServer,
   createStaticAppServer,
+  normalizeProcessEnv,
   parseDotEnvFile,
   resolveAppStartInvocation,
   sameOrigin,
@@ -18,6 +28,7 @@ import {
 } from "../wizard/server.mjs";
 import { parseArgs } from "../bin/setup.mjs";
 import { resolveDesktopDataDir } from "../wizard/app-process.mjs";
+import { resolvePolyglotMigration } from "../scripts/polyglot.mjs";
 import {
   createSetupWizardCore,
   mountSetupGuard,
@@ -95,6 +106,227 @@ test("wizard/config: zayıf parola ve Gmail dışı SMTP adresi reddedilir", () 
   );
 });
 
+test("wizard/config: kurumsal / özel SMTP (host, port, secure) ve Gmail dışı adres başarıyla kabul edilir", () => {
+  const customPayload = {
+    ...VALID_PAYLOAD,
+    email: {
+      enabled: true,
+      provider: "custom",
+      host: "smtp.office365.com",
+      port: 587,
+      secure: false,
+      user: "bildirim@kurum.com",
+      fromEmail: "bildirim@kurum.com",
+      fromName: "Kurumsal Sistem",
+      password: "Office365SecurePass!",
+    },
+  };
+  const parsed = setupPayloadSchema.parse(customPayload);
+  assert.equal(parsed.email.enabled, true);
+  assert.equal(parsed.email.provider, "custom");
+  assert.equal(parsed.email.host, "smtp.office365.com");
+  assert.equal(parsed.email.port, 587);
+  assert.equal(parsed.email.secure, false);
+  assert.equal(parsed.email.user, "bildirim@kurum.com");
+  assert.equal(parsed.email.fromEmail, "bildirim@kurum.com");
+
+  const envText = buildServerEnv(parsed);
+  assert.match(envText, /EMAIL_HOST="smtp\.office365\.com"/);
+  assert.match(envText, /EMAIL_PORT=587/);
+  assert.match(envText, /EMAIL_SECURE=false/);
+  assert.match(envText, /EMAIL_USER="bildirim@kurum\.com"/);
+  assert.match(envText, /EMAIL_FROM="bildirim@kurum\.com"/);
+
+  // Geçersiz host / port reddedilir
+  assert.throws(
+    () =>
+      setupPayloadSchema.parse({
+        ...customPayload,
+        email: { ...customPayload.email, host: "invalid host spaces" },
+      }),
+    /Girilen bilgiler doğrulanamadı/,
+  );
+  assert.throws(
+    () =>
+      setupPayloadSchema.parse({
+        ...customPayload,
+        email: { ...customPayload.email, port: 99999 },
+      }),
+    /Girilen bilgiler doğrulanamadı/,
+  );
+});
+
+test("wizard/config: buildDatabaseUrl SQLite, PostgreSQL, MySQL ve Özel Bağlantı Dizesini doğru üretir", () => {
+  assert.equal(buildDatabaseUrl(null), "file:../data/app.db");
+  assert.equal(buildDatabaseUrl({ provider: "sqlite" }), "file:../data/app.db");
+  assert.equal(buildDatabaseUrl({ provider: "sqlite", url: "file:./custom.db" }), "file:./custom.db");
+
+  // PostgreSQL
+  assert.equal(
+    buildDatabaseUrl({
+      provider: "postgres",
+      host: "127.0.0.1",
+      port: 5432,
+      name: "my_app",
+      user: "postgres",
+      password: "secret_password",
+    }),
+    "postgresql://postgres:secret_password@127.0.0.1:5432/my_app",
+  );
+
+  // PostgreSQL URL encoding of special chars in user/pass
+  assert.equal(
+    buildDatabaseUrl({
+      provider: "postgresql",
+      host: "db.sirket.com",
+      port: 5432,
+      name: "kurum_db",
+      user: "admin@kurum",
+      password: "P@ss:w/ord#1",
+    }),
+    "postgresql://admin%40kurum:P%40ss%3Aw%2Ford%231@db.sirket.com:5432/kurum_db",
+  );
+
+  // MySQL
+  assert.equal(
+    buildDatabaseUrl({
+      provider: "mysql",
+      host: "localhost",
+      port: 3306,
+      name: "ecommerce",
+      user: "root",
+      password: "mysql_password",
+    }),
+    "mysql://root:mysql_password@localhost:3306/ecommerce",
+  );
+
+  // Custom connection string
+  assert.equal(
+    buildDatabaseUrl({
+      provider: "custom",
+      url: "cockroachdb://root@localhost:26257/defaultdb",
+    }),
+    "cockroachdb://root@localhost:26257/defaultdb",
+  );
+});
+
+test("wizard/config: veritabanı sağlayıcıları (postgres, mysql, custom) doğrulanır ve .env çıktısına yansıtılır", () => {
+  // PostgreSQL payload
+  const pgPayload = {
+    ...VALID_PAYLOAD,
+    database: {
+      provider: "postgres",
+      host: "10.0.0.5",
+      port: 5432,
+      name: "prod_db",
+      user: "dbuser",
+      password: "Complex_Password_2026!",
+    },
+  };
+  const parsedPg = setupPayloadSchema.parse(pgPayload);
+  assert.equal(parsedPg.database.provider, "postgres");
+  assert.equal(parsedPg.database.url, "postgresql://dbuser:Complex_Password_2026!@10.0.0.5:5432/prod_db");
+  const envPg = buildServerEnv(parsedPg);
+  assert.match(envPg, /DATABASE_URL="postgresql:\/\/dbuser:Complex_Password_2026!@10\.0\.0\.5:5432\/prod_db"/);
+
+  // MySQL payload
+  const mysqlPayload = {
+    ...VALID_PAYLOAD,
+    database: {
+      provider: "mysql",
+      host: "127.0.0.1",
+      port: 3306,
+      name: "store_db",
+      user: "root",
+      password: "root_password",
+    },
+  };
+  const parsedMy = setupPayloadSchema.parse(mysqlPayload);
+  assert.equal(parsedMy.database.provider, "mysql");
+  const envMy = buildServerEnv(parsedMy);
+  assert.match(envMy, /DATABASE_URL="mysql:\/\/root:root_password@127\.0\.0\.1:3306\/store_db"/);
+
+  // Custom payload
+  const customPayload = {
+    ...VALID_PAYLOAD,
+    database: {
+      provider: "custom",
+      url: "mongodb+srv://user:pass@cluster0.mongodb.net/test",
+    },
+  };
+  const parsedCustom = setupPayloadSchema.parse(customPayload);
+  assert.equal(parsedCustom.database.provider, "custom");
+  const envCustom = buildServerEnv(parsedCustom);
+  assert.match(envCustom, /DATABASE_URL="mongodb\+srv:\/\/user:pass@cluster0\.mongodb\.net\/test"/);
+
+  // Geçersiz port reddedilir
+  assert.throws(
+    () =>
+      setupPayloadSchema.parse({
+        ...VALID_PAYLOAD,
+        database: { provider: "postgres", port: 99999 },
+      }),
+    /Girilen bilgiler doğrulanamadı/,
+  );
+
+  // Geçersiz custom url reddedilir
+  assert.throws(
+    () =>
+      setupPayloadSchema.parse({
+        ...VALID_PAYLOAD,
+        database: { provider: "custom", url: "" },
+      }),
+    /Girilen bilgiler doğrulanamadı/,
+  );
+});
+
+test("wizard/shared: validateStepData database adımı PostgreSQL, MySQL, Custom ve geçersiz girdileri doğru denetler", () => {
+  // Geçerli SQLite
+  assert.equal(validateStepData("database", { provider: "sqlite" }).length, 0);
+
+  // Geçerli PostgreSQL
+  const pgIssues = validateStepData("database", {
+    provider: "postgres",
+    host: "localhost",
+    port: 5432,
+    name: "kurum_db",
+    user: "postgres",
+  });
+  assert.equal(pgIssues.length, 0);
+
+  // Geçerli MySQL
+  const myIssues = validateStepData("database", {
+    provider: "mysql",
+    host: "127.0.0.1",
+    port: 3306,
+    name: "app_db",
+    user: "root",
+  });
+  assert.equal(myIssues.length, 0);
+
+  // Geçerli Custom
+  assert.equal(validateStepData("database", { provider: "custom", url: "sqlite:./local.db" }).length, 0);
+
+  // Hatalı PostgreSQL (geçersiz port, boş isim, geçersiz host)
+  const badIssues = validateStepData("database", {
+    provider: "postgres",
+    host: "bad host spaces",
+    port: 90000,
+    name: "",
+    user: "",
+  });
+  assert.equal(badIssues.length >= 4, true);
+  assert.equal(badIssues.some((i) => i.path.includes("database.host")), true);
+  assert.equal(badIssues.some((i) => i.path.includes("database.port")), true);
+  assert.equal(badIssues.some((i) => i.path.includes("database.name")), true);
+  assert.equal(badIssues.some((i) => i.path.includes("database.user")), true);
+
+  // Hatalı Custom (boş url)
+  const badCustom = validateStepData("database", { provider: "custom", url: "" });
+  assert.equal(badCustom.length, 1);
+  assert.equal(badCustom[0].path.includes("database.url"), true);
+});
+
 test("wizard/ui: XSS kaçışı, running CSS sınıfı ve e-posta doğrulaması içerir", () => {
   const html = renderSetupPage("csrf_123", { title: 'Test <script>alert(1)</script>' });
   assert.equal(html.includes("<script>alert(1)</script>"), false);
@@ -103,6 +335,9 @@ test("wizard/ui: XSS kaçışı, running CSS sınıfı ve e-posta doğrulaması 
   assert.match(html, /s\.status==='running'\?'running':''/);
   assert.match(html, /escapeHtml\(JSON\.stringify\(s\.detected,null,2\)\)/);
   assert.match(html, /function validateEmailFields\(\)/);
+  assert.match(html, /function validateDatabaseFields\(\)/);
+  assert.match(html, /<select name="dbProvider"/);
+  assert.match(html, /id="adminSeedNotice"/);
 });
 
 test("wizard/server: Host başlığı sahteciliğine (Host Header Spoofing) karşı korumalıdır", () => {
@@ -732,6 +967,24 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
   });
   assert.equal(badSmtp.status, 400);
   assert.equal(badSmtp.body.ok, false);
+
+  const customSmtp = await core.handle({
+    method: "POST",
+    headers: { "x-setup-csrf": core.csrfToken },
+    path: "/api/validate-email-format",
+    body: {
+      enabled: true,
+      provider: "custom",
+      host: "mail.kurum.com",
+      port: 587,
+      user: "bildirim@kurum.com",
+      fromEmail: "bildirim@kurum.com",
+      fromName: "Kurum",
+      password: "CustomPassword123",
+    },
+  });
+  assert.equal(customSmtp.status, 200);
+  assert.equal(customSmtp.body.ok, true);
 
   const goodSmtp = await core.handle({
     method: "POST",
@@ -1641,4 +1894,599 @@ test("readSetupRuntimeConfig: masaüstü senaryosunda dataDir verilmezse kullan�
   const runtime = readSetupRuntimeConfig(tmpRoot);
   assert.equal(runtime.installed, true);
   assert.equal(runtime.paths.dataRoot, path.join(userHome, "my-desk-app"));
+});
+
+test("polyglot: resolvePolyglotMigration Python Django, Alembic, .NET, Rust ve özel komutları doğru belirler", (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-polyglot-mig-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  // 1. Python Django
+  fs.writeFileSync(path.join(tmpRoot, "manage.py"), "#!/usr/bin/env python\n", "utf8");
+  const django = resolvePolyglotMigration(tmpRoot, "python-server");
+  assert.ok(django);
+  assert.equal(django.args.join(" "), "manage.py migrate");
+  assert.match(django.label, /Django/);
+
+  // 2. Python Alembic
+  fs.unlinkSync(path.join(tmpRoot, "manage.py"));
+  fs.writeFileSync(path.join(tmpRoot, "alembic.ini"), "# alembic\n", "utf8");
+  const alembic = resolvePolyglotMigration(tmpRoot, "python-server");
+  assert.ok(alembic);
+  assert.equal(alembic.args.join(" "), "-m alembic upgrade head");
+  assert.match(alembic.label, /Alembic/);
+
+  // 3. .NET EF Core
+  fs.unlinkSync(path.join(tmpRoot, "alembic.ini"));
+  fs.mkdirSync(path.join(tmpRoot, "Migrations"), { recursive: true });
+  const dotnet = resolvePolyglotMigration(tmpRoot, "dotnet-server");
+  assert.ok(dotnet);
+  assert.equal(dotnet.command, "dotnet");
+  assert.ok(dotnet.args.includes("ef") && dotnet.args.includes("database") && dotnet.args.includes("update"));
+
+  // 4. Rust Diesel
+  fs.rmSync(path.join(tmpRoot, "Migrations"), { recursive: true, force: true });
+  fs.writeFileSync(path.join(tmpRoot, "diesel.toml"), "", "utf8");
+  const diesel = resolvePolyglotMigration(tmpRoot, "rust-server");
+  assert.ok(diesel);
+  assert.equal(diesel.command, "diesel");
+  assert.equal(diesel.args.join(" "), "migration run");
+
+  // 5. Özel setup.config.json migrate komutu
+  const custom = resolvePolyglotMigration(tmpRoot, "unknown", {
+    migrate: { command: "custom-migrate", args: ["--all"] },
+  });
+  assert.ok(custom);
+  assert.equal(custom.command, "custom-migrate");
+  assert.deepEqual(custom.args, ["--all"]);
+});
+
+test("wizard/apply: çok dilli projede migration adımı otomatik çalıştırılır", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-polyglot-apply-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  // Mock migration betiği
+  fs.writeFileSync(path.join(tmpRoot, "dummy-migrate.mjs"), "console.log('Migration OK'); process.exit(0);\n", "utf8");
+  fs.writeFileSync(
+    path.join(tmpRoot, "setup.config.json"),
+    JSON.stringify({
+      name: "custom-mig-app",
+      migrate: { command: process.execPath, args: [path.join(tmpRoot, "dummy-migrate.mjs")] },
+    }),
+    "utf8",
+  );
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, ipcMode: true, syncApply: true, runBuildCommands: async () => {} });
+  const res = await core.handle({
+    method: "POST",
+    path: "/api/apply",
+    body: { ...VALID_PAYLOAD, wait: true },
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const migrateStep = res.body.state.steps.find((s) => s.id === "migrate");
+  assert.equal(migrateStep?.status, "done");
+  assert.ok(res.body.state.summary.some((msg) => /migration/i.test(msg)));
+});
+
+test("wizard/apply: PostgreSQL veritabanı seçildiğinde .env çıktısına yazılır ve migration ortamına aktarılır", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-pg-test-"));
+  t.after(() => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {}
+  });
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({
+      name: "pg-app",
+      scripts: {
+        "db:migrate": "node -e \"require('node:fs').writeFileSync('db_url_seen.txt', process.env.DATABASE_URL || '')\"",
+      },
+    }),
+    "utf8",
+  );
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, ipcMode: true, syncApply: true, runBuildCommands: async () => {} });
+  const res = await core.handle({
+    method: "POST",
+    path: "/api/apply",
+    body: {
+      ...VALID_PAYLOAD,
+      database: {
+        provider: "postgres",
+        host: "10.0.0.12",
+        port: 5432,
+        name: "kurum_db",
+        user: "db_admin",
+        password: "Secret_Password_123!",
+      },
+      wait: true,
+    },
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const envContent = fs.readFileSync(path.join(tmpRoot, ".env"), "utf8");
+  assert.match(envContent, /DATABASE_URL="postgresql:\/\/db_admin:Secret_Password_123!@10\.0\.0\.12:5432\/kurum_db"/);
+
+  const seenDbUrl = fs.readFileSync(path.join(tmpRoot, "db_url_seen.txt"), "utf8");
+  assert.equal(seenDbUrl, "postgresql://db_admin:Secret_Password_123!@10.0.0.12:5432/kurum_db");
+});
+
+test("wizard/apply: setupConfig.seed özel tohumlama betiği çalıştırılır ve özet günlüğüne eklenir", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-seed-test-"));
+  t.after(() => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {}
+  });
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({ name: "seed-app" }),
+    "utf8",
+  );
+
+  const seedScriptPath = path.join(tmpRoot, "custom-seed.mjs");
+  fs.writeFileSync(
+    seedScriptPath,
+    'import fs from "node:fs";\nfs.writeFileSync("seeded.txt", "admin_seeded:" + (process.env.DATABASE_URL || "no_db"));\n',
+    "utf8",
+  );
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "setup.config.json"),
+    JSON.stringify({
+      name: "seed-app",
+      seed: { command: process.execPath, args: [seedScriptPath] },
+    }),
+    "utf8",
+  );
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, ipcMode: true, syncApply: true, runBuildCommands: async () => {} });
+
+  const statusRes = await core.handle({ method: "GET", path: "/api/status" });
+  assert.equal(statusRes.status, 200);
+  assert.equal(statusRes.body.detected.seedScript, process.execPath);
+
+  const res = await core.handle({
+    method: "POST",
+    path: "/api/apply",
+    body: { ...VALID_PAYLOAD, wait: true },
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.ok(res.body.state.summary.some((msg) => msg.includes("tohumlama")));
+  assert.equal(fs.existsSync(path.join(tmpRoot, "seeded.txt")), true);
+  assert.match(fs.readFileSync(path.join(tmpRoot, "seeded.txt"), "utf8"), /^admin_seeded:/);
+});
+
+test("wizard/apply: terminal günlüğü (applyJob.logs) çalıştırılan derleme ve betik çıktılarını yakalar", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-logs-test-"));
+  t.after(() => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {}
+  });
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({ name: "logs-app" }),
+    "utf8",
+  );
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "setup.config.json"),
+    JSON.stringify({
+      name: "logs-app",
+      seed: {
+        command: process.execPath,
+        args: ["-e", "console.log('BUILD_LOG_LINE_123'); console.error('BUILD_ERR_LINE_456');"],
+      },
+    }),
+    "utf8",
+  );
+
+  const core = createSetupWizardCore({ projectRoot: tmpRoot, ipcMode: true, syncApply: true, runBuildCommands: async () => {} });
+  const res = await core.handle({
+    method: "POST",
+    path: "/api/apply",
+    body: { ...VALID_PAYLOAD, wait: true },
+  });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+
+  const statusRes = await core.handle({ method: "GET", path: "/api/status" });
+  assert.equal(statusRes.status, 200);
+  const logs = statusRes.body.apply.logs;
+  assert.ok(Array.isArray(logs), "apply.logs bir dizi olmalıdır");
+  assert.ok(logs.some((l) => l.includes("BUILD_LOG_LINE_123")), "stdout log satırı yakalanmalı");
+  assert.ok(logs.some((l) => l.includes("BUILD_ERR_LINE_456")), "stderr log satırı yakalanmalı");
+});
+
+test("wizard/reconfigure: reconfigure: true mevcut installation.lock olsa dahi kurulumun güncellenmesine izin verir", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-reconfig-test-"));
+  t.after(() => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {}
+  });
+
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "reconfig-app" }), "utf8");
+  fs.mkdirSync(path.join(tmpRoot, "data"), { recursive: true });
+  fs.writeFileSync(path.join(tmpRoot, "data", "installation.lock"), "locked_at=2026-01-01\n", "utf8");
+  fs.writeFileSync(path.join(tmpRoot, ".env"), "PORT=4000\n", "utf8");
+
+  // Reconfigure olmadan normal core: kilitli olduğundan sihirbaz kapalıdır (yalnız sade durum)
+  const standardCore = createSetupWizardCore({ projectRoot: tmpRoot, ipcMode: true });
+  const standardStatus = await standardCore.handle({ method: "GET", path: "/api/status" });
+  assert.equal(standardStatus.status, 200);
+  assert.equal(standardStatus.body.installed, true);
+  assert.equal(standardStatus.body.checks, undefined);
+
+  // Reconfigure etkin core: checks.notInstalled true döner ve apply başarılı olur
+  const reconfigCore = createSetupWizardCore({ projectRoot: tmpRoot, reconfigure: true, ipcMode: true, syncApply: true, runBuildCommands: async () => {} });
+  const reconfigStatus = await reconfigCore.handle({ method: "GET", path: "/api/status" });
+  assert.equal(reconfigStatus.status, 200);
+  assert.equal(reconfigStatus.body.checks.notInstalled, true);
+
+  const applyRes = await reconfigCore.handle({
+    method: "POST",
+    path: "/api/apply",
+    body: {
+      ...VALID_PAYLOAD,
+      server: { host: "127.0.0.1", port: 7000 },
+      wait: true,
+    },
+  });
+  assert.equal(applyRes.status, 200, JSON.stringify(applyRes.body));
+  const updatedEnv = fs.readFileSync(path.join(tmpRoot, ".env"), "utf8");
+  assert.match(updatedEnv, /PORT=7000/);
+  assert.equal(fs.existsSync(path.join(tmpRoot, "data", "installation.lock")), true);
+});
+
+test("wizard/server: 512KB payload gövdesi desteği (>64KB büyük kurumsal ortam değişkenleri kabul edilir)", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-large-payload-"));
+  t.after(() => {
+    try {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    } catch {}
+  });
+
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "large-payload-app" }), "utf8");
+  const token = "wizard_secret_token_largepayload_123456";
+  const server = createSetupServer(token, { projectRoot: tmpRoot });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  assert.equal(loginRes.status, 303);
+  const cookiePair = String(loginRes.headers.get("set-cookie") || "").split(";")[0];
+
+  const htmlRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const html = await htmlRes.text();
+  const csrf = JSON.parse(html.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  // 100KB büyüklüğünde payload oluştur (eski 64KB sınırını aşar)
+  const bigValue = "A".repeat(1024);
+  const customEnv = {};
+  for (let i = 0; i < 90; i++) {
+    customEnv[`ENTERPRISE_KEY_${i}`] = bigValue;
+  }
+  const bigPayload = {
+    step: "server",
+    data: {
+      host: "127.0.0.1",
+      port: 5000,
+      customEnv,
+    },
+  };
+  const payloadString = JSON.stringify(bigPayload);
+  assert.ok(payloadString.length > 90 * 1024, "Payload 90KB'den büyük olmalı");
+
+  const res = await fetch(`${baseUrl}/api/validate-step`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: payloadString,
+  });
+
+  assert.equal(res.status, 200, "512KB sınırı sayesinde 90KB payload 413 vermemeli");
+  const json = await res.json();
+  assert.equal(json.ok, true);
+});
+
+test("normalizeProcessEnv: PATH türevlerini tek bir kanonik anahtarda birleştirir, prepend yollarını korur ve yinelenenleri eler", () => {
+  const base = {
+    PATH: "C:\\system32;C:\\windows",
+    Path: "C:\\windows;C:\\other",
+    NODE_ENV: "production",
+  };
+  const extra = {
+    PORT: "3000",
+    path: "C:\\extra",
+  };
+  const prepend = ["C:\\tools\\shims", "C:\\venv\\Scripts"];
+
+  const res = normalizeProcessEnv(base, extra, prepend);
+  const isWin = process.platform === "win32";
+  const canonical = isWin ? "Path" : "PATH";
+
+  assert.equal(res.NODE_ENV, "production");
+  assert.equal(res.PORT, "3000");
+  assert.ok(typeof res[canonical] === "string");
+
+  if (isWin) {
+    assert.equal(res.PATH, undefined, "Windows'ta PATH silinmeli, yalnız Path kalmalı");
+    assert.equal(res.path, undefined, "Windows'ta path silinmeli, yalnız Path kalmalı");
+  }
+
+  const parts = res[canonical].split(path.delimiter);
+  assert.equal(parts[0], "C:\\tools\\shims");
+  assert.equal(parts[1], "C:\\venv\\Scripts");
+  // Yinelenen C:\windows teke indirgenmelidir
+  const winCount = parts.filter((p) => p.toLowerCase() === "c:\\windows").length;
+  assert.equal(winCount, 1, "Yinelenen yollar teke düşürülmeli");
+});
+
+test("wizard/server E2E: /api/start-app uygulamanın erken çöküşünü (crash) derhal tespit eder ve 409 döner", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-early-crash-"));
+
+  const appPort = await new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const p = srv.address().port;
+      srv.close((err) => (err ? reject(err) : resolve(p)));
+    });
+  });
+
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "crash-app" }), "utf8");
+  fs.mkdirSync(path.join(tmpRoot, "data"), { recursive: true });
+  fs.writeFileSync(path.join(tmpRoot, "data", "installation.lock"), "locked_at=2026-01-01\n", "utf8");
+  fs.writeFileSync(path.join(tmpRoot, ".env"), `PORT=${appPort}\n`, "utf8");
+
+  // Hemen çöken bir başlatma betiği oluştur (exit 42 ve stderr)
+  const crashingScript = path.join(tmpRoot, "crash.mjs");
+  fs.writeFileSync(
+    crashingScript,
+    'console.error("FATAL_BOOT_ERROR: Veritabani baglantisi saglanamadi!"); process.exit(42);\n',
+    "utf8",
+  );
+
+  const token = "wizard_secret_token_earlycrash_123456";
+  const server = createSetupServer(token, {
+    projectRoot: tmpRoot,
+    startAppInvocation: { command: process.execPath, args: [crashingScript], cwd: tmpRoot },
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    if (typeof server.stopSpawnedApp === "function") {
+      await server.stopSpawnedApp();
+    }
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+    fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  assert.equal(loginRes.status, 303);
+  const cookiePair = String(loginRes.headers.get("set-cookie") || "").split(";")[0];
+
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const html = await pageRes.text();
+  const csrf = JSON.parse(html.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  const t0 = Date.now();
+  const startRes = await fetch(`${baseUrl}/api/start-app`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ mode: "production" }),
+  });
+
+  const duration = Date.now() - t0;
+  assert.ok(duration < 2500, `Erken çökme 2.5 saniyeden kısa sürmeli (gerçek: ${duration}ms)`);
+  assert.equal(startRes.status, 409, "Hemen çöken uygulama 409 dönmeli");
+  const data = await startRes.json();
+  assert.equal(data.reachable, false);
+  assert.equal(data.exitCode, 42);
+  assert.match(data.message, /FATAL_BOOT_ERROR/);
+
+  // Sağlık denetimi (/api/app-health) de sürecin kapandığını bildirmeli
+  const healthRes = await fetch(`${baseUrl}/api/app-health`, { headers: { Cookie: cookiePair } });
+  const health = await healthRes.json();
+  assert.equal(health.reachable, false);
+  assert.match(health.hint, /Süreç kapandı/);
+});
+
+test("wizard/shared: redactSecrets parolaları, sırları ve URL içi kimlik bilgilerini maskeler", () => {
+  const secret1 = "SuperSecretAdmin123!";
+  const secret2 = "DbPassword987!";
+  const text = `Admin parolası: ${secret1}, DB parolası: ${secret2}, URL: postgres://app_user:${secret2}@db.internal:5432/app_db`;
+  const sanitized = redactSecrets(text, [secret1, secret2]);
+  assert.equal(sanitized.includes(secret1), false);
+  assert.equal(sanitized.includes(secret2), false);
+  assert.equal(sanitized.includes("******"), true);
+  assert.match(sanitized, /postgres:\/\/app_user:\*\*\*\*\*\*@db\.internal:5432\/app_db/);
+});
+
+test("wizard/shared: testTcpConnection açık ve kapalı portları doğru tespit eder", async (t) => {
+  const srv = net.createServer((sock) => sock.end());
+  await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => srv.close(resolve)));
+  const { port } = srv.address();
+
+  const openRes = await testTcpConnection("127.0.0.1", port);
+  assert.equal(openRes.ok, true);
+  assert.equal(openRes.reachable, true);
+
+  const closedRes = await testTcpConnection("127.0.0.1", 65431, 300);
+  assert.equal(closedRes.ok, false);
+  assert.equal(closedRes.reachable, false);
+
+  const invalidRes = await testTcpConnection("127.0.0.1", -5);
+  assert.equal(invalidRes.ok, false);
+});
+
+test("wizard/shared: testSmtpConnection mock SMTP sunucusunun 220 greeting yanıtını doğrular", async (t) => {
+  const srv = net.createServer((sock) => {
+    sock.write("220 mail.example.com ESMTP Service Ready\r\n");
+  });
+  await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => srv.close(resolve)));
+  const { port } = srv.address();
+
+  const res = await testSmtpConnection("127.0.0.1", port, false, 1000);
+  assert.equal(res.ok, true);
+  assert.equal(res.reachable, true);
+  assert.match(res.banner, /^220 mail\.example\.com/);
+  assert.match(res.message, /SMTP sunucusu hazır/);
+});
+
+test("wizard/shared: testDatabaseConnection SQLite ve PostgreSQL yapılandırmalarını sınar", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-test-db-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  const sqliteRes = await testDatabaseConnection({ provider: "sqlite", url: "data/my_app.db" }, tmpRoot);
+  assert.equal(sqliteRes.ok, true);
+  assert.equal(sqliteRes.reachable, true);
+
+  const srv = net.createServer((sock) => sock.end());
+  await new Promise((resolve) => srv.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => srv.close(resolve)));
+  const { port } = srv.address();
+
+  const pgRes = await testDatabaseConnection({ provider: "postgres", host: "127.0.0.1", port }, tmpRoot);
+  assert.equal(pgRes.ok, true);
+  assert.equal(pgRes.reachable, true);
+
+  const customRes = await testDatabaseConnection({ provider: "custom", url: `postgres://usr:pwd@127.0.0.1:${port}/dbname` }, tmpRoot);
+  assert.equal(customRes.ok, true);
+  assert.equal(customRes.reachable, true);
+});
+
+test("wizard/shared: detectRequiredToolchain ve /api/status araç zinciri ön kontrolünü raporlar", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-test-toolchain-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "toolchain-app" }), "utf8");
+
+  const token = "toolchain_test_token_123456";
+  const server = createSetupServer(token, { projectRoot: tmpRoot });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  const cookiePair = String(loginRes.headers.get("set-cookie") || "").split(";")[0];
+
+  const statusRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
+  assert.equal(statusRes.status, 200);
+  const status = await statusRes.json();
+  assert.ok(status.detected.toolchain);
+  assert.equal(status.detected.toolchain.node.required, true);
+  assert.equal(status.detected.toolchain.node.available, true);
+  assert.equal(typeof status.checks.toolchainAvailable, "boolean");
+});
+
+test("wizard/server E2E: /api/test-database ve /api/test-email uç noktaları canlı denetim yapar", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-test-endpoints-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "endpoints-app" }), "utf8");
+
+  const token = "endpoints_test_token_123456";
+  const server = createSetupServer(token, { projectRoot: tmpRoot });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${token}`, { redirect: "manual" });
+  const cookiePair = String(loginRes.headers.get("set-cookie") || "").split(";")[0];
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const html = await pageRes.text();
+  const csrf = JSON.parse(html.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  // 1. /api/test-database ile SQLite testi
+  const dbRes = await fetch(`${baseUrl}/api/test-database`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ database: { provider: "sqlite", url: "data/app.db" } }),
+  });
+  assert.equal(dbRes.status, 200);
+  const dbData = await dbRes.json();
+  assert.equal(dbData.ok, true);
+  assert.equal(dbData.reachable, true);
+
+  // 2. /api/test-email ile devre dışı e-posta testi
+  const emailDisabledRes = await fetch(`${baseUrl}/api/test-email`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email: { enabled: false } }),
+  });
+  assert.equal(emailDisabledRes.status, 200);
+  const emailDisabled = await emailDisabledRes.json();
+  assert.equal(emailDisabled.ok, true);
+
+  // 3. /api/test-email ile mock SMTP sunucusu testi
+  const smtpMock = net.createServer((sock) => {
+    sock.write("220 smtp.corp.internal ESMTP Ready\r\n");
+  });
+  await new Promise((resolve) => smtpMock.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => smtpMock.close(resolve)));
+  const smtpPort = smtpMock.address().port;
+
+  const emailRes = await fetch(`${baseUrl}/api/test-email`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      email: {
+        enabled: true,
+        provider: "custom",
+        host: "127.0.0.1",
+        port: smtpPort,
+        secure: false,
+        user: "admin@corp.internal",
+        password: "Pass12345678",
+        fromEmail: "admin@corp.internal",
+        fromName: "Admin",
+      },
+    }),
+  });
+  assert.equal(emailRes.status, 200);
+  const emailData = await emailRes.json();
+  assert.equal(emailData.ok, true);
+  assert.equal(emailData.reachable, true);
+  assert.match(emailData.message, /SMTP sunucusu/);
 });

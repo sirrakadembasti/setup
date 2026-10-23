@@ -20,6 +20,15 @@ test("find-port-holder.mjs dinleyen portun PID değerini yazar", async (t) => {
   const result = spawnSync(process.execPath, [finder, String(port)], { encoding: "utf8" });
   assert.equal(result.status, 0);
   assert.match(result.stdout.trim(), /^\d+$/);
+
+  const jsonResult = spawnSync(process.execPath, [finder, String(port), "--json"], { encoding: "utf8" });
+  assert.equal(jsonResult.status, 0);
+  const parsed = JSON.parse(jsonResult.stdout.trim());
+  assert.equal(Number(parsed.pid), process.pid);
+
+  const nameResult = spawnSync(process.execPath, [finder, String(port), "--name"], { encoding: "utf8" });
+  assert.equal(nameResult.status, 0);
+  assert.equal(typeof nameResult.stdout, "string");
 });
 
 test("find-port-holder.mjs boş portta çıkış 1 verir", () => {

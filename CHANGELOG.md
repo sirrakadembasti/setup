@@ -3,6 +3,36 @@
 Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallarına uygun olarak bu dosyada belgelenir.
 
 ## [Yayınlanmamış]
+- **Canlı Veritabanı ve SMTP Bağlantı Testi (Active Pre-Apply Probing), Sır Maskeleme ve Araç Zinciri Ön Kontrolü (Madde 7):**
+  - **Sıfır Dış Bağımlılıkla Ağ Sınaması:** Yerleşik `node:net` ve `node:tls` modülleri kullanılarak kurulum öncesinde veritabanı ve SMTP sunucularına aktif bağlantı testi eklendi:
+    - `POST /api/test-database`: SQLite için hedef dizin yazılabilirliği; PostgreSQL (5432), MySQL (3306) ve Özel Connection String için aktif TCP bağlantı yoklaması.
+    - `POST /api/test-email` (ve `/api/test-smtp`): STARTTLS (587) veya SSL (465) üzerinden sunucuya bağlanıp ilk ESMTP `220 ...` greeting banner'ını doğrulama.
+  - **Arayüz "Bağlantıyı Sına" Düğmeleri (`wizard/ui.html.mjs`):** Adım 3 (Veritabanı) paneline `[🔍 Veritabanı Bağlantısını Sına]` (`#btnTestDb`), Adım 4 (E-posta) paneline `[✉️ SMTP Bağlantısını Sına]` (`#btnTestEmail`) düğmeleri eklendi; anlık yeşil/kırmızı görsel geri bildirim sağlandı.
+  - **Güvenli Günlük & Sır Maskeleme (`redactSecrets`):** Derleme, migration ve tohumlama çıktılarının konsola aktığı `applyJob.logs` dizisinde yönetici parolası, e-posta parolası, veritabanı parolası ve bağlantı URL'lerindeki (`postgresql://user:pass@host`) parolalar `******` ile sansürlenir.
+  - **Çok Dilli Araç Zinciri Ön Kontrolü (`detectRequiredToolchain`):** Proje mimarisine göre `node`, `python`, `go`, `dotnet`, `cargo` araçlarının sistemde varlığı denetlenir; `/api/status` yanıtına `detected.toolchain` ve `checks.toolchainAvailable` bilgisi eklenerek ön kontroller ekranında raporlanır.
+- **Windows Ortamında PATH Normalizasyonu ve Erken Çökme Tespiti (Madde 6):**
+  - **Kanonik Ortam (`normalizeProcessEnv`):** Windows'ta `process.env` case-insensitivity çakışmalarını (`Path`, `PATH`, `path`) tek bir kanonik `Path` anahtarında toplar, `prependPaths` (`bin/shims`) dizinini en başa yerleştirir ve yinelenenleri sırayı koruyarak eler.
+  - **Erken Çökme Tespiti (Early Crash Detection):** `/api/start-app` üzerinden başlatılan HTTP sunucusu ilk 3.2 saniye içinde kapandığında sihirbaz yanıltıcı 202 yerine derhal 409 durum kodu, çıkış kodu ve `stderr` hata satırlarını döner.
+  - **Başlatıcı Yeniden Yapılandırma Entegrasyonu:** Kurulu projelerde yıkıcı sıfırlama yerine doğrudan "Yeniden Yapılandır (--reconfigure)" butonu ve arayüz seçeneği eklendi.
+- **Canlı İşlem Günlüğü (Terminal Akışı), Yeniden Yapılandırma Modu (--reconfigure) ve Kurumsal Yük Limitleri (Madde 5):**
+  - **Canlı İşlem Günlüğü / Terminal Akışı (`applyJob.logs`):** Kurulum adımları yürütülürken derleme, migration ve seed çıktılarının `stdout`/`stderr` akışı toplanır; Adım 5 altında yer alan `#applyConsole` terminal konsoluna anlık canlı akıtılır.
+  - **Yeniden Yapılandırma Modu (`--reconfigure`):** Sistem kurulmuş ve `data/installation.lock` mevcut olsa dahi ayarların, portların ve `.env` dosyasının güvenle güncellenebilmesini sağlayan `--reconfigure` bayrağı CLI'ye, sihirbaz sunucusuna ve çekirdeğe eklendi.
+  - **512KB İstek Gövdesi Sınırı:** Kurumsal projelerdeki yüzlerce ortam değişkenini desteklemek için JSON body limiti `wizard/server.mjs` içinde 512KB'a, `setup-bootstrap.mjs` içinde 256KB'a yükseltildi.
+- **Süreç Güvenliği, Port Filtreleme ve Tohumlama (Seeding) Entegrasyonu (Madde 4):**
+  - **Başlatıcı Süreç Güvenliği (`bin/kurulum.bat` / `bin/kurulum.sh`):** Port çakışmalarında PID sonlandırılırken `tasklist` / `ps` ile sürecin adı tespit edilir ve kullanıcıya bildirilir; kritik sistem servislerinin kazara kapatılması önlenir.
+  - **Port Bulucu Genişletmesi (`scripts/find-port-holder.mjs`):** `--name` ve `--json` bayrakları eklendi.
+  - **Şeffaf Tohumlama (Seeding):** Projenin `package.json` (`prisma:seed`, `db:seed`, `seed`) veya `setup.config.json` tohumlama betikleri algılanır, Adım 4'te `#adminSeedNotice` rozetiyle gösterilir ve kurulumda otomatik çalıştırılır.
+- **Esnek Veritabanı Sağlayıcı Desteği (Madde 3):**
+  - **SQLite, PostgreSQL, MySQL ve Özel Bağlantı Dizesi (Connection String):** Yalnızca SQLite yerine çoklu sağlayıcı mimarisi eklendi.
+  - **Dinamik URL Üretimi (`buildDatabaseUrl`):** Girilen host, port, dbName, kullanıcı ve parola değerlerinden sağlayıcıya uygun `DATABASE_URL` otomatik üretilir ve migration/seed adımlarına aktarılır.
+  - **Dinamik Arayüz:** Adım 3 paneline veritabanı sağlayıcı seçim kutusu ve seçilen sağlayıcıya göre açılan form alanları eklendi.
+- **Çok Dilli Bağımlılık Denetimi ve Migration Desteği (Madde 2):**
+  - **Bağımlılık Kontrolü (`checkDependencies`):** Python `.venv` ve python binary, Rust `Cargo.lock` / `target`, Go `go.sum` / binary varlığı kontrol edilerek "sahte tamam" durumu engellendi.
+  - **Çok Dilli Migration Çözücü (`resolvePolyglotMigration`):** Node.js script'leri yoksa Python (Django `manage.py migrate`, Alembic `alembic upgrade head`), .NET (`dotnet ef database update`), Rust (`diesel migration run`, `sqlx migrate run`) veya `setup.config.json` özel migration komutları otomatik çözülür ve yürütülür.
+- **Genel ve Kurumsal SMTP Desteği (Madde 1):**
+  - Katı `@gmail.com` regex zorunluluğu kaldırılarak kurumsal RFC e-postalar (`kullanici@kurum.com.tr`) geçerli kılındı.
+  - `provider: "gmail" | "custom"`, `host`, `port`, `secure` parametreleri ve `.env` çıktıları (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_SECURE` ...) eklendi.
+  - Arayüzde Gmail ve Özel SMTP seçim alanları entegre edildi.
 - **Paket Yöneticisi Çalışma Zamanı (Runtime) ve Monorepo Fallback Düzeltmesi (`pnpm` / `yarn` / `npm` -> `bun`):**
   - **Sistem Varlığı Doğrulaması (`isCommandAvailable` & `resolveEffectivePackageManager`):** `pnpm` veya `yarn` yapılandırmalı monorepo projelerinde sistemde `pnpm` kurulu olmadığında arayüzde Bun sürümünün pnpm gibi gösterilmesi (`pnpm 1.3.14 ✓`) ve paket kurulumunda `'pnpm' is not recognized` hatası alınması kökten giderildi.
   - **Dinamik Fallback:** Sistemde istenen araç (`pnpm`, `npm` vb.) bulunamadığında otomatik olarak sistemde mevcut olan `bun` paket yöneticisine düşülür; UI ve kurulum planı gerçekte çalışan aracı (`bun 1.3.14 ✓`, `bun install`) gösterir.

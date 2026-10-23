@@ -128,7 +128,18 @@ for /f "delims=" %%P in ('!JS_RUNNER! "%SETUP_ROOT%scripts\find-port-holder.mjs"
 if defined PORT_HOLDER_PID (
   echo.
   echo [UYARI] Kurulum başlangıç portu zaten kullanımda: 127.0.0.1:!CHECK_PORT!
-  echo Portu tutan süreç: PID !PORT_HOLDER_PID!
+  set "PORT_PROCESS_NAME="
+  for /f "tokens=1" %%I in ('tasklist /FI "PID eq !PORT_HOLDER_PID!" /NH 2^>nul') do set "PORT_PROCESS_NAME=%%I"
+  if defined PORT_PROCESS_NAME (
+    echo Portu tutan süreç: !PORT_PROCESS_NAME! (PID !PORT_HOLDER_PID!)
+    echo !PORT_PROCESS_NAME! | findstr /I "node bun python setup" >nul 2>&1
+    if errorlevel 1 (
+      echo [DİKKAT] Bu süreç Node veya Bun gibi görünmüyor (!PORT_PROCESS_NAME!).
+      echo Bilmediğiniz veya sistem süreçlerini sonlandırmadan önce kontrol ediniz.
+    )
+  ) else (
+    echo Portu tutan süreç: PID !PORT_HOLDER_PID!
+  )
   echo.
   choice /C DK /N /M "Kalan kurulum süreci şimdi durdurulsun mu? [D=durdur ve devam et / K=kapat]: "
   if errorlevel 2 goto :failed
@@ -143,7 +154,18 @@ for /f "delims=" %%P in ('!JS_RUNNER! "%SETUP_ROOT%scripts\find-port-holder.mjs"
 if defined WIZARD_PID (
   echo.
   echo [UYARI] Sihirbaz portu zaten kullanımda: 127.0.0.1:!WIZARD_PORT!
-  echo Portu tutan süreç: PID !WIZARD_PID!
+  set "WIZARD_PROCESS_NAME="
+  for /f "tokens=1" %%I in ('tasklist /FI "PID eq !WIZARD_PID!" /NH 2^>nul') do set "WIZARD_PROCESS_NAME=%%I"
+  if defined WIZARD_PROCESS_NAME (
+    echo Portu tutan süreç: !WIZARD_PROCESS_NAME! (PID !WIZARD_PID!)
+    echo !WIZARD_PROCESS_NAME! | findstr /I "node bun python setup" >nul 2>&1
+    if errorlevel 1 (
+      echo [DİKKAT] Bu süreç Node veya Bun gibi görünmüyor (!WIZARD_PROCESS_NAME!).
+      echo Bilmediğiniz veya sistem süreçlerini sonlandırmadan önce kontrol ediniz.
+    )
+  ) else (
+    echo Portu tutan süreç: PID !WIZARD_PID!
+  )
   echo.
   choice /C DK /N /M "Sihirbaz portu şimdi durdurulsun mu? [D=durdur ve devam / K=geç ve devam]: "
   if not errorlevel 2 (

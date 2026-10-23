@@ -1,13 +1,331 @@
 import crypto, { timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { parseDeploymentConfig, buildDeploymentArtifacts, saveDeploymentConfig } from "../utils/deployment-config.mjs";
-import { getSetupPaths } from "../scripts/setup-bootstrap-lib.mjs";
+import { getSetupPaths, isCommandAvailable } from "../scripts/setup-bootstrap-lib.mjs";
 import { buildLoginUrl, detectPackageManager, parseEnvExample } from "../scripts/detect-project.mjs";
-import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
-import { pmRunInvocation, readJsonFileSafe, resolveEffectivePackageManager } from "./app-process.mjs";
+import { resolvePolyglotMigration } from "../scripts/polyglot.mjs";
+import { buildDatabaseUrl, buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
+import { normalizeProcessEnv, pmRunInvocation, readJsonFileSafe, resolveEffectivePackageManager } from "./app-process.mjs";
+
+export { normalizeProcessEnv };
+
+/**
+ * Hassas parolaları ve bağlantı dizesi sırlarını maskeler.
+ */
+export function redactSecrets(text, secrets = []) {
+  let result = String(text || "");
+  for (const s of secrets) {
+    if (s && typeof s === "string" && s.length >= 3) {
+      result = result.split(s).join("******");
+    }
+  }
+  // URL içindeki parolaları maskele (örn: postgres://user:pass@host)
+  result = result.replace(/([a-zA-Z]+:\/\/[^:]+:)([^@]+)(@)/g, "$1******$3");
+  return result;
+}
+
+/**
+ * Belirtilen host ve port için TCP bağlantısını sınar.
+ */
+export function testTcpConnection(host, port, timeoutMs = 2500) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const p = Number(port);
+    const h = String(host || "127.0.0.1").trim();
+
+    const finish = (ok, error = null) => {
+      if (settled) return;
+      settled = true;
+      try { socket?.destroy(); } catch {}
+      resolve({ ok, reachable: ok, host: h, port: p, error: error ? error.message : null });
+    };
+
+    if (isNaN(p) || p < 1 || p > 65535) {
+      return finish(false, new Error(`Geçersiz port: ${port}`));
+    }
+
+    const socket = new net.Socket();
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false, new Error(`Zaman aşımı (${timeoutMs}ms)`)));
+    socket.once("error", (err) => finish(false, err));
+
+    try {
+      socket.connect(p, h);
+    } catch (err) {
+      finish(false, err);
+    }
+  });
+}
+
+/**
+ * SMTP sunucusuna bağlanır ve ilk 220 selamlama (greeting) yanıtını okur.
+ */
+export function testSmtpConnection(host, port = 587, secure = false, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let banner = "";
+    const p = Number(port) || 587;
+    const h = String(host || "127.0.0.1").trim();
+
+    let socket;
+    const finish = (ok, message = "", err = null) => {
+      if (settled) return;
+      settled = true;
+      try { socket?.destroy(); } catch {}
+      resolve({
+        ok,
+        reachable: ok,
+        host: h,
+        port: p,
+        banner: banner.trim(),
+        message: message || (ok ? "SMTP sunucusu yanıt verdi." : "SMTP sunucusuna bağlanılamadı."),
+        error: err ? err.message : null,
+      });
+    };
+
+    if (isNaN(p) || p < 1 || p > 65535) {
+      return finish(false, `Geçersiz port: ${port}`, new Error(`Geçersiz port: ${port}`));
+    }
+
+    const isSecure = Boolean(secure || p === 465);
+    try {
+      if (isSecure) {
+        socket = tls.connect(p, h, { timeout: timeoutMs, rejectUnauthorized: false });
+      } else {
+        socket = new net.Socket();
+        socket.connect(p, h);
+      }
+    } catch (err) {
+      return finish(false, `Soket hatası: ${err.message}`, err);
+    }
+
+    socket.setTimeout(timeoutMs);
+    socket.once("timeout", () => finish(false, `Zaman aşımı (${timeoutMs}ms)`, new Error("Timeout")));
+    socket.once("error", (err) => finish(false, `Bağlantı hatası: ${err.message}`, err));
+    socket.once("close", () => {
+      if (!settled) finish(false, "Bağlantı sunucu tarafından kapatıldı.");
+    });
+
+    socket.on("data", (chunk) => {
+      banner += chunk.toString("utf8");
+      if (banner.includes("\n")) {
+        const line = banner.trim();
+        if (line.startsWith("220")) {
+          finish(true, `SMTP sunucusu hazır (${line.slice(0, 100)})`);
+        } else {
+          finish(false, `Beklenmeyen SMTP yanıtı: ${line.slice(0, 100)}`);
+        }
+      }
+    });
+  });
+}
+
+/**
+ * Veritabanı bağlantısını önceden test eder (SQLite dizin izni, Postgres/MySQL TCP port denetimi).
+ */
+export async function testDatabaseConnection(dbConfig = {}, projectRoot = process.cwd()) {
+  const provider = String(dbConfig?.provider || "sqlite").toLowerCase();
+  if (provider === "sqlite") {
+    const rawUrl = dbConfig?.url || "";
+    let dbFile = rawUrl.replace(/^file:/i, "").trim();
+    if (!dbFile) dbFile = "data/app.db";
+    const resolvedPath = path.isAbsolute(dbFile) ? dbFile : path.resolve(projectRoot, dbFile);
+    const dir = path.dirname(resolvedPath);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.accessSync(dir, fs.constants.W_OK);
+      return {
+        ok: true,
+        reachable: true,
+        provider: "sqlite",
+        message: `SQLite veritabanı dizini erişilebilir ve yazılabilir (${dir}).`,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reachable: false,
+        provider: "sqlite",
+        message: `SQLite dizinine yazılamıyor: ${err.message}`,
+        error: err.message,
+      };
+    }
+  }
+
+  if (provider === "postgres" || provider === "postgresql") {
+    const host = String(dbConfig.host || "127.0.0.1").trim();
+    const port = Number(dbConfig.port) || 5432;
+    const tcp = await testTcpConnection(host, port);
+    return {
+      ok: tcp.ok,
+      reachable: tcp.reachable,
+      provider: "postgres",
+      host,
+      port,
+      message: tcp.ok
+        ? `PostgreSQL sunucusuna erişildi (${host}:${port}).`
+        : `PostgreSQL sunucusuna bağlanılamadı (${host}:${port}): ${tcp.error || "Bağlantı reddedildi"}`,
+      error: tcp.error,
+    };
+  }
+
+  if (provider === "mysql") {
+    const host = String(dbConfig.host || "127.0.0.1").trim();
+    const port = Number(dbConfig.port) || 3306;
+    const tcp = await testTcpConnection(host, port);
+    return {
+      ok: tcp.ok,
+      reachable: tcp.reachable,
+      provider: "mysql",
+      host,
+      port,
+      message: tcp.ok
+        ? `MySQL sunucusuna erişildi (${host}:${port}).`
+        : `MySQL sunucusuna bağlanılamadı (${host}:${port}): ${tcp.error || "Bağlantı reddedildi"}`,
+      error: tcp.error,
+    };
+  }
+
+  if (provider === "custom") {
+    const urlStr = String(dbConfig.url || "").trim();
+    if (!urlStr) {
+      return { ok: false, reachable: false, provider: "custom", message: "Bağlantı dizesi (URL) boş bırakılamaz." };
+    }
+    if (urlStr.startsWith("file:") || urlStr.endsWith(".db") || urlStr.endsWith(".sqlite")) {
+      return testDatabaseConnection({ provider: "sqlite", url: urlStr }, projectRoot);
+    }
+    try {
+      const parsed = new URL(urlStr);
+      const host = parsed.hostname;
+      let port = Number(parsed.port);
+      if (!port) {
+        if (parsed.protocol.startsWith("postgres")) port = 5432;
+        else if (parsed.protocol.startsWith("mysql")) port = 3306;
+        else if (parsed.protocol.startsWith("http")) port = parsed.protocol === "https:" ? 443 : 80;
+        else port = 5432;
+      }
+      if (!host) {
+        return { ok: false, reachable: false, provider: "custom", message: "URL geçerli bir host içermiyor." };
+      }
+      const tcp = await testTcpConnection(host, port);
+      return {
+        ok: tcp.ok,
+        reachable: tcp.reachable,
+        provider: "custom",
+        host,
+        port,
+        message: tcp.ok
+          ? `Veritabanı sunucusuna erişildi (${host}:${port}).`
+          : `Veritabanı sunucusuna bağlanılamadı (${host}:${port}): ${tcp.error || "Bağlantı reddedildi"}`,
+        error: tcp.error,
+      };
+    } catch (err) {
+      return { ok: false, reachable: false, provider: "custom", message: `Geçersiz veritabanı URL'si: ${err.message}`, error: err.message };
+    }
+  }
+
+  return { ok: false, reachable: false, message: `Bilinmeyen sağlayıcı: ${provider}` };
+}
+
+/**
+ * E-posta / SMTP yapılandırmasını önceden test eder.
+ */
+export async function testEmailConfiguration(emailConfig = {}) {
+  const enabled = Boolean(emailConfig.enabled);
+  if (!enabled) {
+    return {
+      ok: true,
+      reachable: false,
+      enabled: false,
+      connectionTested: false,
+      message: "E-posta gönderimi devre dışı bırakılmış.",
+    };
+  }
+  const provider = String(emailConfig.provider || "gmail").toLowerCase();
+  let host = "";
+  let port = 587;
+  let secure = Boolean(emailConfig.secure);
+
+  if (provider === "gmail") {
+    host = "smtp.gmail.com";
+    port = secure ? 465 : (Number(emailConfig.port) || 587);
+  } else {
+    host = String(emailConfig.host || "").trim();
+    port = Number(emailConfig.port) || (secure ? 465 : 587);
+  }
+
+  if (!host) {
+    return {
+      ok: false,
+      reachable: false,
+      enabled: true,
+      message: "SMTP sunucu adresi (host) belirtilmedi.",
+    };
+  }
+
+  const probe = await testSmtpConnection(host, port, secure);
+  return {
+    ok: probe.ok,
+    reachable: probe.reachable,
+    enabled: true,
+    provider,
+    host,
+    port,
+    secure,
+    banner: probe.banner,
+    message: probe.ok
+      ? `SMTP sunucusu (${host}:${port}) yanıt verdi ve hazır.`
+      : `SMTP sunucusuna (${host}:${port}) bağlanılamadı: ${probe.message || probe.error}`,
+    error: probe.error,
+  };
+}
+
+/**
+ * Projenin mimarisine göre gerekli araç zincirini (compiler/runtime) denetler.
+ */
+export function detectRequiredToolchain(detection) {
+  const kind = String(detection?.kind || "node-fullstack").toLowerCase();
+  const toolchains = {
+    node: { name: "Node.js", required: true, available: true, version: process.version },
+    python: {
+      name: "Python 3",
+      required: kind.includes("python"),
+      available: isCommandAvailable("python") || isCommandAvailable("py") || isCommandAvailable("python3"),
+    },
+    go: {
+      name: "Go",
+      required: kind.includes("go"),
+      available: isCommandAvailable("go"),
+    },
+    dotnet: {
+      name: ".NET SDK",
+      required: kind.includes("dotnet"),
+      available: isCommandAvailable("dotnet"),
+    },
+    cargo: {
+      name: "Rust (Cargo)",
+      required: kind.includes("rust"),
+      available: isCommandAvailable("cargo"),
+    },
+  };
+
+  let allRequiredAvailable = true;
+  for (const item of Object.values(toolchains)) {
+    if (item.required && !item.available) {
+      allRequiredAvailable = false;
+    }
+  }
+
+  return {
+    available: allRequiredAvailable,
+    details: toolchains,
+  };
+}
 
 export function digest(value) {
   return crypto.createHash("sha256").update(String(value || "")).digest();
@@ -34,14 +352,10 @@ const wizardDir = path.dirname(fileURLToPath(import.meta.url));
 const shimsDir = path.resolve(wizardDir, "..", "bin", "shims");
 
 /** Alt süreç çalıştırır ve çıktısını döndürür. */
-export function runCommand(command, args, cwd, extraEnv = {}) {
+export function runCommand(command, args, cwd, extraEnv = {}, onLog = null) {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env, ...extraEnv };
-    if (fs.existsSync(shimsDir)) {
-      const pathKey = process.platform === "win32" ? "Path" : "PATH";
-      const currentPath = env[pathKey] || process.env[pathKey] || "";
-      env[pathKey] = `${shimsDir}${path.delimiter}${currentPath}`;
-    }
+    const prepend = fs.existsSync(shimsDir) ? [shimsDir] : [];
+    const env = normalizeProcessEnv(process.env, extraEnv, prepend);
     const child = spawn(command, args, {
       cwd,
       env,
@@ -52,10 +366,14 @@ export function runCommand(command, args, cwd, extraEnv = {}) {
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      if (typeof onLog === "function") onLog(text);
     });
     child.stderr?.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      if (typeof onLog === "function") onLog(text);
     });
     child.once("error", (err) => reject(err));
     child.once("close", (code) => {
@@ -87,6 +405,7 @@ export function createApplyState() {
     message: "Kurulum henüz uygulanmadı.",
     steps: APPLY_STEPS.map((step) => ({ id: step.id, label: step.label, status: "pending" })),
     summary: [],
+    logs: [],
     loginUrl: null,
     publicUrl: null,
     appPort: null,
@@ -148,22 +467,103 @@ export function validateStepData(step, data, options = {}) {
     }
   } else if (step === "email") {
     if (raw.enabled === true) {
+      const provider = String(raw.provider || (raw.host ? "custom" : "gmail")).toLowerCase().trim();
+      const isCustom = provider === "custom" || Boolean(raw.host && raw.host !== "smtp.gmail.com");
       const user = String(raw.user ?? "").trim();
       const fromEmail = String(raw.fromEmail ?? "").trim();
       const fromName = String(raw.fromName ?? "").trim();
       const password = String(raw.password ?? "").replace(/\s/g, "");
-      if (!/@gmail\.com$/i.test(user)) {
-        issues.push({ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: ["email.user"] });
+
+      if (isCustom) {
+        const host = String(raw.host ?? "").trim();
+        if (!host || host.length > 253 || /[\s\r\n\0]/.test(host)) {
+          issues.push({ code: "invalid_host", message: "Geçerli bir SMTP sunucu adresi (host) girin.", path: ["email.host"] });
+        }
+        const port = Number(raw.port || 587);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          issues.push({ code: "invalid_port", message: "Geçerli bir SMTP portu (1-65535) girin.", path: ["email.port"] });
+        }
+        if (!user || user.length > 254 || /[\r\n\0]/.test(user)) {
+          issues.push({ code: "invalid_string", message: "Geçerli bir SMTP kullanıcı adı girin.", path: ["email.user"] });
+        }
+        if (!fromEmail || fromEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail) || /[\r\n\0]/.test(fromEmail)) {
+          issues.push({ code: "invalid_email", message: "Geçerli bir gönderen e-posta adresi girin.", path: ["email.fromEmail"] });
+        }
+        if (password.length < 1 || password.length > 128) {
+          issues.push({ code: "custom", message: "Geçerli bir SMTP parolası girin.", path: ["email", "password"] });
+        }
+      } else {
+        if (!/@gmail\.com$/i.test(user)) {
+          issues.push({ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: ["email.user"] });
+        }
+        if (!/@gmail\.com$/i.test(fromEmail)) {
+          issues.push({ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: ["email.fromEmail"] });
+        }
+        if (password.length < 16 || password.length > 128) {
+          issues.push({ code: "custom", message: "Geçerli Gmail uygulama parolası girin.", path: ["email", "password"] });
+        }
       }
-      if (!/@gmail\.com$/i.test(fromEmail)) {
-        issues.push({ code: "invalid_gmail", message: "Yalnız Gmail adresi kullanılabilir.", path: ["email.fromEmail"] });
-      }
+
       if (!fromName || fromName.length > 100 || /[\r\n\0]/.test(fromName)) {
         issues.push({ code: "invalid_string", message: "email.fromName 1-100 karakter aralığında olmalıdır.", path: ["email.fromName"] });
       }
-      if (password.length < 16 || password.length > 128) {
-        issues.push({ code: "custom", message: "Geçerli Gmail uygulama parolası girin.", path: ["email", "password"] });
+    }
+  } else if (step === "database") {
+    const provider = String(raw.provider || "sqlite").toLowerCase().trim();
+    if (["postgres", "postgresql"].includes(provider)) {
+      const host = String(raw.host ?? "").trim();
+      if (!host || host.length > 253 || /[\s\r\n\0]/.test(host)) {
+        issues.push({ code: "invalid_host", message: "Geçerli bir veritabanı sunucu adresi (host) girin.", path: ["database.host"] });
       }
+      const port = Number(raw.port || 5432);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        issues.push({ code: "invalid_port", message: "Geçerli bir PostgreSQL portu (1-65535) girin.", path: ["database.port"] });
+      }
+      const name = String(raw.name ?? "").trim();
+      if (!name || name.length > 100 || /[\s\r\n\0]/.test(name)) {
+        issues.push({ code: "invalid_string", message: "Geçerli bir veritabanı adı girin.", path: ["database.name"] });
+      }
+      const user = String(raw.user ?? "").trim();
+      if (!user || user.length > 100 || /[\r\n\0]/.test(user)) {
+        issues.push({ code: "invalid_string", message: "Geçerli bir veritabanı kullanıcı adı girin.", path: ["database.user"] });
+      }
+      const password = String(raw.password ?? "");
+      if (password.length > 512 || /[\r\n\0]/.test(password)) {
+        issues.push({ code: "invalid_string", message: "Veritabanı parolasında geçersiz karakter var.", path: ["database.password"] });
+      }
+    } else if (provider === "mysql") {
+      const host = String(raw.host ?? "").trim();
+      if (!host || host.length > 253 || /[\s\r\n\0]/.test(host)) {
+        issues.push({ code: "invalid_host", message: "Geçerli bir veritabanı sunucu adresi (host) girin.", path: ["database.host"] });
+      }
+      const port = Number(raw.port || 3306);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        issues.push({ code: "invalid_port", message: "Geçerli bir MySQL portu (1-65535) girin.", path: ["database.port"] });
+      }
+      const name = String(raw.name ?? "").trim();
+      if (!name || name.length > 100 || /[\s\r\n\0]/.test(name)) {
+        issues.push({ code: "invalid_string", message: "Geçerli bir veritabanı adı girin.", path: ["database.name"] });
+      }
+      const user = String(raw.user ?? "").trim();
+      if (!user || user.length > 100 || /[\r\n\0]/.test(user)) {
+        issues.push({ code: "invalid_string", message: "Geçerli bir veritabanı kullanıcı adı girin.", path: ["database.user"] });
+      }
+      const password = String(raw.password ?? "");
+      if (password.length > 512 || /[\r\n\0]/.test(password)) {
+        issues.push({ code: "invalid_string", message: "Veritabanı parolasında geçersiz karakter var.", path: ["database.password"] });
+      }
+    } else if (provider === "custom") {
+      const url = String(raw.url ?? "").trim();
+      if (!url || url.length > 2048 || /[\r\n\0]/.test(url)) {
+        issues.push({ code: "invalid_url", message: "Geçerli bir bağlantı dizesi (connection string) girin.", path: ["database.url"] });
+      }
+    } else if (provider === "sqlite") {
+      const url = String(raw.url ?? "").trim();
+      if (url && (url.length > 2048 || /[\r\n\0]/.test(url))) {
+        issues.push({ code: "invalid_string", message: "SQLite dosya yolunda geçersiz karakterler var.", path: ["database.url"] });
+      }
+    } else {
+      issues.push({ code: "invalid_provider", message: "Desteklenmeyen veritabanı sağlayıcısı.", path: ["database.provider"] });
     }
   } else {
     try {
@@ -255,12 +655,20 @@ export async function executeSetupApply({
   const pendingPath = currentPaths.pending || currentPaths.pendingPath;
   const artifactRoot = currentPaths.setupArtifacts || currentPaths.artifactRoot;
   const databaseUrl = currentPaths.databaseUrl;
+  const effectiveDatabaseUrl = (payload.database?.url && payload.database.url.trim())
+    ? payload.database.url.trim()
+    : (payload.database?.provider && payload.database.provider !== "sqlite"
+      ? buildDatabaseUrl(payload.database, currentPaths.databaseUrl)
+      : currentPaths.databaseUrl);
 
   fs.mkdirSync(dataRoot, { recursive: true });
   fs.mkdirSync(path.dirname(envPath), { recursive: true });
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  if (fs.existsSync(lockPath)) throw new Error("Kurulum daha önce tamamlanmış. Sihirbaz yeniden çalıştırılamaz.");
-  if (fs.existsSync(envPath) && !payload.overwriteExistingEnv) {
+  const isReconfigure = Boolean(options.reconfigure || payload.reconfigure);
+  if (fs.existsSync(lockPath) && !isReconfigure && !payload.overwriteExistingEnv) {
+    throw new Error("Kurulum daha önce tamamlanmış. Sihirbaz yeniden çalıştırılamaz. Yeniden yapılandırmak için .env üzerine yazma onayını seçin.");
+  }
+  if (fs.existsSync(envPath) && !payload.overwriteExistingEnv && !isReconfigure) {
     throw new Error(".env zaten var. İçeriğini doğrulayın veya yedekleyerek değiştirme onayını seçin.");
   }
   let pendingHandle;
@@ -270,12 +678,30 @@ export async function executeSetupApply({
     throw new Error("Başka bir kurulum işlemi çalışıyor veya önceki işlem yarım kaldı.");
   }
 
+  const knownSecrets = [
+    payload.admin?.password,
+    payload.email?.password,
+    payload.database?.password,
+  ].filter(Boolean);
+
+  const appendLog = (chunk) => {
+    if (!applyJob.logs) applyJob.logs = [];
+    const text = redactSecrets(String(chunk || ""), knownSecrets);
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    for (const l of lines) {
+      applyJob.logs.push(l);
+    }
+    if (applyJob.logs.length > 1000) {
+      applyJob.logs = applyJob.logs.slice(-1000);
+    }
+  };
+
   const passwordHash = payload.admin && payload.admin.password ? (payload.admin.passwordHash || hashAdminPassword(payload.admin.password)) : (payload.admin?.passwordHash || "");
   const envExample = parseEnvExample(projectRoot);
   const envText = buildServerEnv(
     { ...payload, admin: { ...payload.admin, passwordHash } },
     undefined,
-    databaseUrl,
+    effectiveDatabaseUrl,
     envExample.variables,
     detection.scenario,
   );
@@ -315,13 +741,13 @@ export async function executeSetupApply({
       if (serverPkg?.scripts?.build) {
         markStep("buildServer", "running");
         const inv = pmRunInvocation(pm, "build", path.join(projectRoot, "server"));
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
         markStep("buildServer", "done", "server build");
         summary.push("Sunucu derlemesi tamamlandı.");
       } else if (!serverPkg && !clientPkg && rootPkg?.scripts?.build) {
         markStep("buildServer", "running");
         const inv = pmRunInvocation(pm, "build", projectRoot);
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
         markStep("buildServer", "done", "root build");
         summary.push("Proje derlemesi tamamlandı.");
       } else {
@@ -331,13 +757,13 @@ export async function executeSetupApply({
       if (clientPkg?.scripts?.build) {
         markStep("buildClient", "running");
         const inv = pmRunInvocation(pm, "build", path.join(projectRoot, "client"));
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
         markStep("buildClient", "done", "client build");
         summary.push("İstemci derlemesi tamamlandı.");
       } else if (rootPkg?.scripts?.["build:client"]) {
         markStep("buildClient", "running");
         const inv = pmRunInvocation(pm, "build:client", projectRoot);
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
         markStep("buildClient", "done", "build:client");
         summary.push("İstemci derlemesi tamamlandı.");
       } else {
@@ -359,11 +785,19 @@ export async function executeSetupApply({
       if (migrateScript) {
         markStep("migrate", "running", migrateScript);
         const inv = pmRunInvocation(pm, migrateScript, migrateDir);
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, { DATABASE_URL: databaseUrl });
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, { DATABASE_URL: effectiveDatabaseUrl }, appendLog);
         markStep("migrate", "done", migrateScript);
         summary.push("Veritabanı migration'ları uygulandı.");
       } else {
-        markStep("migrate", "skipped", "Migration betiği bulunamadı.");
+        const polyglotMigrate = resolvePolyglotMigration(projectRoot, detection?.kind, setupConfig);
+        if (polyglotMigrate) {
+          markStep("migrate", "running", polyglotMigrate.label);
+          await runCommand(polyglotMigrate.command, polyglotMigrate.args, polyglotMigrate.cwd || projectRoot, { DATABASE_URL: effectiveDatabaseUrl }, appendLog);
+          markStep("migrate", "done", polyglotMigrate.label);
+          summary.push(`${polyglotMigrate.label} uygulandı.`);
+        } else {
+          markStep("migrate", "skipped", "Migration betiği bulunamadı.");
+        }
       }
     }
 
@@ -374,6 +808,37 @@ export async function executeSetupApply({
         `${JSON.stringify({ name: payload.admin.name, email: payload.admin.email, passwordHash, createdAt: new Date().toISOString() }, null, 2)}\n`,
         { encoding: "utf8", mode: 0o600 },
       );
+      let seedInv = null;
+      let seedLabel = "";
+      if (setupConfig?.seed) {
+        if (typeof setupConfig.seed === "string") {
+          seedInv = { command: setupConfig.seed, args: [], cwd: projectRoot };
+          seedLabel = setupConfig.seed;
+        } else if (typeof setupConfig.seed === "object" && setupConfig.seed.command) {
+          seedInv = {
+            command: setupConfig.seed.command,
+            args: Array.isArray(setupConfig.seed.args) ? setupConfig.seed.args : [],
+            cwd: setupConfig.seed.cwd ? path.resolve(projectRoot, setupConfig.seed.cwd) : projectRoot,
+          };
+          seedLabel = `${setupConfig.seed.command} ${(setupConfig.seed.args || []).join(" ")}`.trim();
+        }
+      }
+      if (!seedInv) {
+        const seedScript = ["prisma:seed", "db:seed", "seed"].find((name) => Boolean(rootPkg?.scripts?.[name] || serverPkg?.scripts?.[name]));
+        if (seedScript) {
+          const seedDir = serverPkg?.scripts?.[seedScript] ? path.join(projectRoot, "server") : projectRoot;
+          seedInv = pmRunInvocation(pm, seedScript, seedDir);
+          seedLabel = seedScript;
+        }
+      }
+      if (seedInv) {
+        try {
+          await runCommand(seedInv.command, seedInv.args, seedInv.cwd || projectRoot, { DATABASE_URL: effectiveDatabaseUrl }, appendLog);
+          summary.push(`Veritabanı tohumlama (${seedLabel}) uygulandı.`);
+        } catch (seedErr) {
+          summary.push(`Veritabanı tohumlama atlandı veya başarısız oldu (${seedLabel}): ${seedErr.message}`);
+        }
+      }
       markStep("admin", "done", payload.admin.email);
       summary.push("İlk yönetici hesabı oluşturuldu.");
     } else {
@@ -421,6 +886,7 @@ export async function executeSetupApply({
     applyJob.status = "success";
     applyJob.message = "Kurulum başarıyla tamamlandı. Artık uygulamaya gidebilirsiniz.";
     applyJob.summary = summary;
+    return summary;
   } catch (err) {
     if (fs.existsSync(temporaryEnv)) {
       try {

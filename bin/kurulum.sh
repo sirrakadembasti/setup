@@ -103,11 +103,17 @@ else
 fi
 
 if [ -n "$HOLDER_PID" ]; then
+  HOLDER_NAME=$(ps -p "$HOLDER_PID" -o comm= 2>/dev/null || echo "")
+  if [ -n "$HOLDER_NAME" ]; then
+    PROCESS_INFO="Portu tutan süreç: $HOLDER_NAME (PID $HOLDER_PID)"
+  else
+    PROCESS_INFO="Portu tutan süreç: PID $HOLDER_PID"
+  fi
   cat <<EOF
 
 [UYARI] Kurulum başlangıç portu zaten kullanımda: 127.0.0.1:$CHECK_PORT
 
-Portu tutan süreç: PID $HOLDER_PID
+$PROCESS_INFO
 
 Yapılması gerekenler:
   1. Hâlâ açık bir kurulum penceresi varsa onu kullanın veya kapatın.
@@ -138,10 +144,16 @@ else
 fi
 
 if [ -n "$WIZARD_HOLDER" ]; then
+  WIZARD_NAME=$(ps -p "$WIZARD_HOLDER" -o comm= 2>/dev/null || echo "")
+  if [ -n "$WIZARD_NAME" ]; then
+    WIZARD_PROCESS_INFO="Portu tutan süreç: $WIZARD_NAME (PID $WIZARD_HOLDER)"
+  else
+    WIZARD_PROCESS_INFO="Portu tutan süreç: PID $WIZARD_HOLDER"
+  fi
   cat <<EOF
 
 [UYARI] Sihirbaz portu zaten kullanımda: 127.0.0.1:$WIZARD_PORT
-Portu tutan süreç: PID $WIZARD_HOLDER
+$WIZARD_PROCESS_INFO
 EOF
   printf '%s' "Sihirbaz portunu tutan süreç şimdi durdurulsun mu? [E/H]: "
   read -r answer || answer="H"

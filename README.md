@@ -75,6 +75,11 @@ node /path/to/setup/bin/setup.mjs init --offline
 - **Sıfır Bağımlılık:** Yalnızca Node.js (>=18) veya Bun yerleşik modüllerini kullanır; `npm install` gerektirmez.
 - **Dual npm / bunx Desteği:** İş ortamlarında `npm` çalışmasa dahi sistemdeki `bun` algılanarak kurulumdan derlemeye tüm süreç sorunsuz tamamlanır.
 - **Dinamik Paket Yöneticisi Fallback'i:** Proje `pnpm` veya `yarn` istese bile sistemde o araç yoksa ve yalnızca `bun` varsa, kurulum ve derleme otomatik olarak `bun`'a yönlendirilir; alt script çağrıları (`bin/shims`) çökmeden çalışır.
+- **Esnek Veritabanı ve Kurumsal SMTP:** SQLite'ın yanı sıra PostgreSQL, MySQL ve Özel Bağlantı Dizesi (Connection String) desteği; Google Gmail ve kurumsal SMTP sunucuları (Microsoft 365, Exchange vb.) ile tam uyumluluk.
+- **Canlı Ağ Sınaması (Active Pre-Apply Probing):** Veritabanı (TCP port) ve SMTP sunucusuna (ESMTP 220 banner okuma) arayüzden tek tıkla canlı bağlantı testi.
+- **Canlı İşlem Günlüğü ve Güvenli Sır Maskeleme:** Kurulum adımları esnasında derleme ve migration çıktıları arayüzdeki canlı terminal konsolundan izlenir; parolalar ve bağlantı sırları (`******`) otomatik sansürlenir.
+- **Çok Dilli Migration ve Tohumlama (Seeding):** Node.js script'lerinin yanı sıra Django, Alembic, .NET EF, Rust migration'ları ve otomatik `seed` betiği yürütümü.
+- **Yeniden Yapılandırma Modu (`--reconfigure`):** Kurulu sistemi yıkıcı temiz kuruluma zorlamadan ayarları, portları ve `.env` dosyasını güvenle güncelleme imkanı.
 - **Güvenli:** Tarayıcı uygulamalarına gizli anahtarları sızdırmaz, CSRF ve timing-safe korumalıdır.
 - **Esnek:** Doğrudan CLI ile kullanılabileceği gibi Express middleware'i, Next.js API Route'u veya Electron IPC içine gömülebilir.
 

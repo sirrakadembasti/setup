@@ -761,6 +761,10 @@ Hedef reponun kök dizinindeki `setup.config.json` üzerinden portları, kurulum
     "enabled": true,
     "title": "Örnek Uygulama Kurulum Sihirbazı"
   },
+  "seed": {
+    "command": "npm",
+    "args": ["run", "db:seed"]
+  },
   "paths": {
     "env": ".env",
     "dataDir": "data",
@@ -769,12 +773,16 @@ Hedef reponun kök dizinindeki `setup.config.json` üzerinden portları, kurulum
 }
 ```
 
+> **İpucu (Veritabanı Tohumlama - Seeding):** Projenizin `package.json` dosyasında `prisma:seed`, `db:seed` veya `seed` script'i varsa veya yukarıdaki gibi `setup.config.json` içinde `seed` nesnesi tanımlanmışsa, kurulum sırasında ilk yönetici oluşturulduktan sonra tohumlama adımı otomatik olarak çalıştırılır.
+
 ---
 
 ## 4. Güvenlik Standartları
 
 - **Yerel Dinleme:** Kurulum sunucuları (`5049` ve `5050`) yalnızca `127.0.0.1` arayüzünü dinler; uzak sunucularda SSH tüneli (`ssh -L 5049:127.0.0.1:5049 -L 5050:127.0.0.1:5050 user@sunucu`) ile güvenle erişilir.
 - **Kriptografik Oturum, CSRF ve Beyaz Liste CORS:** Her oturumda 24 baytlık tek kullanımlık token üretilir, `HttpOnly` + `SameSite=Strict` çerezleri (`setup.bootstrap`, `setup.wizard`) ve `crypto.timingSafeEqual` doğrulaması kullanılır. Yalnızca `SETUP_ALLOWED_ORIGINS` ile açıkça izin verilen masaüstü/SPA kökenlerine CORS yanıtı dönülür.
+- **Güvenli Günlük & Sır Maskeleme:** Kurulum terminal günlüğünde (`applyJob.logs`), yönetici parolası, veritabanı parolası, e-posta parolası ve bağlantı URL'lerindeki (`postgresql://user:pass@host`) kimlik bilgileri `******` ile otomatik olarak sansürlenir.
+- **Canlı Ağ Sınaması (Active Pre-Apply Probing):** Veritabanı (`/api/test-database`) ve SMTP sunucusu (`/api/test-email`) için form onaylanmadan önce soket/el sıkışma düzeyinde aktif bağlantı testi yapılır; hatalı bilgiler erken yakalanır.
 - **SPA Gizli Bilgi İzolasyonu:** Statik ve SPA projelerinde üretilen `runtime-config.json` ve `env-config.js` dosyalarına yalnız `VITE_`, `PUBLIC_`, `NEXT_PUBLIC_` ve `REACT_APP_` önekli değişkenler dahil edilir; `SESSION_SECRET`, `ADMIN_PASSWORD_HASH`, `EMAIL_PASS` ve `DATABASE_URL` kesinlikle dışarıda bırakılır.
 - **Doğrulanmış Yedekleme:** Temiz kurulum öncesinde mevcut `.env`, veritabanı ve yüklenen dosyalar SHA-256 özetleriyle `backups/reinstall-<tarih>/manifest.json` altına yedeklenir.
 
@@ -875,6 +883,7 @@ node bin/setup.mjs help     # Yardım kılavuzunu gösterir
 --update-package-json    # init sırasında package.json içine "setup" script'i ekler
 --no-open                # Tarayıcıyı otomatik olarak açmaz
 --check-only             # Yalnızca durum JSON çıktısını yazdırıp çıkar
+--reconfigure            # Kurulu ve kilitli projede mevcut verileri silmeden sihirbazı ayar güncellemesi için açar
 ```
 
 ---

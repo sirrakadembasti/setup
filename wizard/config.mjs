@@ -31,6 +31,34 @@ function validateEmail(value, fieldPath, requireGmail = false) {
   return str;
 }
 
+export function buildDatabaseUrl(db, defaultSqliteUrl = "file:../data/app.db") {
+  if (!db || typeof db !== "object") return defaultSqliteUrl;
+  const provider = String(db.provider || "sqlite").toLowerCase().trim();
+  if (["postgres", "postgresql"].includes(provider)) {
+    const host = db.host || "localhost";
+    const port = Number(db.port) || 5432;
+    const name = db.name || "app";
+    const user = db.user ? encodeURIComponent(db.user) : "";
+    const pass = db.password ? `:${encodeURIComponent(db.password)}` : "";
+    const auth = (user || pass) ? `${user}${pass}@` : "";
+    return `postgresql://${auth}${host}:${port}/${encodeURIComponent(name)}`;
+  }
+  if (provider === "mysql") {
+    const host = db.host || "localhost";
+    const port = Number(db.port) || 3306;
+    const name = db.name || "app";
+    const user = db.user ? encodeURIComponent(db.user) : "";
+    const pass = db.password ? `:${encodeURIComponent(db.password)}` : "";
+    const auth = (user || pass) ? `${user}${pass}@` : "";
+    return `mysql://${auth}${host}:${port}/${encodeURIComponent(name)}`;
+  }
+  if (provider === "custom") {
+    return String(db.url || "").trim();
+  }
+  // sqlite
+  return String(db.url || "").trim() || defaultSqliteUrl;
+}
+
 export function parseSetupPayload(raw, options = {}) {
   const issues = [];
   if (!raw || typeof raw !== "object") {
@@ -88,17 +116,154 @@ export function parseSetupPayload(raw, options = {}) {
   let email = { enabled: false };
   if (raw.email?.enabled === true) {
     try {
-      const user = validateEmail(raw.email.user, "email.user", true);
-      const fromEmail = validateEmail(raw.email.fromEmail, "email.fromEmail", true);
+      const provider = String(raw.email.provider || (raw.email.host ? "custom" : "gmail")).toLowerCase().trim();
+      const isCustom = provider === "custom" || Boolean(raw.email.host && raw.email.host !== "smtp.gmail.com");
+      const requireGmail = !isCustom;
+
+      let host = "smtp.gmail.com";
+      let port = 587;
+      let secure = false;
+
+      if (isCustom) {
+        host = validateCleanText(raw.email.host, "email.host", 253, 1);
+        if (/[\s\r\n\0]/.test(host)) {
+          throw new ValidationError([{ code: "invalid_host", message: "Geçerli bir SMTP sunucu adresi (host) girin.", path: ["email", "host"] }]);
+        }
+        const portNum = Number(raw.email.port || 587);
+        if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+          throw new ValidationError([{ code: "invalid_port", message: "SMTP portu 1-65535 aralığında olmalıdır.", path: ["email", "port"] }]);
+        }
+        port = portNum;
+        secure = Boolean(raw.email.secure);
+      } else {
+        const portNum = Number(raw.email.port || 587);
+        port = Number.isInteger(portNum) && portNum >= 1 && portNum <= 65535 ? portNum : 587;
+        secure = Boolean(raw.email.secure ?? (port === 465));
+      }
+
+      const user = validateEmail(raw.email.user, "email.user", requireGmail);
+      const fromEmail = validateEmail(raw.email.fromEmail, "email.fromEmail", requireGmail);
       const fromName = validateCleanText(raw.email.fromName, "email.fromName", 100, 1);
       const password = String(raw.email.password ?? "").replace(/\s/g, "");
-      if (password.length < 16 || password.length > 128) {
-        issues.push({ code: "custom", message: "Geçerli Gmail uygulama parolası girin.", path: ["email", "password"] });
+
+      const minPassLen = isCustom ? 1 : 16;
+      if (password.length < minPassLen || password.length > 128) {
+        issues.push({
+          code: "custom",
+          message: isCustom ? "Geçerli bir SMTP parolası girin." : "Geçerli Gmail uygulama parolası girin.",
+          path: ["email", "password"],
+        });
       }
-      email = { enabled: true, user, password, fromEmail, fromName };
+      email = { enabled: true, provider: isCustom ? "custom" : "gmail", host, port, secure, user, password, fromEmail, fromName };
     } catch (err) {
       if (err.issues) issues.push(...err.issues);
       else issues.push({ code: "custom", message: err.message, path: ["email"] });
+    }
+  }
+
+  let database = { provider: "sqlite" };
+  if (raw.database && typeof raw.database === "object") {
+    const rawProvider = String(raw.database.provider || "sqlite").toLowerCase().trim();
+    if (["postgres", "postgresql"].includes(rawProvider)) {
+      try {
+        const dbHost = validateCleanText(raw.database.host || "localhost", "database.host", 253, 1);
+        if (/[\s\r\n\0]/.test(dbHost)) {
+          throw new ValidationError([{ code: "invalid_host", message: "Geçerli bir veritabanı host adresi girin.", path: ["database", "host"] }]);
+        }
+        const dbPort = Number(raw.database.port || 5432);
+        if (!Number.isInteger(dbPort) || dbPort < 1 || dbPort > 65535) {
+          throw new ValidationError([{ code: "invalid_port", message: "Veritabanı portu 1-65535 aralığında olmalıdır.", path: ["database", "port"] }]);
+        }
+        const dbName = validateCleanText(raw.database.name || "app", "database.name", 100, 1);
+        const dbUser = String(raw.database.user ?? "postgres").trim();
+        if (dbUser.length > 100 || /[\r\n\0]/.test(dbUser)) {
+          throw new ValidationError([{ code: "invalid_string", message: "Veritabanı kullanıcı adı geçersiz.", path: ["database", "user"] }]);
+        }
+        const dbPassword = String(raw.database.password ?? "");
+        if (dbPassword.length > 512 || /[\r\n\0]/.test(dbPassword)) {
+          throw new ValidationError([{ code: "invalid_string", message: "Veritabanı parolası geçersiz karakter içeriyor.", path: ["database", "password"] }]);
+        }
+        const builtUrl = buildDatabaseUrl({
+          provider: "postgres",
+          host: dbHost,
+          port: dbPort,
+          name: dbName,
+          user: dbUser,
+          password: dbPassword,
+        });
+        database = {
+          provider: "postgres",
+          host: dbHost,
+          port: dbPort,
+          name: dbName,
+          user: dbUser,
+          password: dbPassword,
+          url: builtUrl,
+        };
+      } catch (err) {
+        if (err.issues) issues.push(...err.issues);
+        else issues.push({ code: "custom", message: err.message, path: ["database"] });
+      }
+    } else if (rawProvider === "mysql") {
+      try {
+        const dbHost = validateCleanText(raw.database.host || "localhost", "database.host", 253, 1);
+        if (/[\s\r\n\0]/.test(dbHost)) {
+          throw new ValidationError([{ code: "invalid_host", message: "Geçerli bir veritabanı host adresi girin.", path: ["database", "host"] }]);
+        }
+        const dbPort = Number(raw.database.port || 3306);
+        if (!Number.isInteger(dbPort) || dbPort < 1 || dbPort > 65535) {
+          throw new ValidationError([{ code: "invalid_port", message: "Veritabanı portu 1-65535 aralığında olmalıdır.", path: ["database", "port"] }]);
+        }
+        const dbName = validateCleanText(raw.database.name || "app", "database.name", 100, 1);
+        const dbUser = String(raw.database.user ?? "root").trim();
+        if (dbUser.length > 100 || /[\r\n\0]/.test(dbUser)) {
+          throw new ValidationError([{ code: "invalid_string", message: "Veritabanı kullanıcı adı geçersiz.", path: ["database", "user"] }]);
+        }
+        const dbPassword = String(raw.database.password ?? "");
+        if (dbPassword.length > 512 || /[\r\n\0]/.test(dbPassword)) {
+          throw new ValidationError([{ code: "invalid_string", message: "Veritabanı parolası geçersiz karakter içeriyor.", path: ["database", "password"] }]);
+        }
+        const builtUrl = buildDatabaseUrl({
+          provider: "mysql",
+          host: dbHost,
+          port: dbPort,
+          name: dbName,
+          user: dbUser,
+          password: dbPassword,
+        });
+        database = {
+          provider: "mysql",
+          host: dbHost,
+          port: dbPort,
+          name: dbName,
+          user: dbUser,
+          password: dbPassword,
+          url: builtUrl,
+        };
+      } catch (err) {
+        if (err.issues) issues.push(...err.issues);
+        else issues.push({ code: "custom", message: err.message, path: ["database"] });
+      }
+    } else if (rawProvider === "custom") {
+      const url = String(raw.database.url ?? "").trim();
+      if (!url || url.length > 2048 || /[\r\n\0]/.test(url)) {
+        issues.push({ code: "invalid_url", message: "Geçerli bir veritabanı bağlantı dizesi girin.", path: ["database", "url"] });
+      }
+      database = {
+        provider: "custom",
+        url,
+      };
+    } else if (rawProvider === "sqlite") {
+      const url = String(raw.database.url ?? "").trim();
+      if (url && (url.length > 2048 || /[\r\n\0]/.test(url))) {
+        issues.push({ code: "invalid_string", message: "SQLite dosya yolunda geçersiz karakterler var.", path: ["database", "url"] });
+      }
+      database = {
+        provider: "sqlite",
+        url: url || undefined,
+      };
+    } else {
+      issues.push({ code: "invalid_provider", message: "Desteklenmeyen veritabanı sağlayıcısı.", path: ["database", "provider"] });
     }
   }
 
@@ -131,6 +296,7 @@ export function parseSetupPayload(raw, options = {}) {
     server: { host, port },
     admin,
     email,
+    database,
     customEnv,
     buildClient: raw.buildClient !== undefined ? Boolean(raw.buildClient) : true,
     overwriteExistingEnv: Boolean(raw.overwriteExistingEnv),
@@ -204,11 +370,21 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
   const isDesktop = Boolean(scenario?.isDesktop);
   // Tarayıcıda çalışan statik uygulamada sunucu sırrı/oturum anahtarı yoktur; masaüstünde sunucu ayarları gerekmez.
   const needsServerCore = !isStatic && !isDesktop;
-  // Yerel (SQLite/Prisma) veritabanı yolu yalnızca algılanırsa veya .env.example bildirirse yazılır;
-  // Python/Go/.NET/Rust gibi projelere eski uygulamanın SQLite yolu dayatılmaz.
-  const needsDatabase = scenario ? Boolean(scenario.usesLocalDatabase) || declared.has("DATABASE_URL") : true;
+  // Yerel (SQLite/Prisma) veritabanı yolu yalnızca algılanırsa veya .env.example bildirirse ya da kullanıcı açıkça SQLite dışı/özel bir veritabanı seçtiyse yazılır;
+  // Python/Go/.NET/Rust gibi projelere varsayılan SQLite yolu dayatılmaz.
+  const isExplicitDb = Boolean(
+    payload.database &&
+    (payload.database.provider !== "sqlite" || payload.database.url)
+  );
+  const needsDatabase = scenario ? Boolean(scenario.usesLocalDatabase) || declared.has("DATABASE_URL") || isExplicitDb : true;
   const needsNodeEnv = scenario ? Boolean(scenario.usesNodeEnv) || declared.has("NODE_ENV") : true;
   const needsSessionSecret = scenario ? Boolean(payload.admin?.email) || declared.has("SESSION_SECRET") : true;
+
+  const effectiveDatabaseUrl = payload.database?.url
+    ? payload.database.url
+    : (payload.database?.provider && payload.database.provider !== "sqlite"
+      ? buildDatabaseUrl(payload.database, databaseUrl)
+      : (payload.databaseUrl || databaseUrl));
 
   const writtenKeys = new Set();
   const lines = [
@@ -220,7 +396,7 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     writtenKeys.add(key);
   };
 
-  if (needsDatabase) put("DATABASE_URL", envValue(databaseUrl));
+  if (needsDatabase) put("DATABASE_URL", envValue(effectiveDatabaseUrl));
   if (needsServerCore) {
     if (needsSessionSecret) put("SESSION_SECRET", envValue(sessionSecret));
     if (needsNodeEnv) put("NODE_ENV", "production");
@@ -252,8 +428,12 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
   }
 
   if (needsServerCore && (payload.email?.enabled || declaredAny("EMAIL_"))) {
-    put("EMAIL_PORT", "587");
     if (payload.email?.enabled) {
+      const emailHost = payload.email.host || (payload.email.provider === "custom" ? "localhost" : "smtp.gmail.com");
+      const emailPort = String(payload.email.port || 587);
+      put("EMAIL_HOST", envValue(emailHost));
+      put("EMAIL_PORT", emailPort);
+      put("EMAIL_SECURE", payload.email.secure ? "true" : "false");
       put("EMAIL_USER", envValue(payload.email.user));
       put("EMAIL_PASS", envValue(payload.email.password));
       put("EMAIL_FROM", envValue(payload.email.fromEmail));
@@ -262,7 +442,8 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
       put("EMAIL_GREETING_TIMEOUT", "10000");
       put("EMAIL_SOCKET_TIMEOUT", "20000");
     } else {
-      lines.push("# Gmail gönderimi kurulum sırasında etkinleştirilmedi.");
+      put("EMAIL_PORT", "587");
+      lines.push("# E-posta (SMTP) gönderimi kurulum sırasında etkinleştirilmedi.");
     }
   }
 

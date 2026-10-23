@@ -6,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import {
   CLEAN_INSTALL_CONFIRMATION,
+  checkDependencies,
   clearCommandAvailabilityCache,
   createVerifiedBackup,
   describePortConflict,
@@ -347,5 +348,75 @@ test("setup-bootstrap --check-only pnpm projesinde sistemde yalnız bun varsa bu
     );
   }
 });
+
+test("checkDependencies: çok dilli (Python, Rust, Go) bağımlılık varlığını doğru denetler", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-polyglot-deps-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  // 1. Python projesi: requirements.txt var ama .venv yok -> hazır değil
+  fs.writeFileSync(path.join(root, "requirements.txt"), "fastapi==0.115.0\n", "utf8");
+  const pyCheck1 = checkDependencies(root);
+  assert.equal(pyCheck1.ready, false);
+  assert.equal(pyCheck1.python?.ready, false);
+
+  // .venv eklendiğinde -> hazır
+  const venvDir = process.platform === "win32"
+    ? path.join(root, ".venv", "Scripts")
+    : path.join(root, ".venv", "bin");
+  fs.mkdirSync(venvDir, { recursive: true });
+  const pyBin = process.platform === "win32" ? "python.exe" : "python";
+  fs.writeFileSync(path.join(venvDir, pyBin), "", "utf8");
+  const pyCheck2 = checkDependencies(root);
+  assert.equal(pyCheck2.ready, true);
+  assert.equal(pyCheck2.python?.ready, true);
+
+  // 2. Rust projesi: Cargo.toml var ama Cargo.lock/target yok -> hazır değil
+  const rustRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kur-rust-deps-"));
+  t.after(() => fs.rmSync(rustRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(rustRoot, "Cargo.toml"), "[package]\nname = \"test\"\nversion = \"0.1.0\"\n", "utf8");
+  const rustCheck1 = checkDependencies(rustRoot);
+  assert.equal(rustCheck1.ready, false);
+  assert.equal(rustCheck1.rust?.ready, false);
+
+  fs.writeFileSync(path.join(rustRoot, "Cargo.lock"), "", "utf8");
+  const rustCheck2 = checkDependencies(rustRoot);
+  assert.equal(rustCheck2.ready, true);
+  assert.equal(rustCheck2.rust?.ready, true);
+
+  // 3. Go projesi: go.mod var ama go.sum/vendor yok -> hazır değil
+  const goRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kur-go-deps-"));
+  t.after(() => fs.rmSync(goRoot, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(goRoot, "go.mod"), "module test\n\ngo 1.22\n", "utf8");
+  const goCheck1 = checkDependencies(goRoot);
+  assert.equal(goCheck1.ready, false);
+  assert.equal(goCheck1.go?.ready, false);
+
+  fs.writeFileSync(path.join(goRoot, "go.sum"), "", "utf8");
+  const goCheck2 = checkDependencies(goRoot);
+  assert.equal(goCheck2.ready, true);
+  assert.equal(goCheck2.go?.ready, true);
+});
+
+test("setup-bootstrap: kurulu projede (installation.lock) --check-only installed döner ve UI reconfigure seçeneği hazırdır", async (t) => {
+  const { spawnSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-installed-check-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "installed-app" }), "utf8");
+  fs.mkdirSync(path.join(root, "data"), { recursive: true });
+  fs.writeFileSync(path.join(root, "data", "installation.lock"), "locked\n", "utf8");
+  fs.writeFileSync(path.join(root, ".env"), "PORT=5000\n", "utf8");
+
+  const bootstrapScript = path.join(process.cwd(), "scripts", "setup-bootstrap.mjs");
+  const res = spawnSync(process.execPath, [bootstrapScript, "--check-only"], {
+    env: { ...process.env, SETUP_PROJECT_ROOT: root },
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  assert.equal(res.status, 0, res.stderr);
+  const status = JSON.parse(res.stdout);
+  assert.equal(status.installation?.state, "installed");
+});
+
 
 

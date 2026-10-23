@@ -249,3 +249,77 @@ export function resolveLanguageProfile(root, kind, port = 5000) {
   if (language === "dotnet") return dotnetProfile(root, port);
   return rustProfile(root);
 }
+
+/**
+ * Projeye uygun çok dilli (Python, Go, .NET, Rust) veya özel migration komutunu belirler.
+ * @param {string} root
+ * @param {string} [kind] detectProject().kind
+ * @param {object} [setupConfig]
+ */
+export function resolvePolyglotMigration(root, kind = null, setupConfig = null) {
+  if (setupConfig?.migrate?.command && typeof setupConfig.migrate.command === "string") {
+    const args = Array.isArray(setupConfig.migrate.args) ? setupConfig.migrate.args : [];
+    const cmd = resolveStepCommand(root, setupConfig.migrate);
+    return {
+      label: setupConfig.migrate.label || `Özel migration (${cmd} ${args.join(" ")})`,
+      command: cmd,
+      args,
+      cwd: root,
+    };
+  }
+
+  const language = LANGUAGE_KINDS[kind];
+  if (language === "python" || exists(root, "manage.py") || exists(root, "alembic.ini")) {
+    const venvPython = resolveVenvPython(root) || resolveSystemPython() || "python";
+    if (exists(root, "manage.py")) {
+      return {
+        label: "Django migration (manage.py migrate)",
+        command: venvPython,
+        args: ["manage.py", "migrate"],
+        cwd: root,
+      };
+    }
+    if (exists(root, "alembic.ini") || exists(root, "migrations", "env.py")) {
+      return {
+        label: "Alembic migration (alembic upgrade head)",
+        command: venvPython,
+        args: ["-m", "alembic", "upgrade", "head"],
+        cwd: root,
+      };
+    }
+  }
+
+  if (language === "dotnet" || exists(root, "Migrations")) {
+    const { runProject, restoreTarget } = findDotnetProject(root);
+    const target = runProject || restoreTarget;
+    if (exists(root, "Migrations") || target) {
+      return {
+        label: ".NET EF Core migration (dotnet ef database update)",
+        command: "dotnet",
+        args: ["ef", "database", "update", ...(target ? ["--project", target] : [])],
+        cwd: root,
+      };
+    }
+  }
+
+  if (language === "rust") {
+    if (exists(root, "diesel.toml")) {
+      return {
+        label: "Diesel migration (diesel migration run)",
+        command: "diesel",
+        args: ["migration", "run"],
+        cwd: root,
+      };
+    }
+    if (exists(root, "migrations") && exists(root, "Cargo.toml")) {
+      return {
+        label: "SQLx migration (sqlx migrate run)",
+        command: "sqlx",
+        args: ["migrate", "run"],
+        cwd: root,
+      };
+    }
+  }
+
+  return null;
+}

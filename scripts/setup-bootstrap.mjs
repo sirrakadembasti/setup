@@ -24,6 +24,7 @@ import {
   loadSetupConfig,
 } from "./detect-project.mjs";
 import { resolveLanguageProfile } from "./polyglot.mjs";
+import { normalizeProcessEnv } from "../wizard/app-process.mjs";
 
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
 const setupRoot = path.resolve(scriptRoot, "..");
@@ -126,18 +127,20 @@ function stepsInvocation(steps) {
   };
 }
 
-function resolveWizardInvocation() {
+function resolveWizardInvocation(reconfigure = false) {
+  const isReconfig = Boolean(reconfigure || process.env.SETUP_RECONFIGURE === "true");
   const serverPkgPath = path.join(projectRoot, "server", "package.json");
   if (fs.existsSync(serverPkgPath)) {
     try {
       const serverPkg = JSON.parse(fs.readFileSync(serverPkgPath, "utf8"));
       if (serverPkg?.scripts?.setup) {
         const filterName = serverPkg.name || "server";
+        const extraArgs = isReconfig ? ["--", "--reconfigure"] : [];
         if (activePackageManager === "pnpm") {
-          return pmInvocation("pnpm", ["--filter", filterName, "run", "setup"]);
+          return pmInvocation("pnpm", ["--filter", filterName, "run", "setup", ...extraArgs]);
         }
         if (activePackageManager === "bun") {
-          return pmInvocation("bun", ["run", "--filter", filterName, "setup"]);
+          return pmInvocation("bun", ["run", "--filter", filterName, "setup", ...extraArgs]);
         }
       }
     } catch {
@@ -145,7 +148,9 @@ function resolveWizardInvocation() {
     }
   }
   const builtInWizard = path.join(setupRoot, "wizard", "server.mjs");
-  return { command: process.execPath, args: [builtInWizard] };
+  const args = [builtInWizard];
+  if (isReconfig) args.push("--reconfigure");
+  return { command: process.execPath, args };
 }
 
 function getPackageManagerVersion(pm = activePackageManager) {
@@ -229,25 +234,21 @@ function startSubprocessJob(type, invocation, successMessage) {
     console.log("Sihirbaz başlatılıyor. Terminal açık kalmalı; sihirbaz bu sürecin altındadır.");
   }
 
-  const childEnv = {
-    ...process.env,
-    ...(invocation.env || {}),
-    FORCE_COLOR: "0",
-    SETUP_PROJECT_ROOT: projectRoot,
-    SETUP_PROJECT_NAME: displayProjectName,
-  };
   const shimsDir = path.join(setupRoot, "bin", "shims");
-  if (fs.existsSync(shimsDir)) {
-    const pathKey = process.platform === "win32" ? "Path" : "PATH";
-    const currentPath = childEnv[pathKey] || process.env[pathKey] || "";
-    childEnv[pathKey] = `${shimsDir}${path.delimiter}${currentPath}`;
-  }
+  const prepend = fs.existsSync(shimsDir) ? [shimsDir] : [];
   if (type === "wizard") {
     if (wizardPort === port) {
       throw new Error(`Kurulum sihirbazı portu (${wizardPort}) kurulum başlangıcı ile aynı olamaz. SETUP_WIZARD_PORT değerini değiştirin.`);
     }
-    childEnv.SETUP_PORT = String(wizardPort);
   }
+
+  const childEnv = normalizeProcessEnv(process.env, {
+    ...(invocation.env || {}),
+    FORCE_COLOR: "0",
+    SETUP_PROJECT_ROOT: projectRoot,
+    SETUP_PROJECT_NAME: displayProjectName,
+    ...(type === "wizard" ? { SETUP_PORT: String(wizardPort) } : {}),
+  }, prepend);
 
   const child = spawn(invocation.command, invocation.args, {
     cwd: projectRoot,
@@ -351,7 +352,7 @@ async function readJson(req) {
   let body = "";
   for await (const chunk of req) {
     body += chunk;
-    if (body.length > 16_384) throw new BadRequestError("İstek gövdesi çok büyük.");
+    if (body.length > 262_144) throw new BadRequestError("İstek gövdesi çok büyük.");
   }
   if (!body) return {};
   try {
@@ -389,9 +390,11 @@ const byId=id=>document.getElementById(id);
 async function api(url,options={}){options.headers={"Content-Type":"application/json","X-Setup-CSRF":CSRF,...options.headers};const r=await fetch(url,options);const data=await r.json();if(!r.ok){const err=new Error(data.message||"İşlem başarısız");err.data=data;throw err}return data}
 function evidenceLabel(e){return Object.entries(e).filter(([,v])=>v).map(([k])=>({installationLock:"Kurulum kilidi",environmentFile:"Ortam dosyası",applicationDatabase:"Uygulama veritabanı",sessionDatabase:"Oturum veritabanı",deploymentConfig:"Dağıtım profili",pendingInstallation:"Yarım işlem",uploadedFiles:"Yüklenen dosyalar",dependenciesInstalled:"Paketler"}[k]||k)).join(", ")||"Kurulum verisi yok"}
 function escapeHtml(value){return String(value).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
-function render(s){const i=s.installation,r=s.runtime,j=s.job,ready=!!s.packagesReady,installed=i.state==="installed",running=j.status==="running",pmName=r.packageManager||"npm",noDeps=s.scenario&&!s.scenario.requiresDependencies;const banner=byId("scenarioBanner");if(banner){const steps=Array.isArray(s.plan?.steps)?s.plan.steps.map(st=>escapeHtml(st.label)).join(" → "):"";banner.innerHTML='<strong>Algılanan Mimari:</strong> '+escapeHtml(s.scenario?.label||s.kind||"Standart Proje")+'<br><span class="muted">'+escapeHtml(s.scenario?.summary||"")+(steps?'<br>Adımlar: '+steps:'')+'</span>'}byId("summary").innerHTML='<div class="metric">Node.js<b>'+escapeHtml(r.nodeVersion||"Bulunamadı")+' '+(r.nodeSupported?"✓":"✕")+'</b></div><div class="metric">'+escapeHtml(pmName)+'<b>'+escapeHtml(r.packageManagerVersion||"Bulunamadı")+' '+(r.packageManagerSupported?"✓":"✕")+'</b></div><div class="metric">Dizin<b>'+escapeHtml(s.directory)+'</b></div><div class="metric">Bulunanlar<b>'+escapeHtml(evidenceLabel(i.evidence))+'</b></div><div class="metric">Paket adımı<b>'+(noDeps?'Gerekmiyor ✓':ready?'Bu oturumda tamamlandı ✓':'Önce “Paketleri Kur / Onar” ✕')+'</b></div>';const names={fresh:"Yeni kurulum",partial:"Yarım/eski kurulum",installed:"Uygulama zaten kurulu"};byId("state").textContent=names[i.state];byId("state").className="state "+(i.state==="fresh"?"ok":"warn");let tip=j.message;if(installed){tip="Uygulama zaten kurulu (installation.lock var). Sihirbaz yeniden açılmaz; temiz kurulum gerekir."}else if(running){tip=j.message}else if(!ready){tip=i.evidence.dependenciesInstalled?"Paketler diskte var; sihirbaza geçmek için önce “Paketleri Kur / Onar” adımını çalıştırın.":"Önce “Paketleri Kur / Onar” ile paketleri kurun."}else{tip="Paket adımı tamam. Kurulum sihirbazına geçebilirsiniz."}byId("message").textContent=tip;byId("logs").textContent=j.logs.length?j.logs.join("\n"):"Henüz işlem çıktısı yok.";byId("logs").scrollTop=byId("logs").scrollHeight;byId("danger").classList.toggle("hidden",i.state==="fresh");const wizard=byId("wizard");wizard.disabled=installed||running||!ready;if(installed){wizard.title="Uygulama zaten kurulu; sihirbaz kapalı. Temiz kurulum gerekir."}else if(!ready){wizard.title="Önce paket kurulum adımını tamamlayın."}else{wizard.title="Kurulum sihirbazını başlat"}const installBtn=byId("install");if(noDeps){installBtn.textContent="Paket Kurulumu Gerekmiyor ✓"}installBtn.disabled=running;if(j.wizardUrl)location.href=j.wizardUrl}
+function render(s){const i=s.installation,r=s.runtime,j=s.job,ready=!!s.packagesReady,installed=i.state==="installed",running=j.status==="running",pmName=r.packageManager||"npm",noDeps=s.scenario&&!s.scenario.requiresDependencies;const banner=byId("scenarioBanner");if(banner){const steps=Array.isArray(s.plan?.steps)?s.plan.steps.map(st=>escapeHtml(st.label)).join(" → "):"";banner.innerHTML='<strong>Algılanan Mimari:</strong> '+escapeHtml(s.scenario?.label||s.kind||"Standart Proje")+'<br><span class="muted">'+escapeHtml(s.scenario?.summary||"")+(steps?'<br>Adımlar: '+steps:'')+'</span>'}byId("summary").innerHTML='<div class="metric">Node.js<b>'+escapeHtml(r.nodeVersion||"Bulunamadı")+' '+(r.nodeSupported?"✓":"✕")+'</b></div><div class="metric">'+escapeHtml(pmName)+'<b>'+escapeHtml(r.packageManagerVersion||"Bulunamadı")+' '+(r.packageManagerSupported?"✓":"✕")+'</b></div><div class="metric">Dizin<b>'+escapeHtml(s.directory)+'</b></div><div class="metric">Bulunanlar<b>'+escapeHtml(evidenceLabel(i.evidence))+'</b></div><div class="metric">Paket adımı<b>'+(noDeps?'Gerekmiyor ✓':ready?'Bu oturumda tamamlandı ✓':'Önce “Paketleri Kur / Onar” ✕')+'</b></div>';const names={fresh:"Yeni kurulum",partial:"Yarım/eski kurulum",installed:"Uygulama zaten kurulu"};byId("state").textContent=names[i.state];byId("state").className="state "+(i.state==="fresh"?"ok":"warn");let tip=j.message;if(installed){tip="Uygulama zaten kurulu (installation.lock var). Ayarları güncellemek için “Yeniden Yapılandır” düğmesini kullanabilir veya baştan başlamak için temiz kurulum yapabilirsiniz."}else if(running){tip=j.message}else if(!ready){tip=i.evidence.dependenciesInstalled?"Paketler diskte var; sihirbaza geçmek için önce “Paketleri Kur / Onar” adımını çalıştırın.":"Önce “Paketleri Kur / Onar” ile paketleri kurun."}else{tip="Paket adımı tamam. Kurulum sihirbazına geçebilirsiniz."}byId("message").textContent=tip;byId("logs").textContent=j.logs.length?j.logs.join("\n"):"Henüz işlem çıktısı yok.";byId("logs").scrollTop=byId("logs").scrollHeight;byId("danger").classList.toggle("hidden",i.state==="fresh");const wizard=byId("wizard");wizard.disabled=installed||running||!ready;if(installed){wizard.title="Uygulama zaten kurulu; sihirbaz kapalı. Temiz kurulum veya Yeniden Yapılandır gerekir."}else if(!ready){wizard.title="Önce paket kurulum adımını tamamlayın."}else{wizard.title="Kurulum sihirbazını başlat"}const reconfigBtn=byId("reconfigure");if(reconfigBtn){reconfigBtn.classList.toggle("hidden",!installed);reconfigBtn.disabled=running;}const installBtn=byId("install");if(noDeps){installBtn.textContent="Paket Kurulumu Gerekmiyor ✓"}installBtn.disabled=running;if(j.wizardUrl)location.href=j.wizardUrl}
 async function refresh(){try{render(await api("/api/status"))}catch(e){byId("message").textContent=e.message;byId("message").className="error"}}
 byId("install").onclick=async()=>{try{await api("/api/install",{method:"POST",body:"{}"});refresh()}catch(e){alert(e.message)}};
+const reconfigEl=byId("reconfigure");
+if(reconfigEl){reconfigEl.onclick=async()=>{try{await api("/api/wizard",{method:"POST",body:JSON.stringify({reconfigure:true})});refresh()}catch(e){alert(e.message);refresh()}};}
 byId("wizard").onclick=async()=>{
   try{
     await api("/api/wizard",{method:"POST",body:"{}"});
@@ -436,7 +439,7 @@ function renderPage() {
 :root{color-scheme:dark;--bg:#0b1020;--panel:#141b2d;--line:#2b3650;--text:#f7f8fc;--muted:#aeb9ce;--brand:#7867ff;--ok:#2fd69f;--warn:#ffb84d;--danger:#ff5f68}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at top,#1a2040,var(--bg) 45%);color:var(--text);font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}.wrap{width:min(980px,calc(100% - 32px));margin:32px auto}.hero,.card{background:rgba(20,27,45,.96);border:1px solid var(--line);border-radius:18px;padding:24px;box-shadow:0 18px 60px #0005}.hero h1{margin:0 0 8px;font-size:30px}.hero p,.muted{color:var(--muted)}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px;margin:18px 0}.metric{background:#0e1527;border:1px solid var(--line);border-radius:14px;padding:14px}.metric b{display:block;margin-top:4px}.card{margin-top:18px}.state{display:inline-flex;border-radius:999px;padding:6px 11px;font-weight:700;background:#2a3150}.state.ok{color:var(--ok)}.state.warn{color:var(--warn)}button{border:0;border-radius:12px;padding:12px 16px;background:var(--brand);color:white;font-weight:750;cursor:pointer}button.secondary{background:#27314a}button.danger{background:var(--danger)}button:disabled{opacity:.45;cursor:not-allowed}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}pre{min-height:160px;max-height:320px;overflow:auto;background:#080d19;border:1px solid var(--line);border-radius:12px;padding:14px;white-space:pre-wrap;color:#ced8ea}.danger-zone{border-color:#6d3238}.danger-zone input[type=text]{width:100%;background:#0b1120;border:1px solid #6d4248;color:white;border-radius:10px;padding:11px;margin:10px 0}.hidden{display:none}.error{color:#ff9da3}.success{color:var(--ok)}code{color:#d9d3ff}@media(max-width:600px){.wrap{width:min(100% - 18px,980px);margin:10px auto}.hero,.card{padding:17px}}
 </style></head><body><main class="wrap" data-confirmation="${CLEAN_INSTALL_CONFIRMATION}">
 <section class="hero"><h1>${safeTitle}</h1><p>Ön kontrol, paket kurulumu ve güvenli ilk yapılandırma tek akışta yürütülür.</p><div id="scenarioBanner" class="warn" style="margin:12px 0;padding:12px 16px;border-radius:12px;background:#1a2442;border:1px solid #3d4e80"></div><div id="summary" class="grid"></div><span id="state" class="state">Denetleniyor</span></section>
-<section class="card"><h2>Kurulum işlemleri</h2><p id="message" class="muted">Durum okunuyor...</p><div class="actions"><button id="install">Paketleri Kur / Onar</button><button id="wizard" class="secondary">Kurulum Sihirbazına Geç</button><button id="refresh" class="secondary">Yeniden Denetle</button></div><pre id="logs">Henüz işlem çıktısı yok.</pre></section>
+<section class="card"><h2>Kurulum işlemleri</h2><p id="message" class="muted">Durum okunuyor...</p><div class="actions"><button id="install">Paketleri Kur / Onar</button><button id="wizard" class="secondary">Kurulum Sihirbazına Geç</button><button id="reconfigure" class="secondary hidden">Yeniden Yapılandır (--reconfigure)</button><button id="refresh" class="secondary">Yeniden Denetle</button></div><pre id="logs">Henüz işlem çıktısı yok.</pre></section>
 <section id="danger" class="card danger-zone hidden"><h2>Temiz kurulum</h2><p class="error"><strong>Dikkat:</strong> Mevcut yapılandırma (.env), yerel veritabanı, oturumlar ve yüklenen dosyalar aktif kurulumdan kaldırılır. Önce doğrulanmış, tarihli yedek alınır.</p><label><input id="backupAck" type="checkbox"> Zorunlu yedek alınacağını ve uygulamanın durdurulması gerektiğini anlıyorum.</label><p>Devam etmek için <code>${CLEAN_INSTALL_CONFIRMATION}</code> yazın:</p><input id="confirmation" type="text" autocomplete="off"><button id="reset" class="danger">Yedekle ve Temiz Kuruluma Geç</button></section>
 </main><script src="/bootstrap.js" defer></script></body></html>`;
 }
@@ -497,13 +500,16 @@ async function handler(req, res) {
       return json(res, 202, { message: "Paket kurulumu başlatıldı." });
     }
     if (requestUrl.pathname === "/api/wizard") {
+      const payload = await readJson(req);
+      const isReconfigure = Boolean(payload?.reconfigure || process.env.SETUP_RECONFIGURE === "true");
       const current = inspectInstallationState(projectRoot);
-      if (current.state === "installed") throw new Error("Uygulama zaten kurulu (installation.lock var). Yeniden kurulum için önce 'Yedekle ve Temiz Kuruluma Geç' ile sıfırlayın.");
-      if (!current.evidence.dependenciesInstalled) throw new Error("Paketler eksik. Önce 'Paketleri Kur / Onar' adımını tamamlayın.");
-      if (!packagesReady) throw new Error("Sihirbaza geçmek için önce bu ekranda 'Paketleri Kur / Onar' adımını çalıştırıp bitirin.");
+      if (current.state === "installed" && !isReconfigure) {
+        throw new Error("Uygulama zaten kurulu (installation.lock var). Yeniden yapılandırmak için 'Yeniden Yapılandır' seçeneğini veya sıfırlamak için 'Temiz Kuruluma Geç' adımını kullanın.");
+      }
+      if (!isReconfigure && !current.evidence.dependenciesInstalled) throw new Error("Paketler eksik. Önce 'Paketleri Kur / Onar' adımını tamamlayın.");
+      if (!isReconfigure && !packagesReady) throw new Error("Sihirbaza geçmek için önce bu ekranda 'Paketleri Kur / Onar' adımını çalıştırıp bitirin.");
       if (wizardPort === port) throw new Error("Sihirbaz portu kurulum başlatıcısı ile aynı olamaz. SETUP_WIZARD_PORT değerini değiştirin.");
 
-      const payload = await readJson(req);
       const occupied = await isLocalPortOpen(wizardPort, 400);
       if (occupied) {
         const conflict = describePortConflict(wizardPort);
@@ -530,9 +536,9 @@ async function handler(req, res) {
         await new Promise((resolve) => setTimeout(resolve, 400));
       }
 
-      wizardChild = startSubprocessJob("wizard", resolveWizardInvocation(), `${displayProjectName} kurulumu tamamlandı.`);
+      wizardChild = startSubprocessJob("wizard", resolveWizardInvocation(isReconfigure), `${displayProjectName} kurulumu tamamlandı.`);
       wizardChild.once("close", () => { wizardChild = null; });
-      return json(res, 202, { message: "Kurulum sihirbazı başlatılıyor.", wizardPort });
+      return json(res, 202, { message: isReconfigure ? "Yeniden yapılandırma sihirbazı başlatılıyor." : "Kurulum sihirbazı başlatılıyor.", wizardPort });
     }
     if (requestUrl.pathname === "/api/reset") {
       if (job.status === "running" || wizardChild) throw new Error("Çalışan kurulum işlemi varken temiz kurulum başlatılamaz.");

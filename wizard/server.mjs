@@ -13,22 +13,32 @@ import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, pa
 import { resolveStepCommand } from "../scripts/polyglot.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
-import { createDesktopAppController, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveAppStartInvocation, resolveDesktopDataDir } from "./app-process.mjs";
+import { createDesktopAppController, normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveAppStartInvocation, resolveDesktopDataDir } from "./app-process.mjs";
 // Geriye uyumluluk: bu yardımcılar eskiden bu modülden dışa aktarılıyordu.
-export { parseDotEnvFile, pmRunInvocation, resolveAppStartInvocation, resolvePnpmInvocation, wrapShimCommand } from "./app-process.mjs";
+export { normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, resolveAppStartInvocation, resolvePnpmInvocation, wrapShimCommand } from "./app-process.mjs";
 
 import {
   createApplyState,
+  detectRequiredToolchain,
   digest,
   equalSecret,
   executeSetupApply,
+  testDatabaseConnection,
+  testEmailConfiguration,
   validateStepData,
   writable,
   buildPublicFrontendConfig,
   writePublicFrontendArtifacts,
 } from "./shared.mjs";
 
-export { equalSecret, buildPublicFrontendConfig, writePublicFrontendArtifacts };
+export {
+  equalSecret,
+  buildPublicFrontendConfig,
+  writePublicFrontendArtifacts,
+  testDatabaseConnection,
+  testEmailConfiguration,
+  detectRequiredToolchain,
+};
 
 function cookieValue(req, name) {
   const part = String(req.headers.cookie || "").split(";").map((item) => item.trim()).find((item) => item.startsWith(`${name}=`));
@@ -135,7 +145,7 @@ async function readJson(req) {
   let body = "";
   for await (const chunk of req) {
     body += chunk;
-    if (body.length > 65_536) throw new Error("İstek gövdesi çok büyük.");
+    if (body.length > 524_288) throw new Error("İstek gövdesi çok büyük.");
   }
   if (!body) return {};
   try {
@@ -206,8 +216,10 @@ export function createSetupServer(token, options = {}) {
   const sessionValue = crypto.createHmac("sha256", token).update("setup-wizard-session").digest("hex");
   const csrfToken = crypto.createHmac("sha256", token).update("setup-wizard-csrf").digest("hex");
   const allowedOrigins = normalizeAllowedOrigins(options.allowedOrigins ?? process.env.SETUP_ALLOWED_ORIGINS);
+  const isReconfigure = Boolean(options.reconfigure || process.env.SETUP_RECONFIGURE === "true" || process.env.SETUP_RECONFIGURE === "1");
   const applyJob = createApplyState();
   let appChild = null;
+  let appChildStderr = "";
   let spawnedStaticServer = null;
   const isDesktop = Boolean(detection.scenario.isDesktop);
   const desktopApp = createDesktopAppController({
@@ -252,7 +264,7 @@ export function createSetupServer(token, options = {}) {
       },
       detection,
       setupConfig,
-      options,
+      options: { ...options, reconfigure: isReconfigure || options.reconfigure },
       applyJob,
       payload,
       markStep,
@@ -336,10 +348,66 @@ export function createSetupServer(token, options = {}) {
         }
       }
 
+      if (req.method === "POST" && reqUrl.pathname === "/api/test-database") {
+        try {
+          const rawBody = await readJson(req);
+          const dbConfig = rawBody?.database ?? rawBody ?? {};
+          const result = await testDatabaseConnection(dbConfig, projectRoot);
+          const statusCode = result.ok ? 200 : 400;
+          return sendJson(res, statusCode, result);
+        } catch (error) {
+          return sendJson(res, 400, { ok: false, reachable: false, message: error instanceof Error ? error.message : "Veritabanı sınaması başarısız." });
+        }
+      }
+
+      if (req.method === "POST" && reqUrl.pathname === "/api/validate-email-format") {
+        try {
+          const rawBody = await readJson(req);
+          const emailConfig = rawBody?.email ?? rawBody ?? {};
+          const issues = validateStepPayload("email", emailConfig);
+          if (issues.length > 0) {
+            return sendJson(res, 400, { ok: false, message: issues[0].message, errors: issues.map((i) => i.message) });
+          }
+          return sendJson(res, 200, { ok: true, message: "E-posta biçimi doğrulandı." });
+        } catch (error) {
+          return sendJson(res, 400, { ok: false, message: error instanceof Error ? error.message : "Doğrulama başarısız." });
+        }
+      }
+
+      if (req.method === "POST" && (reqUrl.pathname === "/api/test-email" || reqUrl.pathname === "/api/test-smtp")) {
+        try {
+          const rawBody = await readJson(req);
+          const emailConfig = rawBody?.email ?? rawBody ?? {};
+          if (emailConfig.enabled === false) {
+            return sendJson(res, 200, {
+              ok: true,
+              reachable: false,
+              connectionTested: false,
+              message: "E-posta gönderimi devre dışı olarak doğrulandı.",
+            });
+          }
+          const issues = validateStepPayload("email", emailConfig);
+          if (issues.length > 0) {
+            return sendJson(res, 400, { ok: false, message: issues[0].message, errors: issues.map((i) => i.message) });
+          }
+          const result = await testEmailConfiguration(emailConfig);
+          const statusCode = result.ok ? 200 : 400;
+          return sendJson(res, statusCode, result);
+        } catch (error) {
+          return sendJson(res, 400, { ok: false, reachable: false, message: error instanceof Error ? error.message : "SMTP sınaması başarısız." });
+        }
+      }
+
       if (req.method === "GET" && reqUrl.pathname === "/api/status") {
         const networks = Object.values(os.networkInterfaces()).flat().filter((item) => item && !item.internal).map((item) => item.address);
         const envExample = parseEnvExample(projectRoot);
         const defaultPort = detection.ports.app || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
+        const rootPkg = readJsonFileSafe(path.join(projectRoot, "package.json"));
+        const serverPkg = readJsonFileSafe(path.join(projectRoot, "server", "package.json"));
+        const detectedSeed = setupConfig?.seed
+          ? (typeof setupConfig.seed === "string" ? setupConfig.seed : setupConfig.seed.command)
+          : (["prisma:seed", "db:seed", "seed"].find((name) => Boolean(rootPkg?.scripts?.[name] || serverPkg?.scripts?.[name])) || null);
+        const toolchain = detectRequiredToolchain(detection);
         return sendJson(res, 200, {
           detected: {
             hostname: os.hostname(),
@@ -352,13 +420,16 @@ export function createSetupServer(token, options = {}) {
             scenario: detection.scenario,
             defaultPort,
             envVariables: envExample.variables || [],
+            seedScript: detectedSeed,
+            toolchain: toolchain.details,
           },
           checks: {
             nodeSupported: [18, 20, 22, 24].includes(Number(process.versions.node.split(".")[0])),
             dataWritable: writable(dataRoot),
             uploadsWritable: writable(path.join(serverRoot, "uploads")),
-            notInstalled: !fs.existsSync(lockPath),
-            envAbsent: !fs.existsSync(envPath),
+            notInstalled: isReconfigure ? true : !fs.existsSync(lockPath),
+            envAbsent: isReconfigure ? true : !fs.existsSync(envPath),
+            toolchainAvailable: toolchain.available,
           },
           apply: applyJob,
         });
@@ -381,6 +452,8 @@ export function createSetupServer(token, options = {}) {
         const uiReachable = hasDevUi ? await isPortOpen(uiPort) : apiReachable;
         const reachable = hasDevUi ? uiReachable : apiReachable;
         const loginUrl = hasDevUi && uiReachable && !detection.scenario.isStaticOnly ? buildLoginUrl(`http://127.0.0.1:${devPort}`, detection.routes.loginPath) : applyJob.loginUrl;
+        const appDied = Boolean(appChild && appChild.exitCode !== null);
+        const exitHint = appDied ? ` (Süreç kapandı, çıkış kodu: ${appChild.exitCode})` : "";
         return sendJson(res, 200, {
           reachable,
           apiReachable,
@@ -392,7 +465,7 @@ export function createSetupServer(token, options = {}) {
           publicUrl: applyJob.publicUrl,
           hint: reachable
             ? "Uygulama ayakta görünüyor; giriş sayfasına gidebilirsiniz."
-            : `Uygulama henüz ayakta değil (API: ${appPort}).`,
+            : `Uygulama henüz ayakta değil (API: ${appPort})${exitHint}.`,
         });
       }
 
@@ -440,13 +513,24 @@ export function createSetupServer(token, options = {}) {
             });
           }
           const dotEnvVars = parseDotEnvFile(envPath);
-          const childEnv = { ...process.env, ...dotEnvVars, PORT: String(appPort) };
+          const shimsDir = path.resolve(projectRoot, "bin", "shims");
+          const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
+          const prepend = [];
+          if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
+          if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
+          const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
+
+          appChildStderr = "";
           appChild = spawn(invocation.command, invocation.args, {
             cwd: invocation.cwd || projectRoot,
             env: childEnv,
             detached: process.platform !== "win32",
             windowsHide: true,
-            stdio: "ignore",
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          appChild.stderr?.on("data", (chunk) => {
+            appChildStderr += chunk.toString();
+            if (appChildStderr.length > 4000) appChildStderr = appChildStderr.slice(-4000);
           });
           appChild.on("error", () => {});
           appChild.unref();
@@ -454,6 +538,17 @@ export function createSetupServer(token, options = {}) {
 
         for (let i = 0; i < 16; i++) {
           await new Promise((r) => setTimeout(r, 200));
+          if (appChild && appChild.exitCode !== null) {
+            const errDetail = appChildStderr.trim().split(/\r?\n/).slice(-5).join(" | ");
+            const reason = errDetail ? `Hata: ${errDetail}` : `Çıkış kodu: ${appChild.exitCode}`;
+            return sendJson(res, 409, {
+              message: `Uygulama başlatılırken çöktü veya kapandı (${reason}).`,
+              reachable: false,
+              pid: appChild?.pid ?? null,
+              exitCode: appChild.exitCode,
+              errorDetail: errDetail || null,
+            });
+          }
           if (await isPortOpen(appPort)) {
             return sendJson(res, 200, {
               message: "Uygulama başlatıldı ve bağlantıya hazır.",
@@ -485,6 +580,7 @@ export function createSetupServer(token, options = {}) {
           applyJob.message = "Kurulum uygulanıyor; adımlar ekranda canlı izleniyor…";
           applyJob.summary = [];
           applyJob.steps = createApplyState().steps;
+          applyJob.logs = [];
           applyJob.startedAt = new Date().toISOString();
           applyJob.finishedAt = null;
           sendJson(res, 202, {
@@ -561,21 +657,33 @@ export function createSetupServer(token, options = {}) {
   return server;
 }
 
-export function startSetupWizard() {
-  const projectRoot = getProjectRoot();
+export function startSetupWizard(options = {}) {
+  const isReconfigure = Boolean(
+    options.reconfigure ||
+    process.argv.includes("--reconfigure") ||
+    process.env.SETUP_RECONFIGURE === "true" ||
+    process.env.SETUP_RECONFIGURE === "1"
+  );
+  const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
   const setupConfig = loadSetupConfig(projectRoot);
   const detection = detectProject(projectRoot);
-  const dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: null });
+  const dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: options.dataDir });
   const paths = getSetupPaths(projectRoot, { dataDir });
   fs.mkdirSync(paths.dataRoot, { recursive: true });
-  if (fs.existsSync(paths.lock)) {
-    throw new Error("Kurulum kilidi mevcut. Çalışan sistemi yeniden yapılandırmak için önce temiz kurulum adımını kullanın.");
+  if (fs.existsSync(paths.lock) && !isReconfigure) {
+    throw new Error("Kurulum kilidi mevcut. Çalışan sistemi yeniden yapılandırmak için --reconfigure parametresini kullanın veya önce temiz kurulum adımını çalıştırın.");
   }
   const token = process.env.SETUP_TOKEN || crypto.randomBytes(24).toString("base64url");
   const host = "127.0.0.1";
   const port = Math.min(65535, Math.max(1024, Number(process.env.SETUP_PORT) || Number(setupConfig?.ports?.wizard) || 5050));
   let server;
-  server = createSetupServer(token, { projectRoot, dataDir, onComplete: () => server.close() });
+  server = createSetupServer(token, {
+    projectRoot,
+    dataDir,
+    reconfigure: isReconfigure,
+    ...options,
+    onComplete: () => server.close(),
+  });
   server.listen(port, host, () => {
     console.log(`Kurulum sihirbazı: http://${host}:${port}/setup?token=${token}`);
     console.log("Bu bağlantıyı paylaşmayın. Kurulum tamamlandığında sihirbaz otomatik kapanır.");

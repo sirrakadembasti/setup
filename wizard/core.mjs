@@ -10,8 +10,11 @@ import { renderSetupPage } from "./ui.mjs";
 import { createDesktopAppController, parseDotEnvFile, readJsonFileSafe, resolveDesktopDataDir } from "./app-process.mjs";
 import {
   createApplyState,
+  detectRequiredToolchain,
   equalSecret,
   executeSetupApply,
+  testDatabaseConnection,
+  testEmailConfiguration,
   validateStepData,
   writable,
 } from "./shared.mjs";
@@ -105,6 +108,11 @@ export function createSetupWizardCore(options = {}) {
   });
 
   const csrfToken = crypto.createHmac("sha256", token).update("setup-wizard-csrf").digest("hex");
+  const isReconfigure = Boolean(
+    options.reconfigure ||
+    process.env.SETUP_RECONFIGURE === "true" ||
+    process.env.SETUP_RECONFIGURE === "1"
+  );
   const applyJob = createApplyState();
   let activeApplyPromise = null;
 
@@ -120,7 +128,7 @@ export function createSetupWizardCore(options = {}) {
       dataDir,
       detection,
       setupConfig,
-      options,
+      options: { ...options, reconfigure: isReconfigure || options.reconfigure },
       applyJob,
       payload,
       markStep,
@@ -176,7 +184,7 @@ export function createSetupWizardCore(options = {}) {
 
     // Kurulum tamamlandıktan sonra sihirbaz kapanır: yalnız sade durum bilgisi (sır içermez) sunulur.
     const isDesktopAppRoute = isDesktop && ((method === "GET" && pathname === "/api/app-health") || (method === "POST" && pathname === "/api/start-app"));
-    if (!isDesktopAppRoute && fs.existsSync(getSetupPaths(projectRoot, { dataDir }).lock)) {
+    if (!isDesktopAppRoute && fs.existsSync(getSetupPaths(projectRoot, { dataDir }).lock) && !isReconfigure) {
       if (method === "GET" && pathname === "/api/status") {
         return { status: 200, headers: jsonHeaders, body: { installed: true, title, apply: applyJob } };
       }
@@ -234,6 +242,12 @@ export function createSetupWizardCore(options = {}) {
         .map((item) => item.address);
       const envExample = parseEnvExample(projectRoot);
       const defaultPort = detection.ports.app || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
+      const rootPkg = readJsonFileSafe(path.join(projectRoot, "package.json"));
+      const serverPkg = readJsonFileSafe(path.join(projectRoot, "server", "package.json"));
+      const detectedSeed = setupConfig?.seed
+        ? (typeof setupConfig.seed === "string" ? setupConfig.seed : setupConfig.seed.command)
+        : (["prisma:seed", "db:seed", "seed"].find((name) => Boolean(rootPkg?.scripts?.[name] || serverPkg?.scripts?.[name])) || null);
+      const toolchain = detectRequiredToolchain(detection);
       return {
         status: 200,
         headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
@@ -257,13 +271,16 @@ export function createSetupWizardCore(options = {}) {
             scenario: detection.scenario,
             defaultPort,
             envVariables: envExample.variables || [],
+            seedScript: detectedSeed,
+            toolchain: toolchain.details,
           },
           checks: {
             nodeSupported: [18, 20, 22, 24].includes(Number(process.versions.node.split(".")[0])),
             dataWritable: writable(currentPaths.dataRoot),
             uploadsWritable: writable(currentPaths.uploadsRoot),
-            notInstalled: !installed,
-            envAbsent: !fs.existsSync(currentPaths.env),
+            notInstalled: isReconfigure ? true : !installed,
+            envAbsent: isReconfigure ? true : !fs.existsSync(currentPaths.env),
+            toolchainAvailable: toolchain.available,
           },
           apply: applyJob,
         },
@@ -300,9 +317,17 @@ export function createSetupWizardCore(options = {}) {
       };
     }
 
-    // Gerçek bir SMTP bağlantısı denenmez; yalnızca e-posta alanlarının biçimi doğrulanır.
-    // `/api/test-smtp` eski adı geriye uyumluluk için kabul edilir.
-    if (method === "POST" && (pathname === "/api/validate-email-format" || pathname === "/api/test-smtp")) {
+    if (method === "POST" && pathname === "/api/test-database") {
+      const dbConfig = body?.database ?? body ?? {};
+      const result = await testDatabaseConnection(dbConfig, projectRoot);
+      return {
+        status: result.ok ? 200 : 400,
+        headers: jsonHeaders,
+        body: result,
+      };
+    }
+
+    if (method === "POST" && pathname === "/api/validate-email-format") {
       const emailData = body?.email ?? body ?? {};
       const issues = validateStepData("email", emailData);
       if (issues.length > 0) {
@@ -324,9 +349,44 @@ export function createSetupWizardCore(options = {}) {
           ok: true,
           connectionTested: false,
           message: emailData.enabled
-            ? "Gmail ayarlarının biçimi doğrulandı (SMTP bağlantısı denenmedi)."
+            ? "E-posta ayarlarının biçimi doğrulandı (SMTP bağlantısı denenmedi)."
             : "E-posta gönderimi devre dışı olarak doğrulandı.",
         },
+      };
+    }
+
+    if (method === "POST" && (pathname === "/api/test-email" || pathname === "/api/test-smtp")) {
+      const emailConfig = body?.email ?? body ?? {};
+      if (emailConfig.enabled === false) {
+        return {
+          status: 200,
+          headers: jsonHeaders,
+          body: {
+            ok: true,
+            reachable: false,
+            connectionTested: false,
+            message: "E-posta gönderimi devre dışı olarak doğrulandı.",
+          },
+        };
+      }
+      const issues = validateStepData("email", emailConfig);
+      if (issues.length > 0) {
+        return {
+          status: 400,
+          headers: jsonHeaders,
+          body: {
+            ok: false,
+            reachable: false,
+            message: issues[0].message,
+            errors: issues.map((i) => i.message),
+          },
+        };
+      }
+      const result = await testEmailConfiguration(emailConfig);
+      return {
+        status: result.ok ? 200 : 400,
+        headers: jsonHeaders,
+        body: result,
       };
     }
 
@@ -347,6 +407,7 @@ export function createSetupWizardCore(options = {}) {
         applyJob.message = "Kurulum uygulanıyor; adımlar ekranda canlı izleniyor…";
         applyJob.summary = [];
         applyJob.steps = createApplyState().steps;
+        applyJob.logs = [];
         applyJob.startedAt = new Date().toISOString();
         applyJob.finishedAt = null;
 

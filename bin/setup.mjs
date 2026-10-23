@@ -20,10 +20,10 @@ import { resolveEffectivePackageManager } from "../scripts/setup-bootstrap-lib.m
 import { getVersion, parseSemver } from "../scripts/version.mjs";
 
 const VALID_COMMANDS = new Set(["detect", "plan", "setup", "wizard", "init", "version", "help"]);
-const PASSTHROUGH_FLAGS = new Set(["--no-open", "--check-only", "--force"]);
+const PASSTHROUGH_FLAGS = new Set(["--no-open", "--check-only", "--force", "--reconfigure"]);
 
 export function parseArgs(argv) {
-  const args = { command: "setup", root: process.cwd(), force: false, launchers: true, updatePackageJson: false, copyTools: false, port: null, dataDir: null, error: null };
+  const args = { command: "setup", root: process.cwd(), force: false, launchers: true, updatePackageJson: false, copyTools: false, port: null, dataDir: null, reconfigure: false, error: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--root") {
@@ -55,6 +55,8 @@ export function parseArgs(argv) {
       args.launchers = false;
     } else if (a === "--update-package-json") {
       args.updatePackageJson = true;
+    } else if (a === "--reconfigure") {
+      args.reconfigure = true;
     } else if (a === "--help" || a === "-h") {
       args.command = "help";
     } else if (a === "--version" || a === "-v") {
@@ -93,6 +95,7 @@ Seçenekler:
   --root <yol>       Hedef uygulama kök dizini (varsayılan: cwd)
   --port <numara>    Sihirbaz veya başlatıcı portunu özelleştir
   --data-dir <yol>   Kurulum verileri ve .env için harici dizin belirt
+  --reconfigure      Kurulum kilidi olsa dahi sihirbazı yeniden yapılandırma modunda aç
   --force, -f        init sırasında mevcut setup.config.json ve başlatıcıların üzerine yaz
   --copy-tools       init sırasında setup çekirdeğini tools/setup içine kopyalar (--tools, --offline)
   --no-launchers     init sırasında kurulum.bat / kurulum.sh üretme
@@ -179,6 +182,9 @@ function main() {
   if (args.dataDir) {
     process.env.SETUP_DATA_DIR = args.dataDir;
   }
+  if (args.reconfigure) {
+    process.env.SETUP_RECONFIGURE = "true";
+  }
   if (args.port) {
     if (args.command === "wizard") {
       process.env.SETUP_WIZARD_PORT = String(args.port);
@@ -190,7 +196,7 @@ function main() {
 
   if (args.command === "wizard") {
     console.log("[setup] Web kurulum sihirbazı açılıyor...");
-    import("../wizard/server.mjs").then((mod) => mod.startSetupWizard()).catch((error) => {
+    import("../wizard/server.mjs").then((mod) => mod.startSetupWizard({ reconfigure: args.reconfigure })).catch((error) => {
       console.error("[setup] Sihirbaz açılamadı:", error.message);
       process.exit(1);
     });

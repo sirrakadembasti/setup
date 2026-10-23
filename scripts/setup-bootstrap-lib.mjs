@@ -176,17 +176,44 @@ function hasNonEmptyNodeModules(dir) {
 
 export function checkDependencies(projectRoot) {
   const paths = getSetupPaths(projectRoot);
-  const hasRootPkg = fs.existsSync(path.join(paths.projectRoot, "package.json"));
-  const serverDir = path.join(paths.projectRoot, "server");
-  const clientDir = path.join(paths.projectRoot, "client");
+  const root = paths.projectRoot;
+  const hasRootPkg = fs.existsSync(path.join(root, "package.json"));
+  const serverDir = path.join(root, "server");
+  const clientDir = path.join(root, "client");
   const serverEntry = fs.existsSync(path.join(serverDir, "package.json"));
   const clientEntry = fs.existsSync(path.join(clientDir, "package.json"));
   const hasAnyPackageJson = hasRootPkg || serverEntry || clientEntry;
-  const rootPackages = hasAnyPackageJson ? hasNonEmptyNodeModules(paths.projectRoot) : true;
+  const rootPackages = hasAnyPackageJson ? hasNonEmptyNodeModules(root) : true;
   const serverModules = serverEntry ? fs.existsSync(path.join(serverDir, "node_modules")) : true;
   const clientModules = clientEntry ? fs.existsSync(path.join(clientDir, "node_modules")) : true;
+  const nodeReady = !hasAnyPackageJson ? true : rootPackages && serverModules && clientModules;
 
-  const ready = !hasAnyPackageJson ? true : rootPackages && serverModules && clientModules;
+  // Çok dilli (Python, Rust, Go) bağımlılık tespiti
+  const hasPython =
+    fs.existsSync(path.join(root, "requirements.txt")) ||
+    fs.existsSync(path.join(root, "pyproject.toml")) ||
+    fs.existsSync(path.join(root, "Pipfile")) ||
+    fs.existsSync(path.join(root, "manage.py"));
+  const hasVenv =
+    process.platform === "win32"
+      ? fs.existsSync(path.join(root, ".venv", "Scripts", "python.exe"))
+      : fs.existsSync(path.join(root, ".venv", "bin", "python"));
+  const pythonReady = hasPython ? hasVenv : true;
+
+  const hasRust =
+    fs.existsSync(path.join(root, "Cargo.toml")) &&
+    !fs.existsSync(path.join(root, "src-tauri", "tauri.conf.json"));
+  const rustReady = hasRust
+    ? fs.existsSync(path.join(root, "Cargo.lock")) || fs.existsSync(path.join(root, "target"))
+    : true;
+
+  const hasGo = fs.existsSync(path.join(root, "go.mod"));
+  const goReady = hasGo
+    ? fs.existsSync(path.join(root, "go.sum")) || fs.existsSync(path.join(root, "vendor"))
+    : true;
+
+  const ready = nodeReady && pythonReady && rustReady && goReady;
+
   return {
     ready,
     rootPackages,
@@ -194,6 +221,9 @@ export function checkDependencies(projectRoot) {
     clientModules,
     serverEntry,
     clientEntry,
+    python: hasPython ? { ready: pythonReady, hasVenv } : null,
+    rust: hasRust ? { ready: rustReady } : null,
+    go: hasGo ? { ready: goReady } : null,
   };
 }
 
