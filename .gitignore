@@ -17,3 +17,4 @@ installation.lock
 installation.pending
 .DS_Store
 Thumbs.db
+graphify-out/

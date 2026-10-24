@@ -467,6 +467,8 @@ npx github:sirrakadembasti/setup wizard --root . --port 5050
 | Go | `go.mod`, `main.go` | `go mod download` → `go build ./...` | `go run .` (kökte `main.go` yoksa `./cmd/<ad>`) |
 | C# .NET | `*.csproj`, `*.sln` | `dotnet restore` → `dotnet build --no-restore` | `dotnet run --urls http://127.0.0.1:<port>` (çözümde `--project <web projesi>`) |
 | Rust | `Cargo.toml` (Tauri hariç) | `cargo fetch` → `cargo check` | `cargo run` (çalışma alanında ilk ikili üye için `-p <ad>`) |
+| C / C++ | `CMakeLists.txt`, `Makefile` | `cmake -B build` → `cmake --build build --config Release` | `cmake --build build --target run` (veya `./build/<ad>`) |
+| Oyun Motorları | `project.godot`, `ProjectSettings/` (Unity), `*.uproject` (Unreal) | Motor proje dosyaları ve çalışma ortamı doğrulaması | `godot --path .` / Masaüstü oyun süreci |
 
 Uygulamanız portu `PORT` ortam değişkeninden okumalıdır (sihirbaz `PORT`'u `.env` ve başlatma ortamına yazar). PHP desteği kaldırılmıştır.
 
@@ -935,6 +937,33 @@ setup/
 
 ## 8. Sürümleme ve Testler
 
+### Hata Yönetimi, Dayanıklılık ve Otomatik Geri Alma (Rollback)
+
+`setup (v1.0)` terminal, web sihirbazı ve uygulama yürütme aşamalarında oluşabilecek her türlü arıza senaryosuna karşı çok katmanlı savunma mekanizmalarıyla donatılmıştır:
+
+1. **Dizin İzni ve Port Meşguliyeti Ön Denetimleri:**
+   - Kurulum başlamadan önce hedef kök dizininin ve harici veri dizininin yazılabilirliği (`fs.constants.W_OK`) doğrulanır. Salt okunur ortamlarda kullanıcıya net Türkçe izin uyarısı verilir.
+   - 5049 (başlatıcı) ve 5050 (sihirbaz) portları meşgulse çakışan sürecin adı ve PID'si gösterilerek `--port <yeni-port>` alternatifi sunulur.
+2. **Sinyal Yakalama (Graceful Teardown):**
+   - Terminalde `Ctrl+C` veya `SIGTERM` tetiklendiğinde başlatılmış olan alt çocuk süreçler yetim/zombi kalmadan temiz şekilde kapatılır.
+3. **Bağımlılık Kurulumunda Canlı Hata Detayı (`job.errorDetail`) ve Zaman Aşımı:**
+   - Paket kurulumu (`npm install`, `cmake`, `pip` vb.) başarısız olduğunda konsol günlüğünün son 15 satırı doğrudan `/api/status` yanıtında sunulur.
+   - 15 dakikayı aşan veya askıda kalan kurulum işleri `SETUP_JOB_TIMEOUT_MS` zaman aşımıyla kontrollü sonlandırılır.
+4. **Çok Dilli Araç Zinciri Ön Doğrulaması:**
+   - Proje C++ (CMake), Rust (Cargo), Python veya Go gerektiriyorsa ve sistemde derleyici yoksa paket kurma adımı başlamadan önce resmi indirme kılavuzu sunulur.
+5. **Atomik Geri Alma (Rollback on Failure):**
+   - Kurulum uygulanırken (`executeSetupApply`) derleme, veritabanı migration veya seed betiklerinden biri çökerse üretilen geçici `.env.setup-<pid>` silinir, önceki kararlı `.env` yedeği (`backups/.env-*.bak`) otomatik olarak geri yüklenir ve bozuk `installation.lock` bırakılmaz.
+6. **Canlı Ağ Sınamalarında Türkçe Hata Kodları (`formatNetworkErrorMessage`):**
+   - Veritabanı ve SMTP bağlantı testlerinde `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND` (DNS) ve `EHOSTUNREACH` sistem hata kodları anlaşılır Türkçe yönlendirmelere dönüştürülür.
+7. **Genel İstisna Zırhı ve Güvenlik Filtreleri:**
+   - `wizard/server.mjs` kök HTTP işleyicisi global `try/catch` ile korunur; sunucu çökmeleri engellenerek 500 JSON döner.
+   - Sahte CSRF token veya geçersiz Origin taşıyan mutasyon istekleri 403 Forbidden ile engellenir; 512KB üzerindeki istek gövdeleri TCP sıfırlanmasına yol açmadan güvenle reddedilir.
+8. **Erken Çökme Teşhisi (Early Crash Detection):**
+   - Uygulama başlatıldıktan sonra ilk 3.2 saniye içinde kapandığında `/api/start-app` yanıtında `code: "APP_CRASHED"`, çıkış kodu, sinyal (`SIGSEGV`, `SIGKILL`) ve `stderr` satırları raporlanır.
+9. **Arayüzde Görsel Alan Vurgulama ve Otomatik Yeniden Bağlanma:**
+   - Doğrulama hatalarında hatalı form alanları kırmızı çerçeveyle ve açıklama mesajıyla işaretlenir.
+   - Ağ kopmalarında veya sunucu yeniden başlatıldığında arayüzün tepesinde yeniden bağlanma çubuğu belirir; çift tıklamaları önlemek için aksiyon düğmeleri anında kilitlenir (`disabled = true`).
+
 ### Sürüm Yönetimi (`scripts/version.mjs`)
 `VERSION`, `package.json`, `CHANGELOG.md` ve Git etiketlerini tek komutla yönetir:
 
@@ -948,11 +977,11 @@ node scripts/version.mjs bump patch --tag
 ```
 
 ### Testleri Çalıştırma
-Sıfır bağımlılıklı yerleşik Node test çalıştırıcısı ile tüm birim, senaryo ve E2E testleri:
+Sıfır bağımlılıklı yerleşik Node test çalıştırıcısı ile tüm birim, senaryo, dayanıklılık ve E2E testleri:
 
 ```bash
-# Node ile:
-node --test scripts/setup-bootstrap.test.mjs scripts/find-port-holder.test.mjs scripts/detect-project.test.mjs scripts/wizard.test.mjs
+# Node ile (Tüm 134 test):
+node --test scripts/detect-project.test.mjs scripts/setup-bootstrap.test.mjs scripts/wizard.test.mjs scripts/find-port-holder.test.mjs scripts/error-resilience.test.mjs
 
 # veya Bun ile:
 bun test

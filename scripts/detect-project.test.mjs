@@ -361,6 +361,64 @@ test("Python ve Go çok dilli (polyglot) sunucu repoları algılanır ve initPro
   }
 });
 
+test("C/C++ (CMake) ve oyun motoru (Unity, Unreal, Godot) repoları algılanır ve uygun komutları yazar", (t) => {
+  // C/C++ CMake
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "CMakeLists.txt", "project(MyCppApp)\nadd_executable(MyCppApp main.cpp)\n");
+    writeFile(dir, "main.cpp", "int main() { return 0; }\n");
+
+    const d = detectProject(dir);
+    const plan = buildInstallPlan(d);
+    assert.equal(d.stack.cpp, true);
+    assert.equal(d.kind, "cpp-server");
+    assert.equal(plan.canInstall, true);
+    assert.ok(plan.steps.some((s) => s.id === "dependencies" && s.label.includes("CMake")));
+
+    const initRes = initProject(dir);
+    assert.equal(initRes.created, true);
+    assert.equal(initRes.config.install.command, "cmake");
+    assert.deepEqual(initRes.config.install.steps.map((st) => st.command), ["cmake", "cmake"]);
+  }
+
+  // Unity Game
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 2022.3.0f1\n");
+
+    const d = detectProject(dir);
+    assert.equal(d.stack.unity, true);
+    assert.equal(d.kind, "unity-game");
+    assert.equal(d.scenario.number, 5);
+  }
+
+  // Unreal Game
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "MyGame.uproject", "{}\n");
+
+    const d = detectProject(dir);
+    assert.equal(d.stack.unreal, true);
+    assert.equal(d.kind, "unreal-game");
+    assert.equal(d.scenario.number, 5);
+  }
+
+  // Godot Game
+  {
+    const { dir, cleanup } = mkTemp();
+    t.after(cleanup);
+    writeFile(dir, "project.godot", "config_version=5\n");
+
+    const d = detectProject(dir);
+    assert.equal(d.stack.godot, true);
+    assert.equal(d.kind, "godot-game");
+    assert.equal(d.scenario.number, 5);
+  }
+});
+
 test("Electron ve Tauri masaüstü projeleri algılanır ve getSetupPaths harici dataDir ile güvenli çalışır", (t) => {
   // Electron
   {

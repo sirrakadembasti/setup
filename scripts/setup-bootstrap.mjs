@@ -24,7 +24,7 @@ import {
   detectProject,
   loadSetupConfig,
 } from "./detect-project.mjs";
-import { resolveLanguageProfile } from "./polyglot.mjs";
+import { checkToolchain, resolveLanguageProfile } from "./polyglot.mjs";
 import { normalizeProcessEnv } from "../wizard/app-process.mjs";
 import { createRateLimiter } from "../wizard/shared.mjs";
 
@@ -61,6 +61,7 @@ const job = {
   logs: [],
   wizardUrl: null,
   exitCode: null,
+  errorDetail: null,
 };
 
 let packagesReady = !detection.scenario.requiresDependencies || setupConfig?.install?.command === null;
@@ -240,6 +241,7 @@ function startSubprocessJob(type, invocation, successMessage) {
   job.message = type === "dependencies" ? "Paketler ve kütüphaneler hazırlanıyor..." : "Kurulum sihirbazı başlatılıyor...";
   job.logs = [];
   job.exitCode = null;
+  job.errorDetail = null;
   job.wizardUrl = null;
   if (type === "wizard") {
     console.log("");
@@ -262,12 +264,28 @@ function startSubprocessJob(type, invocation, successMessage) {
     ...(type === "wizard" ? { SETUP_PORT: String(wizardPort) } : {}),
   }, prepend);
 
+  const timeoutMs = Number(process.env.SETUP_JOB_TIMEOUT_MS) || (15 * 60 * 1000);
+  let timeoutTimer = null;
+
   const child = spawn(invocation.command, invocation.args, {
     cwd: projectRoot,
     env: childEnv,
     windowsHide: true,
     shell: false,
   });
+
+  if (timeoutMs > 0) {
+    timeoutTimer = setTimeout(() => {
+      if (job.status === "running") {
+        try { child.kill("SIGTERM"); } catch {}
+        job.status = "error";
+        job.message = `İşlem zaman aşımına uğradı (${Math.round(timeoutMs / 60000)} dk). Süreç sonlandırıldı.`;
+        job.errorDetail = "Zaman aşımı nedeniyle işlem iptal edildi. Ağ veya sistem kaynaklarını kontrol edin.";
+        if (type === "dependencies") packagesReady = false;
+      }
+    }, timeoutMs);
+  }
+
   child.stdout.on("data", (chunk) => {
     appendLog(chunk);
     if (type === "wizard") {
@@ -280,10 +298,13 @@ function startSubprocessJob(type, invocation, successMessage) {
   });
   child.stderr.on("data", appendLog);
   child.once("error", (error) => {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
     job.status = "error";
     job.message = `İşlem başlatılamadı: ${error.message}`;
+    job.errorDetail = error.message;
   });
   child.once("close", (code) => {
+    if (timeoutTimer) clearTimeout(timeoutTimer);
     job.exitCode = code;
     if (code === 0) {
       job.status = "success";
@@ -307,6 +328,8 @@ function startSubprocessJob(type, invocation, successMessage) {
     } else {
       job.status = "error";
       job.message = `İşlem ${code ?? "bilinmeyen"} çıkış koduyla başarısız oldu.`;
+      const recentErrors = job.logs.slice(-15).join("\n").trim();
+      job.errorDetail = recentErrors || null;
       if (type === "dependencies") packagesReady = false;
     }
   });
@@ -402,12 +425,16 @@ const byId=id=>document.getElementById(id);
 async function api(url,options={}){options.headers={"Content-Type":"application/json","X-Setup-CSRF":CSRF,...options.headers};const r=await fetch(url,options);const data=await r.json();if(!r.ok){const err=new Error(data.message||"İşlem başarısız");err.data=data;throw err}return data}
 function evidenceLabel(e){return Object.entries(e).filter(([,v])=>v).map(([k])=>({installationLock:"Kurulum kilidi",environmentFile:"Ortam dosyası",applicationDatabase:"Uygulama veritabanı",sessionDatabase:"Oturum veritabanı",deploymentConfig:"Dağıtım profili",pendingInstallation:"Yarım işlem",uploadedFiles:"Yüklenen dosyalar",dependenciesInstalled:"Paketler"}[k]||k)).join(", ")||"Kurulum verisi yok"}
 function escapeHtml(value){return String(value).replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
-function render(s){const i=s.installation,r=s.runtime,j=s.job,ready=!!s.packagesReady,installed=i.state==="installed",running=j.status==="running",pmName=r.packageManager||"npm",noDeps=s.scenario&&!s.scenario.requiresDependencies;const banner=byId("scenarioBanner");if(banner){const steps=Array.isArray(s.plan?.steps)?s.plan.steps.map(st=>escapeHtml(st.label)).join(" → "):"";banner.innerHTML='<strong>Algılanan Mimari:</strong> '+escapeHtml(s.scenario?.label||s.kind||"Standart Proje")+'<br><span class="muted">'+escapeHtml(s.scenario?.summary||"")+(steps?'<br>Adımlar: '+steps:'')+'</span>'}byId("summary").innerHTML='<div class="metric">Node.js<b>'+escapeHtml(r.nodeVersion||"Bulunamadı")+' '+(r.nodeSupported?"✓":"✕")+'</b></div><div class="metric">'+escapeHtml(pmName)+'<b>'+escapeHtml(r.packageManagerVersion||"Bulunamadı")+' '+(r.packageManagerSupported?"✓":"✕")+'</b></div><div class="metric">Dizin<b>'+escapeHtml(s.directory)+'</b></div><div class="metric">Bulunanlar<b>'+escapeHtml(evidenceLabel(i.evidence))+'</b></div><div class="metric">Paket adımı<b>'+(noDeps?'Gerekmiyor ✓':ready?'Bu oturumda tamamlandı ✓':'Önce “Paketleri Kur / Onar” ✕')+'</b></div>';const names={fresh:"Yeni kurulum",partial:"Yarım/eski kurulum",installed:"Uygulama zaten kurulu"};byId("state").textContent=names[i.state];byId("state").className="state "+(i.state==="fresh"?"ok":"warn");let tip=j.message;if(installed){tip="Uygulama zaten kurulu (installation.lock var). Ayarları güncellemek için “Yeniden Yapılandır” düğmesini kullanabilir veya baştan başlamak için temiz kurulum yapabilirsiniz."}else if(running){tip=j.message}else if(!ready){tip=i.evidence.dependenciesInstalled?"Paketler diskte var; sihirbaza geçmek için önce “Paketleri Kur / Onar” adımını çalıştırın.":"Önce “Paketleri Kur / Onar” ile paketleri kurun."}else{tip="Paket adımı tamam. Kurulum sihirbazına geçebilirsiniz."}byId("message").textContent=tip;byId("logs").textContent=j.logs.length?j.logs.join("\n"):"Henüz işlem çıktısı yok.";byId("logs").scrollTop=byId("logs").scrollHeight;byId("danger").classList.toggle("hidden",i.state==="fresh");const wizard=byId("wizard");wizard.disabled=installed||running||!ready;if(installed){wizard.title="Uygulama zaten kurulu; sihirbaz kapalı. Temiz kurulum veya Yeniden Yapılandır gerekir."}else if(!ready){wizard.title="Önce paket kurulum adımını tamamlayın."}else{wizard.title="Kurulum sihirbazını başlat"}const reconfigBtn=byId("reconfigure");if(reconfigBtn){reconfigBtn.classList.toggle("hidden",!installed);reconfigBtn.disabled=running;}const installBtn=byId("install");if(noDeps){installBtn.textContent="Paket Kurulumu Gerekmiyor ✓"}installBtn.disabled=running;if(j.wizardUrl)location.href=j.wizardUrl}
+function render(s){const i=s.installation,r=s.runtime,j=s.job,ready=!!s.packagesReady,installed=i.state==="installed",running=j.status==="running",pmName=r.packageManager||"npm",noDeps=s.scenario&&!s.scenario.requiresDependencies;const banner=byId("scenarioBanner");if(banner){const steps=Array.isArray(s.plan?.steps)?s.plan.steps.map(st=>escapeHtml(st.label)).join(" → "):"";banner.innerHTML='<strong>Algılanan Mimari:</strong> '+escapeHtml(s.scenario?.label||s.kind||"Standart Proje")+'<br><span class="muted">'+escapeHtml(s.scenario?.summary||"")+(steps?'<br>Adımlar: '+steps:'')+'</span>'}byId("summary").innerHTML='<div class="metric">Node.js<b>'+escapeHtml(r.nodeVersion||"Bulunamadı")+' '+(r.nodeSupported?"✓":"✕")+'</b></div><div class="metric">'+escapeHtml(pmName)+'<b>'+escapeHtml(r.packageManagerVersion||"Bulunamadı")+' '+(r.packageManagerSupported?"✓":"✕")+'</b></div><div class="metric">Dizin<b>'+escapeHtml(s.directory)+'</b></div><div class="metric">Bulunanlar<b>'+escapeHtml(evidenceLabel(i.evidence))+'</b></div><div class="metric">Paket adımı<b>'+(noDeps?'Gerekmiyor ✓':ready?'Bu oturumda tamamlandı ✓':'Önce “Paketleri Kur / Onar” ✕')+'</b></div>';const names={fresh:"Yeni kurulum",partial:"Yarım/eski kurulum",installed:"Uygulama zaten kurulu"};byId("state").textContent=names[i.state];byId("state").className="state "+(i.state==="fresh"?"ok":"warn");let tip=j.message;if(j.status==="error"&&j.errorDetail){tip=j.message+"\nDetay: "+j.errorDetail;}else if(installed){tip="Uygulama zaten kurulu (installation.lock var). Ayarları güncellemek için “Yeniden Yapılandır” düğmesini kullanabilir veya baştan başlamak için temiz kurulum yapabilirsiniz."}else if(running){tip=j.message}else if(!ready){tip=i.evidence.dependenciesInstalled?"Paketler diskte var; sihirbaza geçmek için önce “Paketleri Kur / Onar” adımını çalıştırın.":"Önce “Paketleri Kur / Onar” ile paketleri kurun."}else{tip="Paket adımı tamam. Kurulum sihirbazına geçebilirsiniz."}byId("message").textContent=tip;byId("logs").textContent=j.logs.length?j.logs.join("\n"):"Henüz işlem çıktısı yok.";byId("logs").scrollTop=byId("logs").scrollHeight;byId("danger").classList.toggle("hidden",i.state==="fresh");const wizard=byId("wizard");wizard.disabled=installed||running||!ready;if(installed){wizard.title="Uygulama zaten kurulu; sihirbaz kapalı. Temiz kurulum veya Yeniden Yapılandır gerekir."}else if(!ready){wizard.title="Önce paket kurulum adımını tamamlayın."}else{wizard.title="Kurulum sihirbazını başlat"}const reconfigBtn=byId("reconfigure");if(reconfigBtn){reconfigBtn.classList.toggle("hidden",!installed);reconfigBtn.disabled=running;}const installBtn=byId("install");if(noDeps){installBtn.textContent="Paket Kurulumu Gerekmiyor ✓"}installBtn.disabled=running;if(j.wizardUrl)location.href=j.wizardUrl}
 async function refresh(){try{render(await api("/api/status"))}catch(e){byId("message").textContent=e.message;byId("message").className="error"}}
-byId("install").onclick=async()=>{try{await api("/api/install",{method:"POST",body:"{}"});refresh()}catch(e){alert(e.message)}};
+byId("install").onclick=async()=>{
+  byId("install").disabled=true;
+  try{await api("/api/install",{method:"POST",body:"{}"});}catch(e){alert(e.message);}finally{refresh();}
+};
 const reconfigEl=byId("reconfigure");
-if(reconfigEl){reconfigEl.onclick=async()=>{try{await api("/api/wizard",{method:"POST",body:JSON.stringify({reconfigure:true})});refresh()}catch(e){alert(e.message);refresh()}};}
+if(reconfigEl){reconfigEl.onclick=async()=>{reconfigEl.disabled=true;try{await api("/api/wizard",{method:"POST",body:JSON.stringify({reconfigure:true})});}catch(e){alert(e.message);}finally{refresh();}};}
 byId("wizard").onclick=async()=>{
+  byId("wizard").disabled=true;
   try{
     await api("/api/wizard",{method:"POST",body:"{}"});
     refresh();
@@ -505,6 +532,16 @@ async function handler(req, res) {
         return json(res, 200, { message: job.message });
       }
       if (installCmd.steps) {
+        for (const step of installCmd.steps) {
+          const tc = checkToolchain(projectRoot, step);
+          if (!tc.ok) {
+            job.type = "dependencies";
+            job.status = "error";
+            job.message = tc.message;
+            job.errorDetail = tc.message;
+            return json(res, 400, { message: tc.message, code: "MISSING_TOOLCHAIN" });
+          }
+        }
         startSubprocessJob("dependencies", stepsInvocation(installCmd.steps), "Bağımlılık kurulumu ve doğrulaması tamamlandı.");
       } else {
         startSubprocessJob("dependencies", pmInvocation(installCmd.command, installCmd.args), "Paket ve kütüphane kurulumu tamamlandı.");

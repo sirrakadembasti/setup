@@ -226,6 +226,13 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
   const detection = detectProject(root);
   const langProfile = resolveLanguageProfile(root, detection.kind, detection.ports?.app || 5000);
   if (langProfile?.start?.command) {
+    if (langProfile.start.fallbackCommand && fs.existsSync(path.join(root, langProfile.start.fallbackCommand))) {
+      return {
+        command: path.resolve(root, langProfile.start.fallbackCommand),
+        args: [],
+        cwd: root,
+      };
+    }
     let startCmd = resolveStepCommand(root, langProfile.start);
     if (["pnpm", "yarn", "bun", "npm"].includes(String(startCmd).toLowerCase().trim())) {
       startCmd = resolveEffectivePackageManager(startCmd);

@@ -12,8 +12,14 @@ export function renderSetupPage(csrfToken, options = {}) {
 <style>
 :root{color-scheme:light;--p:#5138ee;--bg:#f4f6fb;--card:#fff;--line:#dbe1ec;--muted:#64748b;--danger:#b91c1c;--ok:#047857;--run:#2563eb;--tip:#0f172a}*{box-sizing:border-box}body{margin:0;background:var(--bg);font:15px/1.5 system-ui;color:#111827}.wrap{max-width:980px;margin:32px auto;padding:0 16px}.hero,.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px;margin-bottom:16px;box-shadow:0 8px 24px #1725540d}.hero h1{margin:0}.muted{color:var(--muted)}.steps{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:18px 0}.step{padding:10px;border:1px solid var(--line);border-radius:10px;text-align:center;font-size:12px}.step.on{background:var(--p);color:#fff}.pane{display:none}.pane.on{display:block}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.full{grid-column:1/-1}label{display:block;font-weight:650;margin:8px 0 5px}input,select{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff}input[type=checkbox]{width:auto}.actions{display:flex;justify-content:space-between;gap:10px;margin-top:22px}button{border:0;border-radius:9px;padding:11px 17px;font-weight:770;cursor:pointer}button.primary{background:var(--p);color:#fff}button.secondary{background:#e8ecf5}button:disabled{opacity:.55}.check{padding:10px;border-bottom:1px solid var(--line)}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:15px;border-radius:10px;max-height:320px;overflow:auto}.warn{padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px}.error{color:var(--danger);font-weight:650}.ok{color:var(--ok);font-weight:650}.pwd-wrap{position:relative;display:flex;align-items:center;gap:8px}.pwd-wrap input{flex:1;padding-right:44px}.pwd-toggle{position:absolute;right:8px;border:0;background:transparent;cursor:pointer;font-size:18px;line-height:1;padding:6px;border-radius:8px;color:var(--muted)}.pwd-toggle:hover{background:#eef2ff;color:var(--p)}.pwd-rules{margin:10px 0 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:#f8fafc}.pwd-rules div{padding:3px 0;font-size:14px}.pwd-rules .pass{color:var(--ok);font-weight:650}.pwd-rules .fail{color:var(--danger);font-weight:650}.pwd-rules .running{color:var(--run);font-weight:650}
 .lbl-row{display:flex;align-items:center;gap:6px;margin:8px 0 5px;flex-wrap:wrap}.lbl-row label{margin:0;font-weight:650}.help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid #c7d2fe;background:#eef2ff;color:var(--p);font-size:11px;font-weight:700;cursor:help;position:relative;line-height:1}.help:hover,.help:focus{background:var(--p);color:#fff;outline:none}.help::after{content:attr(data-tip);position:absolute;left:50%;top:24px;transform:translateX(-50%);width:min(280px,70vw);padding:10px 12px;background:var(--tip);color:#fff;border-radius:8px;font-size:12px;font-weight:400;line-height:1.45;opacity:0;pointer-events:none;transition:opacity .12s;z-index:30;text-align:left;white-space:normal}.help:hover::after,.help:focus::after{opacity:1}.tip-note{margin:6px 0 0;font-size:12px;color:var(--muted)}
+.input-error{border-color:var(--danger)!important;background:#fef2f2!important}
+.field-error-msg{color:var(--danger);font-size:12px;margin-top:4px;font-weight:600}
+.offline-banner{position:sticky;top:0;left:0;right:0;background:#dc2626;color:#fff;text-align:center;padding:10px 16px;font-weight:650;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;gap:12px}
+.offline-banner.hidden{display:none!important}
 @media(max-width:700px){.grid,.steps{grid-template-columns:1fr}.steps{display:flex;overflow:auto}.step{min-width:120px}}
-</style></head><body><main class="wrap">
+</style></head><body>
+<div id="offlineBanner" class="offline-banner hidden"><span>⚠️ Sunucu bağlantısı koptu. Yeniden bağlanılıyor…</span><button type="button" id="btnReconnect" class="secondary" style="padding:4px 12px;font-size:12px;border:0;border-radius:6px;cursor:pointer">Tekrar Dene</button></div>
+<main class="wrap">
 <section class="hero"><h1>${pageTitle}</h1><p class="muted">Sunucuyu doğrular, güvenli ayarları kaydeder, veritabanını hazırlar ve ilk yöneticiyi oluşturur.</p><div id="scenarioInfo" class="warn" style="margin-top:10px">Proje mimarisi algılanıyor…</div><div class="warn" style="margin-top:8px"><strong>Kurulum şeması:</strong> 1) Ön kontrol · 2) Adres / kurulum biçimi (yerel veya kurum) · 3) Veri ve saklama · 4) Yönetici ve e-posta · 5) Uygula. Bu araç yalnız ilk kurulum içindir; Nginx, TLS veya güvenlik duvarını kendiliğinden değiştirmez.</div></section>
 <div class="steps"><div class="step on">1. Sunucu</div><div class="step">2. Adres</div><div class="step">3. Veri</div><div class="step">4. Güvenlik</div><div class="step">5. Uygula</div></div>
 <form id="wizard" class="card">
@@ -269,7 +275,23 @@ function renderPasswordRules(){
   const value=input?input.value:'';
   pwdRules.innerHTML=passwordRules(value).map(r=>'<div class="'+(r.ok?'pass':'fail')+'">'+(r.ok?'✓ ':'✕ ')+escapeHtml(r.label)+'</div>').join('');
 }
-function fieldError(input,message){input.setCustomValidity(message||'')}
+function fieldError(input,message){
+  if(!input)return;
+  input.setCustomValidity(message||'');
+  let errBox=input.parentNode?input.parentNode.querySelector('.field-error-msg'):null;
+  if(message){
+    input.classList.add('input-error');
+    if(!errBox&&input.parentNode){
+      errBox=document.createElement('div');
+      errBox.className='field-error-msg';
+      input.parentNode.appendChild(errBox);
+    }
+    if(errBox)errBox.textContent=message;
+  }else{
+    input.classList.remove('input-error');
+    if(errBox)errBox.remove();
+  }
+}
 function syncEmailRequirements(){
   const enabled=Boolean(wizard.elements.namedItem('emailEnabled')?.checked);
   const provider=wizard.elements.namedItem('emailProvider')?.value||'gmail';
@@ -515,15 +537,25 @@ if(adminPwd){
 }
 const API=(window.__SETUP__&&window.__SETUP__.apiBase)||'/api';
 const EMBEDDED=Boolean(window.__SETUP__&&window.__SETUP__.embedded);
+const offlineBanner=document.getElementById('offlineBanner');
+const btnReconnect=document.getElementById('btnReconnect');
+if(btnReconnect)btnReconnect.onclick=()=>location.reload();
+
 async function fetchJson(url,options){
-  const r=await fetch(url,options);
-  const text=await r.text();
-  let data=null;
-  try{data=text?JSON.parse(text):null}catch{
-    const snippet=(text||'').slice(0,120);
-    throw new Error(r.status===429?'Sunucu yoğun; kısa süre sonra yeniden denenecek. ('+r.status+')':'Sunucu geçerli JSON döndürmedi ('+r.status+'): '+snippet);
+  try{
+    const r=await fetch(url,options);
+    if(offlineBanner)offlineBanner.classList.add('hidden');
+    const text=await r.text();
+    let data=null;
+    try{data=text?JSON.parse(text):null}catch{
+      const snippet=(text||'').slice(0,120);
+      throw new Error(r.status===429?'Sunucu yoğun; kısa süre sonra yeniden denenecek. ('+r.status+')':'Sunucu geçerli JSON döndürmedi ('+r.status+'): '+snippet);
+    }
+    return {ok:r.ok,status:r.status,data};
+  }catch(netErr){
+    if(offlineBanner)offlineBanner.classList.remove('hidden');
+    throw netErr;
   }
-  return {ok:r.ok,status:r.status,data};
 }
 async function loadStatus(){
   checks.textContent='Kontrol ediliyor…';
@@ -672,6 +704,39 @@ if(btnTestEmail){
   });
 }
 
+function highlightFormIssues(issues){
+  if(!Array.isArray(issues))return;
+  const pathMap={
+    'admin.name':'adminName',
+    'admin.email':'adminEmail',
+    'admin.password':'adminPassword',
+    'server.port':'port',
+    'server.host':'host',
+    'deployment.publicUrl':'publicUrl',
+    'deployment.basePath':'basePath',
+    'deployment.allowedOrigins':'origins',
+    'database.host':'dbHost',
+    'database.port':'dbPort',
+    'database.url':'dbUrl',
+    'email.host':'emailHost',
+    'email.port':'emailPort',
+    'email.user':'emailUser',
+    'email.password':'emailPassword',
+    'email.fromEmail':'fromEmail',
+  };
+  let firstEl=null;
+  for(const issue of issues){
+    const key=(issue.path||[]).join('.');
+    const fieldName=pathMap[key]||key;
+    const el=wizard.elements.namedItem(fieldName);
+    if(el){
+      fieldError(el,issue.message);
+      if(!firstEl)firstEl=el;
+    }
+  }
+  if(firstEl)firstEl.focus();
+}
+
 wizard.onsubmit=async e=>{
   e.preventDefault();
   const pwd=wizard.elements.namedItem('adminPassword');
@@ -745,6 +810,7 @@ wizard.onsubmit=async e=>{
     const start=await fetchJson(API+'/apply',{method:'POST',headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},body:JSON.stringify(payload)});
     const startData=start.data||{};
     if(start.status===400&&startData.issues){
+      highlightFormIssues(startData.issues);
       const issueText='\\n'+startData.issues.map(i=>'• '+((i.message)||i.code)+((i.path&&i.path.length)?' ('+i.path.join('.')+')':'')).join('\\n');
       throw new Error((startData.message||'Girilen bilgiler doğrulanamadı.')+issueText);
     }
@@ -959,7 +1025,12 @@ async function pollApplyProgress(){
       result.textContent=job.message||'Kurulum uygulanıyor; pencereyi kapatmayın…';
     }catch(err){
       failures+=1;
-      if(failures>8)throw err;
+      if(failures>8){
+        result.innerHTML='<span class="error">Sunucu bağlantısı koptu.</span> <button type="button" class="secondary" id="btnPollRetry" style="padding:4px 10px;margin-left:8px;font-size:12px;border:0;border-radius:6px;cursor:pointer">Yeniden Bağlan</button>';
+        const bpr=document.getElementById('btnPollRetry');
+        if(bpr)bpr.onclick=()=>pollApplyProgress();
+        throw err;
+      }
       await new Promise(r=>setTimeout(r,1500));
       continue;
     }

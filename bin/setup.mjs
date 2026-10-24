@@ -16,8 +16,23 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { buildInstallPlan, detectProject } from "../scripts/detect-project.mjs";
 import { initProject } from "../scripts/setup-api.mjs";
-import { resolveEffectivePackageManager } from "../scripts/setup-bootstrap-lib.mjs";
+import { findListeningProcess, resolveEffectivePackageManager } from "../scripts/setup-bootstrap-lib.mjs";
 import { getVersion, parseSemver } from "../scripts/version.mjs";
+
+export function checkDirectoryWritability(dirPath) {
+  try {
+    const target = path.resolve(dirPath);
+    if (!fs.existsSync(target)) {
+      const parent = path.dirname(target);
+      fs.accessSync(parent, fs.constants.W_OK);
+      return { writable: true, exists: false };
+    }
+    fs.accessSync(target, fs.constants.W_OK);
+    return { writable: true, exists: true };
+  } catch (err) {
+    return { writable: false, error: err.message, code: err.code };
+  }
+}
 
 const VALID_COMMANDS = new Set(["detect", "plan", "setup", "wizard", "init", "version", "help"]);
 const PASSTHROUGH_FLAGS = new Set(["--no-open", "--check-only", "--force", "--reconfigure"]);
@@ -115,6 +130,12 @@ Seçenekler:
 }
 
 function main() {
+  const handleTeardown = (signal) => {
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", () => handleTeardown("SIGINT"));
+  process.once("SIGTERM", () => handleTeardown("SIGTERM"));
+
   const args = parseArgs(process.argv.slice(2));
   if (args.error) {
     console.error(`[setup] Hata: ${args.error}`);
@@ -131,6 +152,24 @@ function main() {
     console.log(`setup ${v.fullTag} (${v.shortTag})`);
     return;
   }
+
+  if (["init", "setup", "wizard"].includes(args.command)) {
+    const rootCheck = checkDirectoryWritability(args.root);
+    if (!rootCheck.writable) {
+      console.error(`[setup] Hata: "${args.root}" dizinine yazma izni bulunmuyor (${rootCheck.code || rootCheck.error}). Kurulum ve yapılandırma dosyaları oluşturulamayacağından lütfen izinleri düzenleyin veya yetkili kullanıcı olarak çalıştırın.`);
+      process.exit(1);
+      return;
+    }
+    if (args.dataDir) {
+      const dataCheck = checkDirectoryWritability(args.dataDir);
+      if (!dataCheck.writable) {
+        console.error(`[setup] Hata: Belirtilen harici veri dizinine ("${args.dataDir}") yazma izni bulunmuyor (${dataCheck.code || dataCheck.error}).`);
+        process.exit(1);
+        return;
+      }
+    }
+  }
+
   if (args.command === "init") {
     const res = initProject(args.root, {
       overwrite: args.force,
@@ -192,6 +231,13 @@ function main() {
     } else {
       process.env.SETUP_BOOTSTRAP_PORT = String(args.port);
     }
+  }
+
+  const targetPort = args.port || (args.command === "wizard" ? (Number(process.env.SETUP_WIZARD_PORT) || 5050) : (Number(process.env.SETUP_BOOTSTRAP_PORT) || 5049));
+  const holder = findListeningProcess(targetPort);
+  if (holder?.pid && holder.pid !== process.pid) {
+    console.warn(`[setup] Uyarı: ${targetPort} portu şu an başka bir süreç tarafından kullanılıyor: ${holder.name || "Bilinmeyen"} (PID ${holder.pid}).`);
+    console.warn(`[setup] Çakışmayı önlemek için '--port <yeni-port>' belirtebilir veya bu süreci sonlandırabilirsiniz.`);
   }
 
   if (args.command === "wizard") {

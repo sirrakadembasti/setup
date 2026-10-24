@@ -8,7 +8,7 @@ import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
-import { getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
+import { findListeningProcess, getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
 import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
 import { resolveStepCommand } from "../scripts/polyglot.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
@@ -180,10 +180,16 @@ function isPortOpen(port, timeoutMs = 700) {
 
 async function readJson(req) {
   let body = "";
+  let tooLarge = false;
   for await (const chunk of req) {
     body += chunk;
-    if (body.length > 524_288) throw new Error("İstek gövdesi çok büyük.");
+    if (body.length > 524_288) {
+      tooLarge = true;
+      break;
+    }
   }
+  if (typeof req.resume === "function") req.resume();
+  if (tooLarge) throw new Error("İstek gövdesi çok büyük.");
   if (!body) return {};
   try {
     return JSON.parse(body);
@@ -307,46 +313,52 @@ export function createSetupServer(token, options = {}) {
   }
 
   const server = http.createServer(async (req, res) => {
-    const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
-    const clientIp = req.socket?.remoteAddress || "127.0.0.1";
-    const reqOrigin = req.headers.origin ? String(req.headers.origin).trim() : "";
+    try {
+      const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
+      const clientIp = req.socket?.remoteAddress || "127.0.0.1";
+      const reqOrigin = req.headers.origin ? String(req.headers.origin).trim() : "";
 
-    if (reqOrigin && allowedOrigins.includes(reqOrigin)) {
-      res.setHeader("Access-Control-Allow-Origin", reqOrigin);
-      res.setHeader("Access-Control-Allow-Credentials", "true");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Setup-CSRF, Authorization");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      if (req.method === "OPTIONS") {
-        res.statusCode = 204;
-        return res.end();
-      }
-    }
-
-    if (req.method === "GET" && reqUrl.pathname === "/setup") {
-      if (reqUrl.searchParams.has("token")) {
-        if (!checkRateLimit(`setup-auth:${clientIp}`, 15, 15 * 60_000)) {
-          setSecurityHeaders(res, "text/plain; charset=utf-8");
-          res.statusCode = 429;
-          return res.end("Çok fazla kurulum anahtarı denemesi yapıldı.");
-        }
-        const supplied = reqUrl.searchParams.get("token") || "";
-        if (supplied && equalSecret(supplied, token)) {
-          setSecurityHeaders(res, "text/plain; charset=utf-8");
-          res.statusCode = 303;
-          res.setHeader("Set-Cookie", `setup.wizard=${encodeURIComponent(sessionValue)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800`);
-          res.setHeader("Location", "/setup");
-          return res.end("Yönlendiriliyor...");
+      if (reqOrigin && allowedOrigins.includes(reqOrigin)) {
+        res.setHeader("Access-Control-Allow-Origin", reqOrigin);
+        res.setHeader("Access-Control-Allow-Credentials", "true");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Setup-CSRF, Authorization");
+        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        if (req.method === "OPTIONS") {
+          res.statusCode = 204;
+          return res.end();
         }
       }
-      if (!equalSecret(cookieValue(req, "setup.wizard"), sessionValue)) {
-        setSecurityHeaders(res, "text/plain; charset=utf-8");
-        res.statusCode = 401;
-        return res.end("Geçersiz veya eksik kurulum anahtarı.");
+
+      if (req.method === "GET" && reqUrl.pathname === "/setup") {
+        if (reqUrl.searchParams.has("token")) {
+          if (!checkRateLimit(`setup-auth:${clientIp}`, 15, 15 * 60_000)) {
+            setSecurityHeaders(res, "text/plain; charset=utf-8");
+            res.statusCode = 429;
+            return res.end("Çok fazla kurulum anahtarı denemesi yapıldı.");
+          }
+          const supplied = reqUrl.searchParams.get("token") || "";
+          if (supplied && equalSecret(supplied, token)) {
+            setSecurityHeaders(res, "text/plain; charset=utf-8");
+            res.statusCode = 303;
+            res.setHeader("Set-Cookie", `setup.wizard=${encodeURIComponent(sessionValue)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=1800`);
+            res.setHeader("Location", "/setup");
+            return res.end("Yönlendiriliyor...");
+          }
+        }
+        if (!equalSecret(cookieValue(req, "setup.wizard"), sessionValue)) {
+          res.statusCode = 401;
+          const accept = String(req.headers.accept || "");
+          if (accept.includes("text/html")) {
+            setSecurityHeaders(res, "text/html; charset=utf-8");
+            return res.end(`<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>Yetkisiz Erişim — Kurulum Sihirbazı</title><style>body{margin:0;padding:40px;background:#0f172a;color:#f8fafc;font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:80vh}.card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:32px;max-width:520px;text-align:center;box-shadow:0 10px 25px rgba(0,0,0,0.5)}h1{color:#f43f5e;font-size:20px;margin-bottom:12px}p{color:#94a3b8;font-size:14px;line-height:1.6}code{background:#0f172a;color:#38bdf8;padding:3px 6px;border-radius:6px;font-size:13px}</style></head><body><div class="card"><h1>🔒 Yetkisiz veya Süresi Dolmuş Kurulum Bağlantısı</h1><p>Kurulum sihirbazına doğrudan veya süresi dolmuş oturumla erişilemez.<br><br>Lütfen terminal pencerenizde üretilen tek kullanımlık <code>/setup?token=...</code> bağlantısını kullanın.</p></div></body></html>`);
+          }
+          setSecurityHeaders(res, "text/plain; charset=utf-8");
+          return res.end("Geçersiz veya eksik kurulum anahtarı.");
+        }
+        setSecurityHeaders(res, "text/html; charset=utf-8");
+        res.statusCode = 200;
+        return res.end(renderSetupPage(csrfToken, { title: options.title || setupConfig?.wizard?.title }));
       }
-      setSecurityHeaders(res, "text/html; charset=utf-8");
-      res.statusCode = 200;
-      return res.end(renderSetupPage(csrfToken, { title: options.title || setupConfig?.wizard?.title }));
-    }
 
     if (reqUrl.pathname.startsWith("/api/")) {
       const bearerToken = String(req.headers["x-setup-token"] || req.headers.authorization?.replace(/^Bearer\s+/i, "") || "");
@@ -515,10 +527,11 @@ export function createSetupServer(token, options = {}) {
 
         const appPort = applyJob.appPort || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
         if (await isPortOpen(appPort)) {
+          const holder = findListeningProcess(appPort);
           return sendJson(res, 200, {
             message: "Uygulama zaten çalışıyor.",
             reachable: true,
-            pid: appChild?.pid ?? process.pid,
+            pid: appChild?.pid ?? holder?.pid ?? process.pid,
             loginUrl: applyJob.loginUrl,
             publicUrl: applyJob.publicUrl,
           });
@@ -577,10 +590,12 @@ export function createSetupServer(token, options = {}) {
             const errDetail = appChildStderr.trim().split(/\r?\n/).slice(-5).join(" | ");
             const reason = errDetail ? `Hata: ${errDetail}` : `Çıkış kodu: ${appChild.exitCode}`;
             return sendJson(res, 409, {
+              code: "APP_CRASHED",
               message: `Uygulama başlatılırken çöktü veya kapandı (${reason}).`,
               reachable: false,
               pid: appChild?.pid ?? null,
               exitCode: appChild.exitCode,
+              signal: appChild.signalCode ?? null,
               errorDetail: errDetail || null,
             });
           }
@@ -662,7 +677,12 @@ export function createSetupServer(token, options = {}) {
       }
     }
 
-    return sendJson(res, 404, { message: "Uç nokta bulunamadı." });
+      return sendJson(res, 404, { message: "Uç nokta bulunamadı." });
+    } catch (fatalErr) {
+      if (!res.headersSent) {
+        sendJson(res, 500, { message: "Sunucu hatası: " + (fatalErr instanceof Error ? fatalErr.message : String(fatalErr)) });
+      }
+    }
   });
 
   server.hasSpawnedApp = () => Boolean(spawnedStaticServer || (appChild && appChild.exitCode === null));

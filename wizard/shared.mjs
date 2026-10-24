@@ -30,6 +30,28 @@ export function redactSecrets(text, secrets = []) {
 }
 
 /**
+ * Ağ veya soket hatalarını kullanıcı dostu Türkçe hata açıklamalarına dönüştürür.
+ */
+export function formatNetworkErrorMessage(err, targetDesc = "Sunucuya") {
+  if (!err) return `${targetDesc} bağlanılamadı.`;
+  const code = err.code || "";
+  const msg = err.message || "";
+  if (code === "ECONNREFUSED" || msg.includes("ECONNREFUSED")) {
+    return `${targetDesc} bağlantı reddedildi. Hedef servisin bu adreste ve portta çalıştığından emin olun.`;
+  }
+  if (code === "ETIMEDOUT" || msg.includes("ETIMEDOUT") || msg.includes("Zaman aşımı") || msg === "Timeout") {
+    return `${targetDesc} bağlantı zaman aşımına uğradı. Güvenlik duvarı veya ağ erişimini kontrol edin.`;
+  }
+  if (code === "ENOTFOUND" || msg.includes("ENOTFOUND")) {
+    return `Sunucu adresi (${targetDesc}) çözümlenemedi (DNS hatası). Host adını kontrol edin.`;
+  }
+  if (code === "EHOSTUNREACH" || msg.includes("EHOSTUNREACH")) {
+    return `Hedef ana bilgisayara erişilemiyor (Host Unreachable). Ağ bağlantınızı kontrol edin.`;
+  }
+  return `${targetDesc} bağlantı hatası: ${msg}`;
+}
+
+/**
  * Belirtilen host ve port için TCP bağlantısını sınar.
  */
 export function testTcpConnection(host, port, timeoutMs = 2500) {
@@ -38,18 +60,28 @@ export function testTcpConnection(host, port, timeoutMs = 2500) {
     const p = Number(port);
     const h = String(host || "127.0.0.1").trim();
 
+    let socket;
     const finish = (ok, error = null) => {
       if (settled) return;
       settled = true;
       try { socket?.destroy(); } catch {}
-      resolve({ ok, reachable: ok, host: h, port: p, error: error ? error.message : null });
+      const friendly = error ? formatNetworkErrorMessage(error, `${h}:${p}`) : null;
+      resolve({
+        ok,
+        reachable: ok,
+        host: h,
+        port: p,
+        error: error ? error.message : null,
+        errorCode: error?.code || null,
+        friendlyError: friendly,
+      });
     };
 
     if (isNaN(p) || p < 1 || p > 65535) {
       return finish(false, new Error(`Geçersiz port: ${port}`));
     }
 
-    const socket = new net.Socket();
+    socket = new net.Socket();
     socket.setTimeout(timeoutMs);
     socket.once("connect", () => finish(true));
     socket.once("timeout", () => finish(false, new Error(`Zaman aşımı (${timeoutMs}ms)`)));
@@ -78,14 +110,17 @@ export function testSmtpConnection(host, port = 587, secure = false, timeoutMs =
       if (settled) return;
       settled = true;
       try { socket?.destroy(); } catch {}
+      const friendly = err ? formatNetworkErrorMessage(err, `SMTP sunucusuna (${h}:${p})`) : null;
       resolve({
         ok,
         reachable: ok,
         host: h,
         port: p,
         banner: banner.trim(),
-        message: message || (ok ? "SMTP sunucusu yanıt verdi." : "SMTP sunucusuna bağlanılamadı."),
+        message: message || (ok ? "SMTP sunucusu yanıt verdi." : (friendly || "SMTP sunucusuna bağlanılamadı.")),
         error: err ? err.message : null,
+        errorCode: err?.code || null,
+        friendlyError: friendly,
       });
     };
 
@@ -169,8 +204,9 @@ export async function testDatabaseConnection(dbConfig = {}, projectRoot = proces
       port,
       message: tcp.ok
         ? `PostgreSQL sunucusuna erişildi (${host}:${port}).`
-        : `PostgreSQL sunucusuna bağlanılamadı (${host}:${port}): ${tcp.error || "Bağlantı reddedildi"}`,
+        : `PostgreSQL sunucusuna bağlanılamadı (${host}:${port}): ${tcp.friendlyError || tcp.error || "Bağlantı reddedildi"}`,
       error: tcp.error,
+      friendlyError: tcp.friendlyError,
     };
   }
 
@@ -186,8 +222,9 @@ export async function testDatabaseConnection(dbConfig = {}, projectRoot = proces
       port,
       message: tcp.ok
         ? `MySQL sunucusuna erişildi (${host}:${port}).`
-        : `MySQL sunucusuna bağlanılamadı (${host}:${port}): ${tcp.error || "Bağlantı reddedildi"}`,
+        : `MySQL sunucusuna bağlanılamadı (${host}:${port}): ${tcp.friendlyError || tcp.error || "Bağlantı reddedildi"}`,
       error: tcp.error,
+      friendlyError: tcp.friendlyError,
     };
   }
 
@@ -221,8 +258,9 @@ export async function testDatabaseConnection(dbConfig = {}, projectRoot = proces
         port,
         message: tcp.ok
           ? `Veritabanı sunucusuna erişildi (${host}:${port}).`
-          : `Veritabanı sunucusuna bağlanılamadı (${host}:${port}): ${tcp.error || "Bağlantı reddedildi"}`,
+          : `Veritabanı sunucusuna bağlanılamadı (${host}:${port}): ${tcp.friendlyError || tcp.error || "Bağlantı reddedildi"}`,
         error: tcp.error,
+        friendlyError: tcp.friendlyError,
       };
     } catch (err) {
       return { ok: false, reachable: false, provider: "custom", message: `Geçersiz veritabanı URL'si: ${err.message}`, error: err.message };
@@ -280,8 +318,9 @@ export async function testEmailConfiguration(emailConfig = {}) {
     banner: probe.banner,
     message: probe.ok
       ? `SMTP sunucusu (${host}:${port}) yanıt verdi ve hazır.`
-      : `SMTP sunucusuna (${host}:${port}) bağlanılamadı: ${probe.message || probe.error}`,
+      : `SMTP sunucusuna (${host}:${port}) bağlanılamadı: ${probe.friendlyError || probe.message || probe.error}`,
     error: probe.error,
+    friendlyError: probe.friendlyError,
   };
 }
 
@@ -311,6 +350,11 @@ export function detectRequiredToolchain(detection) {
       name: "Rust (Cargo)",
       required: kind.includes("rust"),
       available: isCommandAvailable("cargo"),
+    },
+    cmake: {
+      name: "CMake (C/C++)",
+      required: kind.includes("cpp"),
+      available: isCommandAvailable("cmake"),
     },
   };
 
@@ -711,10 +755,11 @@ export async function executeSetupApply({
     detection.scenario,
   );
   const temporaryEnv = `${envPath}.setup-${process.pid}`;
+  let createdBackupFile = null;
   const summary = [];
   const appUrl = publicAppUrl(payload);
   applyJob.publicUrl = appUrl;
-  const loginPath = detection.scenario.isStaticOnly || options.embedded ? "" : detection.routes.loginPath;
+  const loginPath = detection?.scenario?.isStaticOnly || options.embedded ? "" : (detection?.routes?.loginPath || "");
   applyJob.appUrl = appUrl;
   applyJob.loginPath = loginPath;
   applyJob.loginUrl = buildLoginUrl(appUrl, loginPath);
@@ -911,7 +956,8 @@ export async function executeSetupApply({
       const backupRoot = path.join(serverRoot, "backups");
       fs.mkdirSync(backupRoot, { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      fs.copyFileSync(envPath, path.join(backupRoot, `.env-${stamp}.bak`));
+      createdBackupFile = path.join(backupRoot, `.env-${stamp}.bak`);
+      fs.copyFileSync(envPath, createdBackupFile);
       summary.push("Eski .env dosyası backups altında yedeklendi.");
     }
     fs.renameSync(temporaryEnv, envPath);
@@ -940,8 +986,25 @@ export async function executeSetupApply({
         fs.unlinkSync(temporaryEnv);
       } catch {}
     }
+    if (createdBackupFile && fs.existsSync(createdBackupFile)) {
+      try {
+        fs.copyFileSync(createdBackupFile, envPath);
+        summary.push("Kurulum hatası nedeniyle önceki .env yedeği geri yüklendi.");
+      } catch {}
+    }
+    if (fs.existsSync(lockPath)) {
+      try {
+        const lockContent = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+        if (!lockContent.installedAt || applyJob.status !== "success") {
+          fs.unlinkSync(lockPath);
+        }
+      } catch {
+        try { fs.unlinkSync(lockPath); } catch {}
+      }
+    }
     applyJob.status = "error";
     applyJob.message = err.message || "Kurulum adımları başarısız oldu.";
+    applyJob.summary = [...summary, `Hata nedeniyle geri alma yapıldı: ${err.message}`];
     throw err;
   } finally {
     if (pendingHandle !== undefined) {

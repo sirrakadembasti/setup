@@ -3,6 +3,25 @@
 Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallarına uygun olarak bu dosyada belgelenir.
 
 ## [Yayınlanmamış]
+- **Kapsamlı Hata Senaryoları, Dayanıklılık ve Otomatik Geri Alma (Rollback) Güvenceleri:**
+  - **Sinyal Yakalama ve Temiz Kapanma (`bin/setup.mjs`):** `SIGINT` (Ctrl+C) ve `SIGTERM` sinyalleri yakalanarak başlatılan çocuk süreçler ve port dinleyicileri temiz bir şekilde sonlandırılır.
+  - **Dizin Yazılabilirlik Ön Denetimi (`checkDirectoryWritability`):** Kurulum başlamadan önce hedef kök ve harici veri dizinlerinin yazılabilirliği (`fs.constants.W_OK`) denetlenir; salt okunur veya yetkisiz dizinlerde anlaşılır Türkçe hata mesajıyla durdurulur.
+  - **Port Meşguliyet Teşhisi:** Başlatıcı (5049) veya sihirbaz (5050) portu meşgulse çakışan sürecin adı ve PID'si kullanıcıya aktarılır, `--port` alternatifi önerilir.
+  - **Başlatıcı Hata Detayı (`job.errorDetail`):** Bağımlılık kurulumu (`npm install`, `cmake`, `pip` vb.) başarısız olduğunda terminal günlüğünün son 15 satırı doğrudan `/api/status` yanıtında sunulur.
+  - **Süreç Zaman Aşımı Koruması (`SETUP_JOB_TIMEOUT_MS`):** Askıda kalan veya sonsuz döngüye giren paket kurulum süreçleri zaman aşımıyla kontrollü sonlandırılır.
+  - **Çok Dilli Araç Zinciri Ön Doğrulaması:** Sistemde `cmake`, `cargo`, `python` gibi derleyiciler eksikken paket kurulumuna geçilmesi engellenir ve doğrudan resmi indirme bağlantıları gösterilir.
+  - **Atomik Geri Alma (Rollback on Failure):** `executeSetupApply` adımlarında derleme veya migration çökerse üretilen geçici `.env.setup-<pid>` dosyaları temizlenir, önceki kararlı `.env` yedeği (`backups/.env-*.bak`) otomatik olarak geri yüklenir ve bozuk lock dosyası bırakılmaz.
+  - **Soket Hatalarında Türkçe Teşhis (`formatNetworkErrorMessage`):** `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`, `EHOSTUNREACH` sistem hataları kullanıcı dostu Türkçe hata açıklamalarına çevrilir.
+  - **Genel İstisna Zırhı (Global Exception Shield):** `wizard/server.mjs` HTTP sunucu işleyicisi beklenmeyen istisnalara karşı global try/catch ile korunur; sunucu çökmesi önlenerek güvenli HTTP 500 JSON döner.
+  - **Yetkisiz / Süresi Dolmuş Oturum HTML Kartı:** Doğrudan veya süresi dolmuş oturumla gelen tarayıcı isteklerine ham 401 yerine şık Türkçe bilgi kartı sunulur.
+  - **Gelişmiş Erken Çökme Teşhisi (`APP_CRASHED`):** İlk 3.2 saniyede çöken uygulamalarda `code: "APP_CRASHED"`, çıkış kodu, sinyal (`SIGSEGV`, `SIGKILL`) ve stderr satırları döner.
+  - **Görsel Alan Bazlı Hata Vurgulama ve Çift Tıklama Koruması:** Web arayüzünde doğrulama hatalarında ilgili input'ların altı kırmızı çizilir ve hata mesajı gösterilir; onay butonlarında anında devre dışı bırakma (`disabled=true`) ile yarış durumları önlenir.
+  - **Otomatik Yeniden Bağlanma Bildirimi:** Ağ kesintilerinde veya sunucu yeniden başlatıldığında arayüzün üst kısmında bildirim çubuğu ve yeniden bağlan düğmesi sunulur.
+  - **Yeni Hata Dayanıklılık Test Paketi (`scripts/error-resilience.test.mjs`):** 10 yeni test ile toplam test sayısı 134'e çıkarıldı; %100 başarı sağlandı.
+- **C/C++ (CMake/Makefile) ve Oyun Motoru (Unity/Unreal/Godot) Doğal Desteği:**
+  - **Sıfır Ayarlı C/C++ (CMake):** `detectProject` `CMakeLists.txt`, `Makefile` veya `meson.build` içeren repoları otomatik olarak `cpp-server` (Senaryo 4) olarak sınıflandırır; `polyglot.mjs` üzerinden hiçbir ayar dosyası gerekmeden `cmake -B build` ve `cmake --build build --config Release` adımlarını işletir.
+  - **Oyun Repoları Tespiti:** `project.godot` (Godot), `ProjectSettings/ProjectVersion.txt` (Unity) ve `*.uproject` (Unreal Engine) projeleri Senaryo 5 (Masaüstü ve Oyun Uygulaması) kapsamında otomatik tanınır, kurulum planı ve başlatıcıları oluşturulur.
+  - **Araç Zinciri Denetimi:** `detectRequiredToolchain` C/C++ projelerinde sistemde `cmake` varlığını kontrol eder ve ön kontrollerde raporlar.
 - **Kapsamlı Sistem Güvenliği, Kararlılık ve Mimarî Genişletmeleri (Faz 1 - 4):**
   - **Masaüstü (Senaryo 5) Veri Dizini ve Durum Senkronizasyonu (Faz 1):** `scripts/setup-bootstrap.mjs` ve `scripts/setup-bootstrap-lib.mjs` içerisinde `resolveDesktopDataDir` entegre edildi. Masaüstü projelerinin işletim sistemi kullanıcı veri dizinindeki (`%APPDATA%`, `Application Support`, `.config`) `.env` ve `installation.lock` durumları ön kontrol ekranında doğru olarak "Kurulu" algılanır ve temiz sıfırlama işlemi bu dizinleri başarıyla temizler.
   - **Harici Veri Dizini (`--data-dir` / `SETUP_DATA_DIR`) Güvenlik Sınırı Çözümü (Faz 1):** Proje kök dizini dışındaki harici veri klasörleri kullanıldığında `createVerifiedBackup` ve `resetInstallation` fonksiyonlarında oluşan `assertInside` çökmesi giderildi; harici veri dizinleri güvenli alan istisnasıyla işlenir.

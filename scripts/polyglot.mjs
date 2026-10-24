@@ -12,6 +12,10 @@ export const LANGUAGE_KINDS = Object.freeze({
   "go-server": "go",
   "dotnet-server": "dotnet",
   "rust-server": "rust",
+  "cpp-server": "cpp",
+  "unity-game": "game",
+  "unreal-game": "game",
+  "godot-game": "game",
 });
 
 export const TOOLCHAIN_HINTS = Object.freeze({
@@ -19,6 +23,8 @@ export const TOOLCHAIN_HINTS = Object.freeze({
   go: "Go: https://go.dev/dl/",
   dotnet: ".NET SDK: https://dotnet.microsoft.com/download",
   cargo: "Rust (cargo): https://rustup.rs",
+  cmake: "CMake: https://cmake.org/download/ (ve GCC/Clang/MSVC C/C++ derleyicisi)",
+  godot: "Godot Engine: https://godotengine.org/download",
 });
 
 const VENV_DIR = ".venv";
@@ -74,6 +80,8 @@ function toolchainFor(step) {
   if (step.command === "go") return { command: "go", hint: TOOLCHAIN_HINTS.go };
   if (step.command === "dotnet") return { command: "dotnet", hint: TOOLCHAIN_HINTS.dotnet };
   if (step.command === "cargo") return { command: "cargo", hint: TOOLCHAIN_HINTS.cargo };
+  if (step.command === "cmake") return { command: "cmake", hint: TOOLCHAIN_HINTS.cmake };
+  if (step.command === "godot") return { command: "godot", hint: TOOLCHAIN_HINTS.godot };
   return null;
 }
 
@@ -241,13 +249,96 @@ function rustProfile(root, port = 5000) {
  * @param {string} kind detectProject().kind
  * @param {number} port uygulama portu
  */
+// ---------------------------------------------------------------- C / C++ (CMake & Makefile)
+
+export function findCppTarget(root) {
+  const cmakeText = readText(path.join(root, "CMakeLists.txt"));
+  if (cmakeText) {
+    const execMatch = cmakeText.match(/add_executable\s*\(\s*([a-zA-Z0-9._-]+)/i);
+    if (execMatch) return execMatch[1];
+    const projMatch = cmakeText.match(/project\s*\(\s*([a-zA-Z0-9._-]+)/i);
+    if (projMatch) return projMatch[1];
+  }
+  return path.basename(root).toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+}
+
+function cppProfile(root, port = 5000) {
+  const targetName = findCppTarget(root);
+  const isWin = process.platform === "win32";
+  const binExt = isWin ? ".exe" : "";
+  const isCMake = exists(root, "CMakeLists.txt");
+
+  if (isCMake) {
+    const steps = [
+      { label: "CMake yapılandırması (cmake -B build)", command: "cmake", args: ["-B", "build"] },
+      { label: "Derleme ve doğrulama (cmake --build build)", command: "cmake", args: ["--build", "build", "--config", "Release"] },
+    ];
+    return {
+      language: "cpp",
+      steps,
+      start: {
+        command: "cmake",
+        args: ["--build", "build", "--target", "run"],
+        fallbackCommand: isWin ? `build/Release/${targetName}${binExt}` : `build/${targetName}`,
+      },
+      port,
+    };
+  }
+
+  const steps = [
+    { label: "Derleme ve doğrulama (make)", command: "make", args: [] },
+  ];
+  return {
+    language: "cpp",
+    steps,
+    start: { command: `./${targetName}${binExt}`, args: [] },
+    port,
+  };
+}
+
+// ---------------------------------------------------------------- Game Engines
+
+function gameProfile(root, port = 5000) {
+  if (exists(root, "project.godot")) {
+    return {
+      language: "game",
+      steps: [
+        { label: "Godot oyun projesi doğrulaması", command: "node", args: ["-e", "process.exit(0)"] },
+      ],
+      start: { command: "godot", args: ["--path", "."] },
+      port,
+    };
+  }
+  if (exists(root, "ProjectSettings", "ProjectVersion.txt")) {
+    return {
+      language: "game",
+      steps: [
+        { label: "Unity oyun projesi doğrulaması", command: "node", args: ["-e", "process.exit(0)"] },
+      ],
+      start: { command: "node", args: ["-e", "console.log('Unity projesi hazır.')"] },
+      port,
+    };
+  }
+  return {
+    language: "game",
+    steps: [
+      { label: "Unreal Engine oyun projesi doğrulaması", command: "node", args: ["-e", "process.exit(0)"] },
+    ],
+    start: { command: "node", args: ["-e", "console.log('Unreal projesi hazır.')"] },
+    port,
+  };
+}
+
 export function resolveLanguageProfile(root, kind, port = 5000) {
   const language = LANGUAGE_KINDS[kind];
   if (!language) return null;
   if (language === "python") return pythonProfile(root, port);
   if (language === "go") return goProfile(root, port);
   if (language === "dotnet") return dotnetProfile(root, port);
-  return rustProfile(root, port);
+  if (language === "rust") return rustProfile(root, port);
+  if (language === "cpp") return cppProfile(root, port);
+  if (language === "game") return gameProfile(root, port);
+  return null;
 }
 
 /**

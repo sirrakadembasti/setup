@@ -538,6 +538,10 @@ function detectStack(root, usage, workspaces = {}) {
     go: exists(root, "go.mod") || exists(root, "main.go"),
     dotnet: hasFileWithSuffix(root, [".csproj", ".sln"]),
     rust: exists(root, "Cargo.toml") && !exists(root, "src-tauri", "tauri.conf.json") && !exists(root, "tauri.conf.json"),
+    cpp: exists(root, "CMakeLists.txt") || exists(root, "Makefile") || exists(root, "meson.build"),
+    unity: exists(root, "ProjectSettings", "ProjectVersion.txt") || (exists(root, "Assets") && exists(root, "Packages", "manifest.json")),
+    unreal: hasFileWithSuffix(root, [".uproject"]),
+    godot: exists(root, "project.godot"),
     electron:
       isPackageInUse(usage.electron) ||
       Boolean(rootPkg?.main && isPackageInUse(usage.electron)) ||
@@ -705,11 +709,11 @@ export function detectAppRoutes(root, scenario = {}, setupConfig = null) {
 }
 
 export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
-  if (kind === "electron-desktop" || kind === "tauri-desktop" || stack.electron || stack.tauri) {
+  if (kind === "electron-desktop" || kind === "tauri-desktop" || kind === "unity-game" || kind === "unreal-game" || kind === "godot-game" || stack.electron || stack.tauri || stack.unity || stack.unreal || stack.godot) {
     return {
       id: "scenario-5-desktop",
       number: 5,
-      label: "Senaryo 5: Masaüstü Uygulaması (Electron / Tauri)",
+      label: "Senaryo 5: Masaüstü ve Oyun Uygulaması (Electron / Tauri / Unity / Unreal / Godot)",
       summary: "Masaüstü uygulama ortamı, yerel veri dizini ve IPC/Sidecar kurulumu.",
       requiresDependencies: true,
       requiresDatabase: Boolean(stack.prisma || stack.hasServerSubdir),
@@ -721,7 +725,8 @@ export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
     };
   }
   if (
-    ["python-server", "go-server", "dotnet-server", "rust-server"].includes(kind) ||
+    ["python-server", "go-server", "dotnet-server", "rust-server", "cpp-server"].includes(kind) ||
+    stack.cpp ||
     stack.fastify ||
     stack.koa ||
     stack.hono
@@ -821,6 +826,9 @@ export function detectProject(root = process.cwd()) {
   let kind = "unknown";
   if (stack.electron) kind = "electron-desktop";
   else if (stack.tauri) kind = "tauri-desktop";
+  else if (stack.unity) kind = "unity-game";
+  else if (stack.unreal) kind = "unreal-game";
+  else if (stack.godot) kind = "godot-game";
   else if (workspaces.isWorkspace && stack.nodeServer) kind = "workspace-fullstack";
   else if (workspaces.isWorkspace) kind = "workspace";
   else if (stack.hasServerSubdir && stack.client) kind = "node-fullstack";
@@ -832,6 +840,7 @@ export function detectProject(root = process.cwd()) {
   else if (stack.go) kind = "go-server";
   else if (stack.dotnet) kind = "dotnet-server";
   else if (stack.rust) kind = "rust-server";
+  else if (stack.cpp) kind = "cpp-server";
   else if (validPkg) kind = "node-package";
   else if (stack.staticHtml) kind = "static-web";
   else if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) kind = "directory";
@@ -894,6 +903,10 @@ export function buildInstallPlan(detection) {
     detection.stack.go ||
     detection.stack.dotnet ||
     detection.stack.rust ||
+    detection.stack.cpp ||
+    detection.stack.unity ||
+    detection.stack.unreal ||
+    detection.stack.godot ||
     detection.stack.staticHtml ||
     Boolean(detection.setupConfig?.install?.command);
 
@@ -925,6 +938,14 @@ export function buildInstallPlan(detection) {
     steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (dotnet restore) + dotnet build doğrulaması", required: true });
   } else if (detection.stack.rust) {
     steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (cargo fetch) + derleme doğrulaması (cargo check)", required: true });
+  } else if (detection.stack.cpp) {
+    steps.push({ id: "dependencies", label: "CMake yapılandırması (cmake -B build) + derleme doğrulaması (cmake --build build)", required: true });
+  } else if (detection.stack.godot) {
+    steps.push({ id: "dependencies", label: "Godot oyun projesi doğrulaması", required: false });
+  } else if (detection.stack.unity) {
+    steps.push({ id: "dependencies", label: "Unity oyun projesi doğrulaması", required: false });
+  } else if (detection.stack.unreal) {
+    steps.push({ id: "dependencies", label: "Unreal Engine oyun projesi doğrulaması", required: false });
   }
 
   steps.push({ id: "wizard", label: `Web kurulum sihirbazı (${detection.ports?.wizard || 5050})`, optional: false });
