@@ -35,7 +35,7 @@
     "version:patch": "node scripts/version.mjs bump patch --tag",
     "version:minor": "node scripts/version.mjs bump minor --tag",
     "version:major": "node scripts/version.mjs bump major --tag",
-    "test": "node --test scripts/setup-bootstrap.test.mjs scripts/find-port-holder.test.mjs scripts/detect-project.test.mjs scripts/wizard.test.mjs"
+    "test": "node --test scripts/setup-bootstrap.test.mjs scripts/find-port-holder.test.mjs scripts/detect-project.test.mjs scripts/wizard.test.mjs scripts/deep-discovery.test.mjs"
   },
   "engines": {
     "node": ">=18"

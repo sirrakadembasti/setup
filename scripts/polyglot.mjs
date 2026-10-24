@@ -9,10 +9,13 @@ import { spawnSync } from "node:child_process";
 
 export const LANGUAGE_KINDS = Object.freeze({
   "python-server": "python",
+  "python-desktop": "python",
   "go-server": "go",
   "dotnet-server": "dotnet",
+  "dotnet-desktop": "dotnet",
   "rust-server": "rust",
   "cpp-server": "cpp",
+  "cpp-desktop": "cpp",
   "unity-game": "game",
   "unreal-game": "game",
   "godot-game": "game",
@@ -103,9 +106,13 @@ function pythonDependencyText(root) {
   return `${readText(path.join(root, "requirements.txt"))}\n${readText(path.join(root, "pyproject.toml"))}`.toLowerCase();
 }
 
-/** main.py / app.py ... içinde FastAPI/Starlette/Flask uygulama nesnesini bulur. */
+/** main.py / app.py ... içinde FastAPI/Starlette/Flask veya GUI uygulama nesnesini bulur. */
 export function findPythonApp(root) {
-  const files = ["main.py", "app.py", "server.py", "src/main.py", "app/main.py", "src/app.py"];
+  const files = [
+    "main.py", "app.py", "server.py", "gui.py",
+    "src/main.py", "app/main.py", "src/app.py",
+    "app/gui.py", "src/gui.py", "ui/gui.py",
+  ];
   for (const rel of files) {
     const source = readText(path.join(root, rel));
     if (!source) continue;
@@ -114,7 +121,28 @@ export function findPythonApp(root) {
     const module = rel.replace(/\.py$/, "").replaceAll("/", ".");
     if (asgi) return { kind: "asgi", file: rel, module, variable: asgi[1] };
     if (flask) return { kind: "flask", file: rel, module, variable: flask[1] };
+    if (/\b(?:import\s+tkinter|from\s+tkinter|import\s+PyQt[56]|from\s+PyQt[56]|import\s+PySide[26]|from\s+PySide[26]|import\s+wx|from\s+wx)\b/.test(source)) {
+      return { kind: "gui", file: rel, module, variable: null };
+    }
   }
+
+  try {
+    for (const d of ["", "app", "src"]) {
+      const scanDir = d ? path.join(root, d) : root;
+      if (fs.existsSync(scanDir)) {
+        for (const ent of fs.readdirSync(scanDir, { withFileTypes: true })) {
+          if (ent.isFile() && ent.name.endsWith(".py")) {
+            const rel = d ? `${d}/${ent.name}` : ent.name;
+            const source = readText(path.join(root, rel));
+            if (/\b(?:import\s+tkinter|from\s+tkinter|import\s+PyQt[56]|from\s+PyQt[56]|import\s+PySide[26]|from\s+PySide[26]|import\s+wx|from\s+wx)\b/.test(source)) {
+              return { kind: "gui", file: rel, module: rel.replace(/\.py$/, "").replaceAll("/", "."), variable: null };
+            }
+          }
+        }
+      }
+    }
+  } catch {}
+
   return null;
 }
 
@@ -129,7 +157,9 @@ function pythonProfile(root, port) {
   ];
 
   let start;
-  if (exists(root, "manage.py")) {
+  if (app?.kind === "gui") {
+    start = { command: "python", args: [app.file], venv: true };
+  } else if (exists(root, "manage.py")) {
     start = { command: "python", args: ["manage.py", "runserver", `127.0.0.1:${port}`], venv: true };
   } else if (app?.kind === "asgi") {
     if (!/\buvicorn\b/.test(deps)) {
@@ -178,18 +208,49 @@ function goProfile(root, port = 5000) {
 
 function findDotnetProject(root) {
   const rootFiles = safeReaddir(root).filter((e) => e.isFile()).map((e) => e.name);
-  const rootProj = rootFiles.find((n) => /\.csproj$/i.test(n)) || rootFiles.find((n) => /\.(sln|slnx)$/i.test(n));
-  if (rootFiles.some((n) => /\.csproj$/i.test(n))) return { restoreTarget: null, runProject: null };
+  const rootCsproj = rootFiles.find((n) => /\.csproj$/i.test(n));
+  const rootSln = rootFiles.find((n) => /\.(sln|slnx)$/i.test(n));
+
+  if (rootCsproj) {
+    const content = readText(path.join(root, rootCsproj));
+    const isDesktop = /<UseWindowsForms>true<\/UseWindowsForms>|<UseWPF>true<\/UseWPF>|<OutputType>WinExe<\/OutputType>|net[0-9.]+-windows/i.test(content);
+    return {
+      restoreTarget: null,
+      runProject: null,
+      isDesktop,
+    };
+  }
+
   const candidates = [];
-  for (const dir of safeReaddir(root).filter((e) => e.isDirectory() && !["node_modules", ".git", "bin", "obj"].includes(e.name))) {
-    for (const file of safeReaddir(path.join(root, dir.name)).filter((e) => e.isFile() && /\.csproj$/i.test(e.name))) {
-      const rel = `${dir.name}/${file.name}`;
-      const isWeb = /Microsoft\.NET\.Sdk\.Web/.test(readText(path.join(root, dir.name, file.name)));
-      candidates.push({ rel, isWeb });
+  const ignored = new Set(["node_modules", ".git", "bin", "obj", ".vs", "dist", "build"]);
+
+  function scan(dir, depth) {
+    if (depth > 3) return;
+    for (const ent of safeReaddir(dir)) {
+      if (ent.isDirectory() && !ignored.has(ent.name.toLowerCase())) {
+        scan(path.join(dir, ent.name), depth + 1);
+      } else if (ent.isFile() && /\.csproj$/i.test(ent.name)) {
+        const full = path.join(dir, ent.name);
+        const rel = path.relative(root, full).replaceAll(path.sep, "/");
+        const content = readText(full);
+        const isWeb = /Microsoft\.NET\.Sdk\.Web/.test(content);
+        const isDesktop = /<UseWindowsForms>true<\/UseWindowsForms>|<UseWPF>true<\/UseWPF>|<OutputType>WinExe<\/OutputType>|net[0-9.]+-windows/i.test(content);
+        candidates.push({ rel, isWeb, isDesktop });
+      }
     }
   }
-  const chosen = candidates.find((c) => c.isWeb) || candidates[0];
-  return { restoreTarget: rootProj || chosen?.rel || null, runProject: chosen?.rel || null };
+  scan(root, 0);
+
+  const chosenDesktop = candidates.find((c) => c.isDesktop);
+  const chosenWeb = candidates.find((c) => c.isWeb);
+  const chosen = chosenDesktop || chosenWeb || candidates[0];
+  const isDesktop = Boolean(chosenDesktop && !chosenWeb);
+
+  return {
+    restoreTarget: rootSln || chosen?.rel || null,
+    runProject: chosen?.rel || null,
+    isDesktop,
+  };
 }
 
 function safeReaddir(dir) {
@@ -201,14 +262,17 @@ function safeReaddir(dir) {
 }
 
 function dotnetProfile(root, port) {
-  const { restoreTarget, runProject } = findDotnetProject(root);
+  const { restoreTarget, runProject, isDesktop } = findDotnetProject(root);
   const target = restoreTarget ? [restoreTarget] : [];
   const steps = [
     { label: "Paketleri geri yükle (dotnet restore)", command: "dotnet", args: ["restore", ...target] },
     { label: "Derlemeyi doğrula (dotnet build)", command: "dotnet", args: ["build", "--no-restore", ...target] },
   ];
   const project = runProject ? ["--project", runProject] : [];
-  return { language: "dotnet", steps, start: { command: "dotnet", args: ["run", ...project, "--urls", `http://127.0.0.1:${port}`] } };
+  const startArgs = isDesktop
+    ? ["run", ...project]
+    : ["run", ...project, "--urls", `http://127.0.0.1:${port}`];
+  return { language: "dotnet", steps, start: { command: "dotnet", args: startArgs } };
 }
 
 // ---------------------------------------------------------------- Rust

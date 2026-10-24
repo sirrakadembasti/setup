@@ -42,7 +42,14 @@ bun /path/to/setup/bin/setup.mjs init --copy-tools
 node /path/to/setup/bin/setup.mjs init --offline
 ```
 
-> **İpucu:** Proje dizinindeyken `--root .` yazmanıza gerek yoktur; komut doğrudan çalıştırıldığı klasörü hedefler. Farklı bir dizini hedeflemek için `--root /hedef/dizin` belirtebilirsiniz. Şirket ağında GitHub SSL engeli varsa `--copy-tools` parametresi `tools/setup` klasörünü otomatik olarak projenize yerleştirir ve kurulumun internete hiç çıkmadan çalışmasını sağlar.
+```bash
+# Belirli bir alt projeyi hedeflemek (Çok parçalı veya monorepo repolar için):
+bunx github:sirrakadembasti/setup --candidate apps/web
+# veya:
+npx github:sirrakadembasti/setup --candidate apps/web
+```
+
+> **İpucu:** Proje dizinindeyken `--root .` yazmanıza gerek yoktur; komut doğrudan çalıştırıldığı klasörü hedefler. Farklı bir dizini hedeflemek için `--root /hedef/dizin` belirtebilirsiniz. Çoklu alt proje içeren repolarda belirli bir projeyi kurmak için `--candidate <alt-dizin>` parametresini kullanabilirsiniz. Şirket ağında GitHub SSL engeli varsa `--copy-tools` parametresi `tools/setup` klasörünü otomatik olarak projenize yerleştirir ve kurulumun internete hiç çıkmadan çalışmasını sağlar.
 
 ---
 
@@ -64,14 +71,18 @@ node /path/to/setup/bin/setup.mjs init --offline
 |---|---|---|
 | **Senaryo 1** | **Node.js Sunucu** | Express.js, Fastify, Koa, Hono |
 | **Senaryo 2** | **SPA & Statik Web** | React, Vue, Vite, Saf HTML/JS |
-| **Senaryo 3** | **Full-Stack (SSR & Monorepo)** | Next.js (App Router), Nuxt, SvelteKit, Astro, pnpm/npm/yarn/bun workspaces (`apps/*`, `packages/*`) |
+| **Senaryo 3** | **Full-Stack (SSR, Monorepo & Çift Süreç)** | Next.js (App Router), Nuxt, SvelteKit, Astro, bağımsız Backend + Frontend (`srv/` + `ui/`), pnpm/npm/yarn/bun workspaces |
 | **Senaryo 4** | **Çok Dilli Backend** | Python (FastAPI, Django, Flask), Go, C# .NET, Rust, C/C++ (CMake, Makefile, Meson) |
-| **Senaryo 5** | **Masaüstü ve Oyunlar** | Electron (gömülü IPC), Tauri (Sidecar), Unity, Unreal Engine, Godot |
+| **Senaryo 5** | **Masaüstü ve Oyunlar** | Electron (gömülü IPC), Tauri (Sidecar), C# WinForms / WPF (.NET), Python GUI (Tkinter, PyQt, PySide), Unity, Unreal Engine, Godot |
 
 ---
 
 ## 🌟 Temel Avantajlar
 
+- **Standart Dışı ve Dağınık Repolar İçin Derin Tarama (Deep Recursive Discovery):** Kök dizinde `package.json` olmasa dahi 3 derinlik seviyesine kadar alt klasörleri tarar, içerik analitiği ile rolleri (Frontend, Backend, Desktop) belirler ve alt dizindeki projeyi tek tıkla kurar.
+- **Çok Parçalı (Backend + Frontend) Çift Süreç Orkestrasyonu (Dual Orchestration):** `srv/` ve `ui/` gibi ayrı klasörlerdeki bileşenleri bağımsız kurar, derler ve canlı geliştirme modunda iki süreci `PORT` ve `API_URL` köprüsüyle eşzamanlı ayağa kaldırır; kademeli kapanma (cascading termination) ile süreçlerden biri çöktüğünde diğerini temizce sonlandırır.
+- **Dağınık Yapılandırma Birleştirme (Bubble-Up):** `config/`, `deploy/`, `server/` gibi klasörlerdeki dağınık `.env.example` dosyalarını otomatik havuzda birleştirir ve üretilen `.env`'yi tüm alt projelere güvenle dağıtır.
+- **Etkileşimli Aday Seçim Paneli:** Repoda birden çok bağımsız mikroservis/uygulama olduğunda Web Sihirbazı üzerinden tıklanabilir butonlarla veya CLI'dan `--candidate <dizin>` ile hedef projeyi seçtirir.
 - **Sıfır Bağımlılık ve Genişletilmiş Sürüm Desteği:** Yalnızca Node.js (>=18, Node 20, 22, 24, 25, 26+) veya Bun yerleşik modüllerini kullanır; `npm install` gerektirmez.
 - **C/C++ ve Oyun Motorları (Unity/Unreal/Godot) Desteği:** `CMakeLists.txt`, `Makefile` veya oyun motoru yapılandırmaları (`project.godot`, Unity `ProjectVersion.txt`, Unreal `*.uproject`) otomatik tanınır; derleme ve başlatma adımları sıfır ayarla işletilir.
 - **Kapsamlı Hata Yönetimi ve Otomatik Geri Alma (Rollback):** Kurulum adımlarında (derleme, veritabanı migration veya seed) hata oluşursa üretilen geçici dosyalar temizlenir, eski `.env` yedeği (`backups/.env-*.bak`) otomatik olarak geri yüklenir ve bozuk lock bırakılmaz.
@@ -90,7 +101,7 @@ node /path/to/setup/bin/setup.mjs init --offline
 - **Çok Dilli Migration ve Tohumlama (Seeding):** Node.js script'lerinin yanı sıra Django, Alembic, .NET EF, Rust migration'ları, kaynak koddan port tespiti ve otomatik `seed` betiği yürütümü.
 - **Yeniden Yapılandırma Modu (`--reconfigure`):** Kurulu sistemi yıkıcı temiz kuruluma zorlamadan ayarları, portları ve `.env` dosyasını güvenle güncelleme imkanı.
 - **Güvenli ve Yüksek Performanslı:** Tarayıcı uygulamalarına gizli anahtarları sızdırmaz, CSRF, origin tutarlılığı, bellek sızıntısız rate limiting (`createRateLimiter`), akış tabanlı statik dosya sunumu (`createReadStream`) ve symlink sınır kontrolü (`realpathSync`) içerir.
-- **Kapsamlı Test Kapsamı:** 134 adet yerleşik otomasyon testi ile tüm senaryolar, port çakışmaları, CSRF korumaları, çok dilli profiller ve hata dayanıklılığı %100 oranında doğrulanmıştır.
+- **Kapsamlı Test Kapsamı:** 135 adet yerleşik otomasyon testi ile tüm senaryolar, derin tarama, çift süreç orkestrasyonu, port çakışmaları, CSRF korumaları, çok dilli profiller ve hata dayanıklılığı %100 oranında doğrulanmıştır.
 
 ---
 

@@ -13,7 +13,7 @@ import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, pa
 import { resolveStepCommand } from "../scripts/polyglot.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
-import { createDesktopAppController, normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveAppStartInvocation, resolveDesktopDataDir } from "./app-process.mjs";
+import { createDesktopAppController, createDualProcessController, normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveAppStartInvocation, resolveDesktopDataDir } from "./app-process.mjs";
 // Geriye uyumluluk: bu yardımcılar eskiden bu modülden dışa aktarılıyordu.
 export { normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, resolveAppStartInvocation, resolvePnpmInvocation, wrapShimCommand } from "./app-process.mjs";
 
@@ -216,7 +216,7 @@ export function createSetupServer(token, options = {}) {
   if (!token || token.length < 24) throw new Error("SETUP_TOKEN en az 24 karakter olmalıdır.");
   const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
   const setupConfig = loadSetupConfig(projectRoot);
-  const detection = detectProject(projectRoot);
+  let detection = detectProject(projectRoot, { candidate: options.candidate });
 
   // Masaüstü senaryosunda açık bir veri dizini yoksa kullanıcı veri dizini (AppData vb.) kullanılır.
   const dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: options.dataDir });
@@ -265,6 +265,7 @@ export function createSetupServer(token, options = {}) {
   let appChildStderr = "";
   let spawnedStaticServer = null;
   let completeTimer = null;
+  let dualController = null;
   const isDesktop = Boolean(detection.scenario.isDesktop);
   const desktopApp = createDesktopAppController({
     projectRoot,
@@ -459,12 +460,17 @@ export function createSetupServer(token, options = {}) {
             cpus: os.cpus().length,
             memoryGb: Math.round(os.totalmem() / 1024 ** 3),
             addresses: networks,
+            projectName: detection.projectName || null,
             kind: detection.kind,
             scenario: detection.scenario,
             defaultPort,
             envVariables: envExample.variables || [],
             seedScript: detectedSeed,
             toolchain: toolchain.details,
+            candidateRoot: detection.candidateRoot || null,
+            subprojects: detection.subprojects || null,
+            candidates: detection.candidates || null,
+            hasAmbiguity: Boolean(detection.hasAmbiguity),
           },
           checks: {
             nodeSupported: Number(process.versions.node.split(".")[0]) >= 18,
@@ -476,6 +482,36 @@ export function createSetupServer(token, options = {}) {
           },
           apply: applyJob,
         });
+      }
+
+      if (req.method === "POST" && reqUrl.pathname === "/api/select-candidate") {
+        try {
+          const body = await readJson(req);
+          const chosenCandidate = String(body?.candidate || "").trim();
+          if (!chosenCandidate) {
+            return sendJson(res, 400, { message: "Geçerli bir candidate yolu belirtilmelidir." });
+          }
+          detection = detectProject(projectRoot, { candidate: chosenCandidate });
+          const newPaths = getSetupPaths(projectRoot, { dataDir });
+          serverRoot = newPaths.serverRoot;
+          dataRoot = newPaths.dataRoot;
+          envPath = newPaths.env;
+          lockPath = newPaths.lock;
+          pendingPath = newPaths.pending;
+          artifactRoot = newPaths.setupArtifacts;
+          databaseUrl = newPaths.databaseUrl;
+          return sendJson(res, 200, {
+            message: `Aday alt proje seçildi: ${detection.projectName} (${chosenCandidate})`,
+            detected: {
+              projectName: detection.projectName,
+              candidateRoot: detection.candidateRoot,
+              kind: detection.kind,
+              scenario: detection.scenario,
+            },
+          });
+        } catch (err) {
+          return sendJson(res, 500, { message: `Aday seçilemedi: ${err.message}` });
+        }
       }
 
       if (req.method === "GET" && reqUrl.pathname === "/api/app-health" && isDesktop) {
@@ -497,6 +533,7 @@ export function createSetupServer(token, options = {}) {
         const loginUrl = hasDevUi && uiReachable && !detection.scenario.isStaticOnly ? buildLoginUrl(`http://127.0.0.1:${devPort}`, detection.routes.loginPath) : applyJob.loginUrl;
         const appDied = Boolean(appChild && appChild.exitCode !== null);
         const exitHint = appDied ? ` (Süreç kapandı, çıkış kodu: ${appChild.exitCode})` : "";
+        const subprocesses = dualController ? dualController.getSubprocesses() : null;
         return sendJson(res, 200, {
           reachable,
           apiReachable,
@@ -506,6 +543,7 @@ export function createSetupServer(token, options = {}) {
           mode,
           loginUrl,
           publicUrl: applyJob.publicUrl,
+          subprocesses,
           hint: reachable
             ? "Uygulama ayakta görünüyor; giriş sayfasına gidebilirsiniz."
             : `Uygulama henüz ayakta değil (API: ${appPort})${exitHint}.`,
@@ -537,7 +575,7 @@ export function createSetupServer(token, options = {}) {
           });
         }
 
-        if ((!appChild || appChild.exitCode !== null || appChild.killed) && !spawnedStaticServer) {
+        if ((!appChild || appChild.exitCode !== null || appChild.killed) && !spawnedStaticServer && (!dualController || !dualController.alive())) {
           const invocation = options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
           if (!invocation) {
             return sendJson(res, 409, {
@@ -560,28 +598,132 @@ export function createSetupServer(token, options = {}) {
               publicUrl: applyJob.publicUrl,
             });
           }
-          const dotEnvVars = parseDotEnvFile(envPath);
-          const shimsDir = path.resolve(projectRoot, "bin", "shims");
-          const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
-          const prepend = [];
-          if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
-          if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
-          const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
+          if (invocation.type === "dual") {
+            const dotEnvVars = parseDotEnvFile(envPath);
+            const shimsDir = path.resolve(projectRoot, "bin", "shims");
+            const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
+            const prepend = [];
+            if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
+            if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
 
-          appChildStderr = "";
-          appChild = spawn(invocation.command, invocation.args, {
-            cwd: invocation.cwd || projectRoot,
-            env: childEnv,
-            detached: process.platform !== "win32",
-            windowsHide: true,
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          appChild.stderr?.on("data", (chunk) => {
-            appChildStderr += chunk.toString();
-            if (appChildStderr.length > 4000) appChildStderr = appChildStderr.slice(-4000);
-          });
-          appChild.on("error", () => {});
-          appChild.unref();
+            const backendPort = appPort;
+            const frontendPort = detection.routes?.devPort || (appPort + 1);
+
+            dualController = createDualProcessController({
+              projectRoot,
+              backendInvocation: invocation.backend,
+              frontendInvocation: invocation.frontend,
+              backendPort,
+              frontendPort,
+              envVars: dotEnvVars,
+              prependPaths: prepend,
+              appendLog: (msg) => {
+                applyJob.logs.push(msg);
+              },
+            });
+
+            const pids = await dualController.start();
+            appChild = {
+              pid: pids.backendPid,
+              exitCode: null,
+              signalCode: null,
+              kill: () => dualController?.stop(),
+            };
+
+            for (let i = 0; i < 20; i++) {
+              await new Promise((r) => setTimeout(r, 200));
+              const sub = dualController.getSubprocesses();
+              if (!sub.backend.alive || (sub.frontend && !sub.frontend.alive)) {
+                const crashed = !sub.backend.alive ? sub.backend : sub.frontend;
+                const which = !sub.backend.alive ? "Backend" : "Frontend";
+                const errDetail = crashed.errorDetail || `Çıkış kodu: ${crashed.exitCode ?? crashed.signal}`;
+                return sendJson(res, 409, {
+                  code: "APP_CRASHED",
+                  message: `${which} süreci başlatılırken çöktü veya kapandı (${errDetail}). Kademeli kapanma uygulandı.`,
+                  reachable: false,
+                  pid: pids.backendPid,
+                  subprocesses: sub,
+                  errorDetail: errDetail,
+                });
+              }
+              const beOpen = await isPortOpen(backendPort);
+              const feOpen = sub.frontend ? await isPortOpen(frontendPort) : true;
+              if (beOpen || feOpen) {
+                return sendJson(res, 200, {
+                  message: "Çift süreçli uygulama (Backend + Frontend) başlatıldı ve bağlantıya hazır.",
+                  reachable: true,
+                  pid: pids.backendPid,
+                  subprocesses: sub,
+                  loginUrl: applyJob.loginUrl,
+                  publicUrl: applyJob.publicUrl,
+                });
+              }
+            }
+
+            return sendJson(res, 202, {
+              message: "Çift süreç başlatıldı ancak portlar henüz hazır değil. Lütfen biraz bekleyin.",
+              reachable: false,
+              pid: pids.backendPid,
+              subprocesses: dualController.getSubprocesses(),
+              loginUrl: applyJob.loginUrl,
+              publicUrl: applyJob.publicUrl,
+            });
+          }
+          if (invocation.type === "dual-static") {
+            const staticPort = detection.routes?.devPort || (appPort + 1);
+            const staticSrv = createStaticAppServer(invocation.staticDir);
+            await new Promise((resolve, reject) => {
+              staticSrv.once("error", reject);
+              staticSrv.listen(staticPort, "127.0.0.1", resolve);
+            });
+            spawnedStaticServer = staticSrv;
+
+            const dotEnvVars = parseDotEnvFile(envPath);
+            const shimsDir = path.resolve(projectRoot, "bin", "shims");
+            const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
+            const prepend = [];
+            if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
+            if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
+            const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
+
+            appChildStderr = "";
+            appChild = spawn(invocation.backend.command, invocation.backend.args, {
+              cwd: invocation.backend.cwd || projectRoot,
+              env: childEnv,
+              detached: process.platform !== "win32",
+              windowsHide: true,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            appChild.stderr?.on("data", (chunk) => {
+              appChildStderr += chunk.toString();
+              if (appChildStderr.length > 4000) appChildStderr = appChildStderr.slice(-4000);
+            });
+            appChild.on("error", () => {});
+            appChild.unref();
+          } else {
+            const dotEnvVars = parseDotEnvFile(envPath);
+            const shimsDir = path.resolve(projectRoot, "bin", "shims");
+            const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
+            const prepend = [];
+            if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
+            if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
+            const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
+
+            appChildStderr = "";
+            appChild = spawn(invocation.command, invocation.args, {
+              cwd: invocation.cwd || projectRoot,
+              env: childEnv,
+              detached: process.platform !== "win32",
+              windowsHide: true,
+              stdio: ["ignore", "pipe", "pipe"],
+            });
+            appChild.stderr?.on("data", (chunk) => {
+              appChildStderr += chunk.toString();
+              if (appChildStderr.length > 4000) appChildStderr = appChildStderr.slice(-4000);
+            });
+            appChild.on("error", () => {});
+            appChild.unref();
+          }
         }
 
         for (let i = 0; i < 16; i++) {
@@ -685,12 +827,17 @@ export function createSetupServer(token, options = {}) {
     }
   });
 
-  server.hasSpawnedApp = () => Boolean(spawnedStaticServer || (appChild && appChild.exitCode === null));
+  server.hasSpawnedApp = () => Boolean(spawnedStaticServer || dualController?.alive() || (appChild && appChild.exitCode === null));
 
   server.stopSpawnedApp = async () => {
     if (completeTimer) {
       clearTimeout(completeTimer);
       completeTimer = null;
+    }
+    if (dualController) {
+      const dc = dualController;
+      dualController = null;
+      await dc.stop();
     }
     if (spawnedStaticServer) {
       const srv = spawnedStaticServer;
@@ -735,7 +882,7 @@ export function startSetupWizard(options = {}) {
   );
   const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
   const setupConfig = loadSetupConfig(projectRoot);
-  const detection = detectProject(projectRoot);
+  let detection = detectProject(projectRoot, { candidate: options.candidate });
   const dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: options.dataDir });
   const paths = getSetupPaths(projectRoot, { dataDir });
   fs.mkdirSync(paths.dataRoot, { recursive: true });

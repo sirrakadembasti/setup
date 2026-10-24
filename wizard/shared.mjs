@@ -815,6 +815,30 @@ export async function executeSetupApply({
         } else {
           markStep("buildServer", "skipped", "Derleme betiği yok.");
         }
+      } else if (detection?.subprojects?.backend?.dir) {
+        const bDir = path.join(projectRoot, detection.subprojects.backend.dir);
+        const bPkg = readJsonFileSafe(path.join(bDir, "package.json"));
+        if (bPkg?.scripts?.build) {
+          markStep("buildServer", "running");
+          const inv = pmRunInvocation(pm, "build", bDir);
+          await runCommand(inv.command, inv.args, inv.cwd || bDir, {}, appendLog);
+          markStep("buildServer", "done", `${detection.subprojects.backend.dir} build`);
+          summary.push("Sunucu derlemesi tamamlandı.");
+        } else {
+          markStep("buildServer", "skipped", "Derleme betiği yok.");
+        }
+      } else if (detection?.candidateRoot) {
+        const candDir = path.join(projectRoot, detection.candidateRoot);
+        const candPkg = readJsonFileSafe(path.join(candDir, "package.json"));
+        if (candPkg?.scripts?.build) {
+          markStep("buildServer", "running");
+          const inv = pmRunInvocation(pm, "build", candDir);
+          await runCommand(inv.command, inv.args, inv.cwd || candDir, {}, appendLog);
+          markStep("buildServer", "done", `${detection.candidateRoot} build`);
+          summary.push("Proje derlemesi tamamlandı.");
+        } else {
+          markStep("buildServer", "skipped", "Derleme betiği yok.");
+        }
       } else {
         markStep("buildServer", "skipped", "Derleme betiği yok.");
       }
@@ -842,6 +866,18 @@ export async function executeSetupApply({
           const inv = pmRunInvocation(pm, "build", path.join(projectRoot, clientPackageDir));
           await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
           markStep("buildClient", "done", `${clientPackageDir} build`);
+          summary.push("İstemci derlemesi tamamlandı.");
+        } else {
+          markStep("buildClient", "skipped", "İstemci derleme betiği yok.");
+        }
+      } else if (detection?.subprojects?.frontend?.dir) {
+        const fDir = path.join(projectRoot, detection.subprojects.frontend.dir);
+        const fPkg = readJsonFileSafe(path.join(fDir, "package.json"));
+        if (fPkg?.scripts?.build) {
+          markStep("buildClient", "running");
+          const inv = pmRunInvocation(pm, "build", fDir);
+          await runCommand(inv.command, inv.args, inv.cwd || fDir, {}, appendLog);
+          markStep("buildClient", "done", `${detection.subprojects.frontend.dir} build`);
           summary.push("İstemci derlemesi tamamlandı.");
         } else {
           markStep("buildClient", "skipped", "İstemci derleme betiği yok.");
@@ -964,6 +1000,30 @@ export async function executeSetupApply({
     try {
       fs.chmodSync(envPath, 0o600);
     } catch {}
+
+    // Alt proje ve aday köklere de .env kopyala
+    const extraEnvDirs = [];
+    if (detection?.candidateRoot) {
+      extraEnvDirs.push(path.join(projectRoot, detection.candidateRoot));
+    }
+    if (detection?.subprojects?.backend?.dir) {
+      extraEnvDirs.push(path.join(projectRoot, detection.subprojects.backend.dir));
+    }
+    if (detection?.subprojects?.frontend?.dir) {
+      extraEnvDirs.push(path.join(projectRoot, detection.subprojects.frontend.dir));
+    }
+    for (const subDir of extraEnvDirs) {
+      try {
+        if (fs.existsSync(subDir)) {
+          const targetSubEnv = path.join(subDir, ".env");
+          if (path.resolve(targetSubEnv) !== path.resolve(envPath)) {
+            fs.copyFileSync(envPath, targetSubEnv);
+            try { fs.chmodSync(targetSubEnv, 0o600); } catch {}
+          }
+        }
+      } catch {}
+    }
+
     markStep("env", "done", ".env");
     summary.push("Gizli ayarlar .env dosyasına yazıldı.");
 

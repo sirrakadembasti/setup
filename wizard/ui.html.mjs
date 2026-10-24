@@ -557,6 +557,21 @@ async function fetchJson(url,options){
     throw netErr;
   }
 }
+async function chooseCandidate(candDir){
+  try{
+    const {ok,status,data}=await fetchJson(API+'/select-candidate',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Setup-CSRF':getCsrfToken()},
+      body:JSON.stringify({candidate:candDir})
+    });
+    if(!ok)throw new Error((data&&data.message)||('HTTP '+status));
+    await loadStatus();
+  }catch(e){
+    alert('Aday proje seçilemedi: '+(e.message||e));
+  }
+}
+window.chooseCandidate=chooseCandidate;
+
 async function loadStatus(){
   checks.textContent='Kontrol ediliyor…';
   try{
@@ -569,7 +584,24 @@ async function loadStatus(){
     checks.innerHTML=rows+'<pre>'+escapeHtml(JSON.stringify(s.detected,null,2))+'</pre>';
     const sInfo=document.getElementById('scenarioInfo');
     if(sInfo&&s&&s.detected&&s.detected.scenario){
-      sInfo.innerHTML='<strong>Algılanan Mimari:</strong> Senaryo '+escapeHtml(s.detected.scenario.number)+' — '+escapeHtml(s.detected.scenario.label)+'<div class="tip-note" style="margin-top:4px">'+escapeHtml(s.detected.scenario.summary||'')+'</div>';
+      let text='<strong>Algılanan Mimari:</strong> Senaryo '+escapeHtml(s.detected.scenario.number)+' — '+escapeHtml(s.detected.scenario.label)+'<div class="tip-note" style="margin-top:4px">'+escapeHtml(s.detected.scenario.summary||'')+'</div>';
+      if(s.detected.candidateRoot){
+        text+='<div class="tip-note" style="margin-top:4px;color:var(--run)">📁 <strong>Hedef Alt Proje:</strong> '+escapeHtml(s.detected.candidateRoot)+'</div>';
+      }
+      if(s.detected.subprojects){
+        text+='<div class="tip-note" style="margin-top:4px;color:var(--run)">🔀 <strong>Çok Parçalı Mimari:</strong> Backend ('+escapeHtml(s.detected.subprojects.backend?.dir||'')+') + Frontend ('+escapeHtml(s.detected.subprojects.frontend?.dir||'')+')</div>';
+      }
+      if(s.detected.hasAmbiguity&&Array.isArray(s.detected.candidates)){
+        text+='<div class="tip-note" style="margin-top:8px;padding:8px;background:var(--card);border:1px solid var(--border);border-radius:6px">';
+        text+='<div style="font-weight:600;margin-bottom:6px;color:#d97706">⚠️ Bu repoda birden çok alt proje algılandı. Kurmak istediğiniz projeyi seçin:</div>';
+        text+='<div style="display:flex;flex-wrap:wrap;gap:6px">';
+        for(const c of s.detected.candidates){
+          const isSelected = s.detected.candidateRoot === c.dir;
+          text+='<button type="button" class="btn" style="font-size:11px;padding:3px 8px;cursor:pointer;background:'+(isSelected?'var(--run)':'transparent')+';color:'+(isSelected?'#fff':'var(--text)')+';border:1px solid '+(isSelected?'var(--run)':'var(--border)')+';" onclick="chooseCandidate(&quot;'+escapeHtml(c.dir)+'&quot;)">📁 '+escapeHtml(c.name)+' <span style="opacity:0.7">('+escapeHtml(c.dir)+')</span></button>';
+        }
+        text+='</div></div>';
+      }
+      sInfo.innerHTML=text;
     }
     const adminSeedNotice=document.getElementById('adminSeedNotice');
     if(adminSeedNotice&&s&&s.detected){

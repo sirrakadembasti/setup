@@ -881,6 +881,7 @@ node bin/setup.mjs help     # Yardım kılavuzunu gösterir
 
 # Seçenekler / Bayraklar:
 --root <yol>             # Hedef uygulama kök dizini (varsayılan: aktif dizin)
+--candidate <yol>        # Çok parçalı repolarda hedef alt projeyi seçer (örn: apps/web, srv/)
 --port <numara>          # Sihirbaz veya başlatıcı portunu özelleştirir
 --data-dir <yol>         # Kurulum verileri ve .env için harici dizin belirler
 --force, -f              # init sırasında mevcut yapılandırma ve başlatıcıların üzerine yazar
@@ -964,6 +965,12 @@ setup/
    - Doğrulama hatalarında hatalı form alanları kırmızı çerçeveyle ve açıklama mesajıyla işaretlenir.
    - Ağ kopmalarında veya sunucu yeniden başlatıldığında arayüzün tepesinde yeniden bağlanma çubuğu belirir; çift tıklamaları önlemek için aksiyon düğmeleri anında kilitlenir (`disabled = true`).
 
+10. **Standart Dışı & Dağınık Repolar İçin Derin Tarama ve Çift Süreç Orkestrasyonu:**
+    - Kök dizinde proje dosyası yokken maksimum 3 derinlik seviyesine kadar alt klasörler taranır (`findProjectCandidates`).
+    - Dağınık `.env.example` dosyaları havuzda birleştirilir (`findScatteredEnvExamples`) ve alt projelere (`srv/.env`, `ui/.env`) dağıtılır.
+    - Çok parçalı Fullstack yapılarda Backend ana porta, Frontend ikincil porta (`devPort`) bağlanır (`createDualProcessController`), `API_URL` ortam değişkenleri otomatik enjekte edilir ve süreçlerden biri çöktüğünde diğeri kademeli olarak sonlandırılır.
+    - Çoklu aday belirsizliğinde Web Sihirbazında interaktif kartlar (`chooseCandidate`, `POST /api/select-candidate`) ve CLI'da `--candidate` bayrağı ile anında hedef değiştirilebilir.
+
 ### Sürüm Yönetimi (`scripts/version.mjs`)
 `VERSION`, `package.json`, `CHANGELOG.md` ve Git etiketlerini tek komutla yönetir:
 
@@ -977,11 +984,11 @@ node scripts/version.mjs bump patch --tag
 ```
 
 ### Testleri Çalıştırma
-Sıfır bağımlılıklı yerleşik Node test çalıştırıcısı ile tüm birim, senaryo, dayanıklılık ve E2E testleri:
+Sıfır bağımlılıklı yerleşik Node test çalıştırıcısı ile tüm birim, senaryo, dayanıklılık, derin keşif ve E2E testleri:
 
 ```bash
-# Node ile (Tüm 134 test):
-node --test scripts/detect-project.test.mjs scripts/setup-bootstrap.test.mjs scripts/wizard.test.mjs scripts/find-port-holder.test.mjs scripts/error-resilience.test.mjs
+# Node ile (Tüm 135 test):
+node --test scripts/detect-project.test.mjs scripts/setup-bootstrap.test.mjs scripts/wizard.test.mjs scripts/find-port-holder.test.mjs scripts/deep-discovery.test.mjs
 
 # veya Bun ile:
 bun test

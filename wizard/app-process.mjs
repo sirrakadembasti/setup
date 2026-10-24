@@ -224,6 +224,87 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
   }
 
   const detection = detectProject(root);
+
+  if (detection.candidateRoot) {
+    const candPath = path.join(root, detection.candidateRoot);
+    const candPkg = readJsonFileSafe(path.join(candPath, "package.json"));
+    const candPm = resolveEffectivePackageManager(cfg?.packageManager || detectPackageManager(candPath, candPkg));
+    if (candPkg?.scripts?.start) {
+      return scriptToInvocation(candPkg.scripts.start, candPm, "start", candPath);
+    }
+    if (candPkg?.scripts?.preview) {
+      return scriptToInvocation(candPkg.scripts.preview, candPm, "preview", candPath);
+    }
+    if (candPkg?.scripts?.dev) {
+      return scriptToInvocation(candPkg.scripts.dev, candPm, "dev", candPath);
+    }
+    for (const relStatic of ["dist", "build", "public", "."]) {
+      const candidateDir = path.resolve(candPath, relStatic);
+      if (fs.existsSync(path.join(candidateDir, "index.html"))) {
+        return {
+          type: "static",
+          staticDir: candidateDir,
+        };
+      }
+    }
+  }
+
+  if (detection.subprojects?.backend) {
+    const bPath = path.join(root, detection.subprojects.backend.dir);
+    const bPkg = readJsonFileSafe(path.join(bPath, "package.json"));
+    const bPm = resolveEffectivePackageManager(cfg?.packageManager || detectPackageManager(bPath, bPkg));
+    let bInv = null;
+    if (bPkg?.scripts?.start) {
+      bInv = scriptToInvocation(bPkg.scripts.start, bPm, "start", bPath);
+    } else if (bPkg?.scripts?.dev) {
+      bInv = scriptToInvocation(bPkg.scripts.dev, bPm, "dev", bPath);
+    }
+
+    if (detection.subprojects?.frontend) {
+      const fPath = path.join(root, detection.subprojects.frontend.dir);
+      const fPkg = readJsonFileSafe(path.join(fPath, "package.json"));
+      const fPm = resolveEffectivePackageManager(cfg?.packageManager || detectPackageManager(fPath, fPkg));
+
+      // 1. Hibrit Yaklaşım: Eğer frontend'de derlenmiş statik çıktı varsa
+      for (const relStatic of ["dist", "build", "public", "."]) {
+        const candidateDir = path.resolve(fPath, relStatic);
+        if (fs.existsSync(path.join(candidateDir, "index.html"))) {
+          return {
+            type: "dual-static",
+            command: bInv?.command,
+            args: bInv?.args,
+            cwd: bInv?.cwd,
+            backend: bInv,
+            staticDir: candidateDir,
+          };
+        }
+      }
+
+      // 2. Çift Süreç (Dev/Eşzamanlı mod)
+      let fInv = null;
+      if (fPkg?.scripts?.start) {
+        fInv = scriptToInvocation(fPkg.scripts.start, fPm, "start", fPath);
+      } else if (fPkg?.scripts?.preview) {
+        fInv = scriptToInvocation(fPkg.scripts.preview, fPm, "preview", fPath);
+      } else if (fPkg?.scripts?.dev) {
+        fInv = scriptToInvocation(fPkg.scripts.dev, fPm, "dev", fPath);
+      }
+
+      if (bInv && fInv) {
+        return {
+          type: "dual",
+          command: bInv.command,
+          args: bInv.args,
+          cwd: bInv.cwd,
+          backend: bInv,
+          frontend: fInv,
+        };
+      }
+    }
+
+    if (bInv) return bInv;
+  }
+
   const langProfile = resolveLanguageProfile(root, detection.kind, detection.ports?.app || 5000);
   if (langProfile?.start?.command) {
     if (langProfile.start.fallbackCommand && fs.existsSync(path.join(root, langProfile.start.fallbackCommand))) {
@@ -360,5 +441,181 @@ export function createDesktopAppController({ projectRoot, setupConfig = null, ge
       }
       return { status: 200, body: { message: "Masaüstü uygulaması başlatıldı.", reachable: true, desktop: true, pid: child.pid } };
     },
+  };
+}
+
+/**
+ * Çok parçalı (Frontend + Backend) projeler için eşzamanlı çift süreç orkestratörü.
+ * - Backend'i ana porta (PORT), Frontend'i ikincil porta (PORT) bağlar.
+ * - Frontend'e API_URL, VITE_API_URL, NEXT_PUBLIC_API_URL ortam değişkenlerini bağlar.
+ * - Kademeli Kapanma (Cascading Termination): Süreçlerden biri çökerse diğerini de sonlandırır.
+ */
+export function createDualProcessController({
+  projectRoot,
+  backendInvocation,
+  frontendInvocation,
+  backendPort = 5000,
+  frontendPort = 5001,
+  envVars = {},
+  prependPaths = [],
+  appendLog = null,
+}) {
+  let backendChild = null;
+  let frontendChild = null;
+  let backendStderr = "";
+  let frontendStderr = "";
+  const exitInfo = { backend: null, frontend: null };
+  let isShuttingDown = false;
+
+  const alive = () =>
+    Boolean(
+      backendChild &&
+      backendChild.exitCode === null &&
+      backendChild.signalCode === null &&
+      (!frontendChild || (frontendChild.exitCode === null && frontendChild.signalCode === null))
+    );
+
+  const stop = async () => {
+    isShuttingDown = true;
+    const targets = [backendChild, frontendChild].filter(Boolean);
+    backendChild = null;
+    frontendChild = null;
+
+    for (const child of targets) {
+      try {
+        child.kill();
+      } catch {}
+      if (process.platform !== "win32" && child.pid) {
+        try {
+          process.kill(-child.pid, "SIGTERM");
+        } catch {}
+      } else if (process.platform === "win32" && child.pid) {
+        try {
+          spawnSync("taskkill", ["/pid", String(child.pid), "/f", "/t"]);
+        } catch {}
+      }
+    }
+  };
+
+  const start = async () => {
+    isShuttingDown = false;
+    exitInfo.backend = null;
+    exitInfo.frontend = null;
+    backendStderr = "";
+    frontendStderr = "";
+
+    // 1. Backend environment: PORT = backendPort
+    const backendEnv = normalizeProcessEnv(
+      process.env,
+      { ...envVars, PORT: String(backendPort) },
+      prependPaths
+    );
+
+    // 2. Frontend environment: PORT = frontendPort, API_URL köprüsü
+    const apiUrl = `http://127.0.0.1:${backendPort}`;
+    const frontendEnv = normalizeProcessEnv(
+      process.env,
+      {
+        ...envVars,
+        PORT: String(frontendPort),
+        API_URL: apiUrl,
+        VITE_API_URL: apiUrl,
+        NEXT_PUBLIC_API_URL: apiUrl,
+        REACT_APP_API_URL: apiUrl,
+      },
+      prependPaths
+    );
+
+    // Backend başlat
+    backendChild = spawn(backendInvocation.command, backendInvocation.args, {
+      cwd: backendInvocation.cwd || projectRoot,
+      env: backendEnv,
+      detached: process.platform !== "win32",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    backendChild.stderr?.on("data", (chunk) => {
+      backendStderr = (backendStderr + chunk.toString()).slice(-4000);
+      appendLog?.(`[backend-err] ${chunk.toString()}`);
+    });
+
+    backendChild.on("exit", (code, signal) => {
+      exitInfo.backend = { code, signal };
+      if (!isShuttingDown && frontendChild && frontendChild.exitCode === null && frontendChild.signalCode === null) {
+        appendLog?.(`[supervisor] Backend kapandı (kod: ${code ?? signal}), Frontend kademeli sonlandırılıyor...`);
+        try { frontendChild.kill(); } catch {}
+        if (process.platform === "win32" && frontendChild.pid) {
+          try { spawnSync("taskkill", ["/pid", String(frontendChild.pid), "/f", "/t"]); } catch {}
+        }
+      }
+    });
+
+    // Frontend başlat
+    if (frontendInvocation) {
+      frontendChild = spawn(frontendInvocation.command, frontendInvocation.args, {
+        cwd: frontendInvocation.cwd || projectRoot,
+        env: frontendEnv,
+        detached: process.platform !== "win32",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      frontendChild.stderr?.on("data", (chunk) => {
+        frontendStderr = (frontendStderr + chunk.toString()).slice(-4000);
+        appendLog?.(`[frontend-err] ${chunk.toString()}`);
+      });
+
+      frontendChild.on("exit", (code, signal) => {
+        exitInfo.frontend = { code, signal };
+        if (!isShuttingDown && backendChild && backendChild.exitCode === null && backendChild.signalCode === null) {
+          appendLog?.(`[supervisor] Frontend kapandı (kod: ${code ?? signal}), Backend kademeli sonlandırılıyor...`);
+          try { backendChild.kill(); } catch {}
+          if (process.platform === "win32" && backendChild.pid) {
+            try { spawnSync("taskkill", ["/pid", String(backendChild.pid), "/f", "/t"]); } catch {}
+          }
+        }
+      });
+    }
+
+    backendChild.unref();
+    frontendChild?.unref();
+
+    return {
+      backendPid: backendChild.pid,
+      frontendPid: frontendChild?.pid ?? null,
+    };
+  };
+
+  const isProcessAlive = (child) => Boolean(child && child.exitCode === null && child.signalCode === null && !child.killed);
+
+  const getSubprocesses = () => ({
+    backend: {
+      pid: backendChild?.pid ?? null,
+      port: backendPort,
+      alive: isProcessAlive(backendChild),
+      exitCode: exitInfo.backend?.code ?? null,
+      signal: exitInfo.backend?.signal ?? null,
+      errorDetail: backendStderr.trim().split(/\r?\n/).slice(-3).join(" | ") || null,
+    },
+    frontend: frontendChild
+      ? {
+          pid: frontendChild.pid,
+          port: frontendPort,
+          alive: isProcessAlive(frontendChild),
+          exitCode: exitInfo.frontend?.code ?? null,
+          signal: exitInfo.frontend?.signal ?? null,
+          errorDetail: frontendStderr.trim().split(/\r?\n/).slice(-3).join(" | ") || null,
+        }
+      : null,
+  });
+
+  return {
+    start,
+    stop,
+    alive,
+    getSubprocesses,
+    getExitInfo: () => exitInfo,
+    getErrors: () => ({ backend: backendStderr, frontend: frontendStderr }),
   };
 }

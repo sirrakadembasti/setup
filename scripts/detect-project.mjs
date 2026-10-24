@@ -176,27 +176,88 @@ export function parseEnvContent(content) {
   return result;
 }
 
+export function findScatteredEnvExamples(root, maxDepth = 3) {
+  const found = [];
+  const envFileRegex = /^(?:\.env|env)\.(?:example|sample|template)$/i;
+  const ignored = new Set([
+    "node_modules", ".git", ".hg", ".svn", "dist", "build", "out", ".next", ".nuxt", ".output",
+    "coverage", ".turbo", ".cache", ".vercel", "vendor", "data", "uploads", "backups",
+    "bin", "obj", "target", ".venv", "venv", ".idea", ".vs", "graphify-out", "__pycache__",
+  ]);
+
+  function scan(dir, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!ignored.has(entry.name.toLowerCase())) {
+          scan(fullPath, depth + 1);
+        }
+      } else if (entry.isFile()) {
+        if (envFileRegex.test(entry.name)) {
+          found.push(fullPath);
+        }
+      }
+    }
+  }
+
+  scan(root, 0);
+  return found;
+}
+
 export function parseEnvExample(root) {
+  const scattered = findScatteredEnvExamples(root, 3);
   const candidates = [
     path.join(root, ".env.example"),
     path.join(root, ".env.sample"),
     path.join(root, ".env.template"),
     path.join(root, "server", ".env.example"),
     path.join(root, "server", ".env.sample"),
+    ...scattered,
   ];
-  const found = candidates.find((file) => fs.existsSync(file));
-  if (!found) return { file: null, variables: [] };
 
-  const content = fs.readFileSync(found, "utf8");
-  const parsed = parseEnvContent(content);
-  const variables = parsed.map((item) => ({
-    key: item.key,
-    defaultValue: item.value,
-    description: item.comment,
-  }));
+  const foundFiles = [];
+  const seenPaths = new Set();
+  for (const f of candidates) {
+    if (fs.existsSync(f) && !seenPaths.has(f)) {
+      seenPaths.add(f);
+      foundFiles.push(f);
+    }
+  }
+
+  if (foundFiles.length === 0) return { file: null, variables: [] };
+
+  const varMap = new Map();
+  for (const file of foundFiles) {
+    try {
+      const content = fs.readFileSync(file, "utf8");
+      const parsed = parseEnvContent(content);
+      for (const item of parsed) {
+        if (!varMap.has(item.key) || (!varMap.get(item.key).defaultValue && item.value)) {
+          varMap.set(item.key, {
+            key: item.key,
+            defaultValue: item.value,
+            description: item.comment,
+            sourceFile: path.relative(root, file).replaceAll(path.sep, "/"),
+          });
+        }
+      }
+    } catch {}
+  }
+
+  const primaryFile = path.relative(root, foundFiles[0]).replaceAll(path.sep, "/");
+  const relFiles = foundFiles.map((f) => path.relative(root, f).replaceAll(path.sep, "/"));
   return {
-    file: path.relative(root, found).replaceAll(path.sep, "/"),
-    variables,
+    file: primaryFile,
+    files: relFiles,
+    variables: Array.from(varMap.values()),
   };
 }
 
@@ -708,13 +769,311 @@ export function detectAppRoutes(root, scenario = {}, setupConfig = null) {
   return { loginPath, devPort };
 }
 
+export const CANDIDATE_IGNORED_DIRS = new Set([
+  "node_modules", ".git", ".hg", ".svn", "dist", "build", "out", ".next", ".nuxt", ".output",
+  "coverage", ".turbo", ".cache", ".vercel", "vendor", "data", "uploads", "backups",
+  "bin", "obj", "target", ".venv", "venv", ".idea", ".vs", "graphify-out", "__pycache__",
+]);
+
+export function isDotnetDesktopProject(root) {
+  const csprojFiles = [];
+  function scan(dir, depth) {
+    if (depth > 3) return;
+    try {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (ent.isDirectory() && !CANDIDATE_IGNORED_DIRS.has(ent.name.toLowerCase())) {
+          scan(path.join(dir, ent.name), depth + 1);
+        } else if (ent.isFile() && ent.name.toLowerCase().endsWith(".csproj")) {
+          csprojFiles.push(path.join(dir, ent.name));
+        }
+      }
+    } catch {}
+  }
+  scan(root, 0);
+
+  if (csprojFiles.length === 0) return false;
+
+  for (const f of csprojFiles) {
+    try {
+      const text = fs.readFileSync(f, "utf8");
+      if (
+        /<UseWindowsForms>true<\/UseWindowsForms>/i.test(text) ||
+        /<UseWPF>true<\/UseWPF>/i.test(text) ||
+        /<OutputType>WinExe<\/OutputType>/i.test(text) ||
+        /net[0-9.]+-windows/i.test(text)
+      ) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+export function isPythonDesktopProject(root) {
+  let hasGuiImport = false;
+  let hasServerImport = false;
+
+  function scan(dir, depth) {
+    if (depth > 3 || hasGuiImport) return;
+    try {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (ent.isDirectory() && !CANDIDATE_IGNORED_DIRS.has(ent.name.toLowerCase())) {
+          scan(path.join(dir, ent.name), depth + 1);
+        } else if (ent.isFile() && ent.name.toLowerCase().endsWith(".py")) {
+          try {
+            const content = fs.readFileSync(path.join(dir, ent.name), "utf8");
+            if (/\b(?:import\s+tkinter|from\s+tkinter|import\s+PyQt[56]|from\s+PyQt[56]|import\s+PySide[26]|from\s+PySide[26]|import\s+wx|from\s+wx)\b/.test(content)) {
+              hasGuiImport = true;
+            }
+            if (/\b(?:FastAPI|Starlette|Flask|django)\b/.test(content)) {
+              hasServerImport = true;
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  scan(root, 0);
+
+  return hasGuiImport && !hasServerImport;
+}
+
+export function isCppDesktopProject(root) {
+  const cmake = path.join(root, "CMakeLists.txt");
+  if (fs.existsSync(cmake)) {
+    try {
+      const text = fs.readFileSync(cmake, "utf8");
+      if (/find_package\s*\(\s*(?:Qt|wxWidgets)/i.test(text) || /add_executable\s*\([^)]*WIN32/i.test(text)) {
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+export function classifyCandidate(candidateDir, relDir) {
+  const pkg = readJsonSafe(path.join(candidateDir, "package.json"));
+  let role = "general";
+  let kind = "unknown";
+  let name = pkg?.name || path.basename(candidateDir);
+  const markers = [];
+
+  // 1. Node.js package.json
+  if (pkg) {
+    markers.push("package.json");
+    const scripts = pkg.scripts || {};
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    const scriptText = Object.values(scripts).join(" ");
+
+    const isFrontend =
+      deps.react || deps.vue || deps["@sveltejs/kit"] || deps.svelte || deps.astro || deps.next || deps.nuxt ||
+      FRONTEND_CLI_PATTERN.test(scriptText) ||
+      fs.existsSync(path.join(candidateDir, "vite.config.ts")) ||
+      fs.existsSync(path.join(candidateDir, "vite.config.js")) ||
+      fs.existsSync(path.join(candidateDir, "index.html"));
+
+    const isServer =
+      deps.express || deps.fastify || deps.koa || deps.hono || deps["@nestjs/core"] ||
+      hasServerScript(pkg) ||
+      fs.existsSync(path.join(candidateDir, "server.js")) ||
+      fs.existsSync(path.join(candidateDir, "index.js")) ||
+      fs.existsSync(path.join(candidateDir, "src", "index.ts"));
+
+    const isDesktop =
+      deps.electron || deps["@tauri-apps/api"] || deps["@tauri-apps/cli"] ||
+      fs.existsSync(path.join(candidateDir, "tauri.conf.json")) ||
+      fs.existsSync(path.join(candidateDir, "src-tauri", "tauri.conf.json"));
+
+    if (isDesktop) {
+      role = "desktop";
+      kind = deps.electron ? "electron-desktop" : "tauri-desktop";
+    } else if (isServer && isFrontend) {
+      role = "fullstack";
+      kind = "node-fullstack";
+    } else if (isServer) {
+      role = "backend";
+      kind = "node-server";
+    } else if (isFrontend) {
+      role = "frontend";
+      kind = (deps.next || deps.nuxt || deps["@sveltejs/kit"] || deps.astro) ? "ssr-fullstack" : "node-client";
+    } else {
+      role = "general";
+      kind = "node-package";
+    }
+    return { dir: relDir, fullPath: candidateDir, name, role, kind, markers, pkg };
+  }
+
+  // 2. .NET (.csproj / .sln)
+  let csprojFiles = [];
+  try {
+    for (const ent of fs.readdirSync(candidateDir, { withFileTypes: true })) {
+      if (ent.isFile() && ent.name.toLowerCase().endsWith(".csproj")) {
+        csprojFiles.push(path.join(candidateDir, ent.name));
+      }
+    }
+  } catch {}
+
+  if (csprojFiles.length > 0 || hasFileWithSuffix(candidateDir, [".sln"])) {
+    markers.push("dotnet");
+    let isDesktop = false;
+    let isWeb = false;
+    for (const c of csprojFiles) {
+      try {
+        const text = fs.readFileSync(c, "utf8");
+        if (
+          /<UseWindowsForms>true<\/UseWindowsForms>/i.test(text) ||
+          /<UseWPF>true<\/UseWPF>/i.test(text) ||
+          /<OutputType>WinExe<\/OutputType>/i.test(text) ||
+          /net[0-9.]+-windows/i.test(text)
+        ) {
+          isDesktop = true;
+        }
+        if (/Microsoft\.NET\.Sdk\.Web/i.test(text)) {
+          isWeb = true;
+        }
+      } catch {}
+    }
+    if (isDesktop && !isWeb) {
+      role = "desktop";
+      kind = "dotnet-desktop";
+    } else {
+      role = "backend";
+      kind = "dotnet-server";
+    }
+    return { dir: relDir, fullPath: candidateDir, name, role, kind, markers };
+  }
+
+  // 3. Python
+  const pyMarkers = ["requirements.txt", "pyproject.toml", "manage.py", "app.py", "main.py", "gui.py"];
+  const hasPy = pyMarkers.some((f) => fs.existsSync(path.join(candidateDir, f)));
+  if (hasPy) {
+    markers.push("python");
+    let isGui = false;
+    try {
+      const files = fs.readdirSync(candidateDir, { withFileTypes: true });
+      for (const f of files) {
+        if (f.isFile() && f.name.endsWith(".py")) {
+          const content = fs.readFileSync(path.join(candidateDir, f.name), "utf8");
+          if (/\b(?:import\s+tkinter|from\s+tkinter|import\s+PyQt[56]|from\s+PyQt[56]|import\s+PySide[26]|from\s+PySide[26]|import\s+wx|from\s+wx)\b/.test(content)) {
+            isGui = true;
+            break;
+          }
+        }
+      }
+    } catch {}
+
+    if (isGui) {
+      role = "desktop";
+      kind = "python-desktop";
+    } else {
+      role = "backend";
+      kind = "python-server";
+    }
+    return { dir: relDir, fullPath: candidateDir, name, role, kind, markers };
+  }
+
+  // 4. Go
+  if (fs.existsSync(path.join(candidateDir, "go.mod")) || fs.existsSync(path.join(candidateDir, "main.go"))) {
+    markers.push("go");
+    return { dir: relDir, fullPath: candidateDir, name, role: "backend", kind: "go-server", markers };
+  }
+
+  // 5. Rust
+  if (fs.existsSync(path.join(candidateDir, "Cargo.toml"))) {
+    markers.push("rust");
+    return { dir: relDir, fullPath: candidateDir, name, role: "backend", kind: "rust-server", markers };
+  }
+
+  // 6. C/C++
+  if (fs.existsSync(path.join(candidateDir, "CMakeLists.txt")) || fs.existsSync(path.join(candidateDir, "Makefile"))) {
+    markers.push("cpp");
+    let isGui = false;
+    try {
+      const cmakeText = fs.readFileSync(path.join(candidateDir, "CMakeLists.txt"), "utf8");
+      if (/find_package\s*\(\s*(?:Qt|wxWidgets)/i.test(cmakeText)) {
+        isGui = true;
+      }
+    } catch {}
+    return { dir: relDir, fullPath: candidateDir, name, role: isGui ? "desktop" : "backend", kind: isGui ? "cpp-desktop" : "cpp-server", markers };
+  }
+
+  // 7. Game
+  if (fs.existsSync(path.join(candidateDir, "project.godot"))) {
+    return { dir: relDir, fullPath: candidateDir, name, role: "game", kind: "godot-game", markers: ["godot"] };
+  }
+  if (fs.existsSync(path.join(candidateDir, "ProjectSettings", "ProjectVersion.txt"))) {
+    return { dir: relDir, fullPath: candidateDir, name, role: "game", kind: "unity-game", markers: ["unity"] };
+  }
+  if (hasFileWithSuffix(candidateDir, [".uproject"])) {
+    return { dir: relDir, fullPath: candidateDir, name, role: "game", kind: "unreal-game", markers: ["unreal"] };
+  }
+
+  // 8. Static HTML
+  if (fs.existsSync(path.join(candidateDir, "index.html"))) {
+    return { dir: relDir, fullPath: candidateDir, name, role: "frontend", kind: "static-web", markers: ["index.html"] };
+  }
+
+  return null;
+}
+
+export function findProjectCandidates(root, maxDepth = 3) {
+  const candidates = [];
+
+  function scan(dir, depth) {
+    if (depth > maxDepth) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    if (dir !== root) {
+      const relDir = path.relative(root, dir).replaceAll(path.sep, "/");
+      const classified = classifyCandidate(dir, relDir);
+      if (classified) {
+        candidates.push(classified);
+        return;
+      }
+    }
+
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        const name = entry.name.toLowerCase();
+        if (!CANDIDATE_IGNORED_DIRS.has(name) && !name.startsWith(".")) {
+          const sub = path.join(dir, entry.name);
+          scan(sub, depth + 1);
+        }
+      }
+    }
+  }
+
+  scan(root, 0);
+  return candidates;
+}
+
 export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
-  if (kind === "electron-desktop" || kind === "tauri-desktop" || kind === "unity-game" || kind === "unreal-game" || kind === "godot-game" || stack.electron || stack.tauri || stack.unity || stack.unreal || stack.godot) {
+  if (
+    kind === "electron-desktop" ||
+    kind === "tauri-desktop" ||
+    kind === "dotnet-desktop" ||
+    kind === "python-desktop" ||
+    kind === "cpp-desktop" ||
+    kind === "unity-game" ||
+    kind === "unreal-game" ||
+    kind === "godot-game" ||
+    stack.electron ||
+    stack.tauri ||
+    stack.unity ||
+    stack.unreal ||
+    stack.godot
+  ) {
     return {
       id: "scenario-5-desktop",
       number: 5,
-      label: "Senaryo 5: Masaüstü ve Oyun Uygulaması (Electron / Tauri / Unity / Unreal / Godot)",
-      summary: "Masaüstü uygulama ortamı, yerel veri dizini ve IPC/Sidecar kurulumu.",
+      label: "Senaryo 5: Masaüstü ve Oyun Uygulaması (.NET Desktop / Python GUI / Electron / Tauri / C++ GUI / Unity / Unreal / Godot)",
+      summary: "Masaüstü veya yerel uygulama ortamı, yerel veri dizini ve süreç yaşam döngüsü.",
       requiresDependencies: true,
       requiresDatabase: Boolean(stack.prisma || stack.hasServerSubdir),
       usesLocalDatabase: Boolean(stack.prisma || stack.hasServerSubdir),
@@ -802,8 +1161,24 @@ export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
  * Kurulum eklentisinin çalıştığı kök dizini ve içeriğini analiz eder.
  * @param {string} root - hedef uygulama kök dizini (varsayılan: process.cwd())
  */
-export function detectProject(root = process.cwd()) {
+export function detectProject(root = process.cwd(), options = {}) {
   const resolved = path.resolve(root);
+
+  // Belirli bir alt proje adayı istendiyse doğrudan o alt dizini hedefle
+  if (options?.candidate && !options?._internal) {
+    const candidateAbs = path.resolve(resolved, String(options.candidate).trim());
+    if (fs.existsSync(candidateAbs)) {
+      const relCandidate = path.relative(resolved, candidateAbs).replaceAll(path.sep, "/");
+      const candDet = detectProject(candidateAbs, { _internal: true });
+      return {
+        ...candDet,
+        root: resolved,
+        candidateRoot: relCandidate,
+        projectName: candDet.projectName || path.basename(candidateAbs),
+      };
+    }
+  }
+
   const validPkg = hasValidPackageJson(resolved);
   const setupConfig = loadSetupConfig(resolved);
   const workspaces = detectWorkspaces(resolved);
@@ -836,14 +1211,115 @@ export function detectProject(root = process.cwd()) {
   else if (stack.nodeServer && stack.client) kind = "node-webapp";
   else if (stack.nodeServer) kind = "node-server";
   else if (stack.client && validPkg) kind = "node-client";
+  else if (isPythonDesktopProject(resolved)) kind = "python-desktop";
   else if (stack.python) kind = "python-server";
   else if (stack.go) kind = "go-server";
+  else if (isDotnetDesktopProject(resolved)) kind = "dotnet-desktop";
   else if (stack.dotnet) kind = "dotnet-server";
   else if (stack.rust) kind = "rust-server";
+  else if (isCppDesktopProject(resolved)) kind = "cpp-desktop";
   else if (stack.cpp) kind = "cpp-server";
   else if (validPkg) kind = "node-package";
   else if (stack.staticHtml) kind = "static-web";
   else if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) kind = "directory";
+
+  const cfgPorts = setupConfig?.ports || {};
+
+  const hasRootServerEntry =
+    exists(resolved, "index.js") ||
+    exists(resolved, "index.mjs") ||
+    exists(resolved, "index.ts") ||
+    exists(resolved, "server.js") ||
+    exists(resolved, "app.js") ||
+    exists(resolved, "src", "index.ts") ||
+    exists(resolved, "src", "index.js") ||
+    exists(resolved, "src", "server.ts");
+
+  const hasDirectRootProject =
+    validPkg ||
+    workspaces.isWorkspace ||
+    setupConfig !== null ||
+    hasRootServerEntry ||
+    exists(resolved, "go.mod") ||
+    exists(resolved, "Cargo.toml") ||
+    exists(resolved, "CMakeLists.txt") ||
+    exists(resolved, "project.godot") ||
+    exists(resolved, "ProjectSettings", "ProjectVersion.txt");
+
+  // Kök dizinde doğrudan tanımlı proje bulunamadıysa veya dizinse alt klasörleri derinlemesine tara
+  if (!options?._internal && (!hasDirectRootProject || kind === "directory" || kind === "unknown")) {
+    const candidates = findProjectCandidates(resolved, 3);
+    if (candidates.length === 1) {
+      const c = candidates[0];
+      const candDet = detectProject(c.fullPath, { _internal: true });
+      return {
+        ...candDet,
+        root: resolved,
+        candidateRoot: c.dir,
+        projectName: c.name || candDet.projectName,
+        confidence: 0.85,
+      };
+    } else if (candidates.length > 1) {
+      const backends = candidates.filter((c) => c.role === "backend");
+      const frontends = candidates.filter((c) => c.role === "frontend");
+      if (backends.length === 1 && frontends.length === 1) {
+        const subprojects = { backend: backends[0], frontend: frontends[0] };
+        kind = "node-fullstack";
+        const scenario = detectScenarioProfile(kind, { nodeServer: true, client: true });
+        const projectName = `${backends[0].name}-${frontends[0].name}`;
+        const pm = backends[0].pkg?.packageManager ? detectPackageManager(backends[0].fullPath, backends[0].pkg) : "npm";
+        return {
+          root: resolved,
+          projectName,
+          kind,
+          scenario,
+          packageManager: pm,
+          hasPackageJson: true,
+          packageJsonExists: true,
+          workspaces,
+          stack: { ...stack, nodeServer: true, client: true },
+          dependencyUsage,
+          install,
+          runtime,
+          setupConfig,
+          routes: detectAppRoutes(resolved, scenario, setupConfig),
+          ports: {
+            bootstrap: Number(process.env.SETUP_BOOTSTRAP_PORT) || cfgPorts.bootstrap || DEFAULT_PORTS.bootstrap,
+            wizard: Number(process.env.SETUP_WIZARD_PORT) || cfgPorts.wizard || DEFAULT_PORTS.wizard,
+            app: Number(process.env.SETUP_APP_PORT) || cfgPorts.app || detectEnvExamplePort(runtime) || DEFAULT_PORTS.app,
+          },
+          subprojects,
+          candidates,
+          confidence: 0.85,
+        };
+      } else {
+        return {
+          root: resolved,
+          projectName: candidates[0]?.name || path.basename(resolved),
+          kind: candidates[0]?.kind || "unknown",
+          scenario: detectScenarioProfile(candidates[0]?.kind || "unknown", stack, workspaces),
+          packageManager: "npm",
+          hasPackageJson: false,
+          packageJsonExists: false,
+          workspaces,
+          stack,
+          dependencyUsage,
+          install,
+          runtime,
+          setupConfig,
+          routes: detectAppRoutes(resolved, {}, setupConfig),
+          ports: {
+            bootstrap: DEFAULT_PORTS.bootstrap,
+            wizard: DEFAULT_PORTS.wizard,
+            app: DEFAULT_PORTS.app,
+          },
+          candidates,
+          hasAmbiguity: true,
+          confidence: 0.5,
+        };
+      }
+    }
+  }
 
   const projectName =
     workspaces.name ||
@@ -852,7 +1328,6 @@ export function detectProject(root = process.cwd()) {
     "app";
 
   const scenario = detectScenarioProfile(kind, stack, workspaces);
-  const cfgPorts = setupConfig?.ports || {};
   return {
     root: resolved,
     projectName,
@@ -896,18 +1371,20 @@ export function buildInstallPlan(detection) {
 
   const installable =
     detection.hasPackageJson ||
-    detection.stack.nodeServer ||
-    detection.stack.client ||
-    detection.workspaces.isWorkspace ||
-    detection.stack.python ||
-    detection.stack.go ||
-    detection.stack.dotnet ||
-    detection.stack.rust ||
-    detection.stack.cpp ||
-    detection.stack.unity ||
-    detection.stack.unreal ||
-    detection.stack.godot ||
-    detection.stack.staticHtml ||
+    Boolean(detection.candidateRoot) ||
+    Boolean(detection.subprojects) ||
+    detection.stack?.nodeServer ||
+    detection.stack?.client ||
+    detection.workspaces?.isWorkspace ||
+    detection.stack?.python ||
+    detection.stack?.go ||
+    detection.stack?.dotnet ||
+    detection.stack?.rust ||
+    detection.stack?.cpp ||
+    detection.stack?.unity ||
+    detection.stack?.unreal ||
+    detection.stack?.godot ||
+    detection.stack?.staticHtml ||
     Boolean(detection.setupConfig?.install?.command);
 
   if (!installable) {
@@ -924,27 +1401,42 @@ export function buildInstallPlan(detection) {
     };
   }
 
-  if (detection.hasPackageJson) {
+  if (detection.subprojects) {
+    const backendDir = detection.subprojects.backend?.dir;
+    const frontendDir = detection.subprojects.frontend?.dir;
+    const parts = [backendDir, frontendDir].filter(Boolean).join(" + ");
+    steps.push({
+      id: "dependencies",
+      label: `Bağımlılık kurulumu (${parts || buildInstallCommandLabel(detection)})`,
+      required: true,
+    });
+  } else if (detection.candidateRoot && detection.hasPackageJson) {
+    steps.push({
+      id: "dependencies",
+      label: `Bağımlılık kurulumu (${detection.candidateRoot} - ${buildInstallCommandLabel(detection)})`,
+      required: true,
+    });
+  } else if (detection.hasPackageJson) {
     steps.push({
       id: "dependencies",
       label: `Bağımlılık kurulumu (${buildInstallCommandLabel(detection)})`,
       required: true,
     });
-  } else if (detection.stack.python) {
+  } else if (detection.stack?.python || detection.kind === "python-desktop") {
     steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (Python venv + pip) + pip check", required: true });
-  } else if (detection.stack.go) {
+  } else if (detection.stack?.go) {
     steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (go mod download) + go build doğrulaması", required: true });
-  } else if (detection.stack.dotnet) {
+  } else if (detection.stack?.dotnet || detection.kind === "dotnet-desktop") {
     steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (dotnet restore) + dotnet build doğrulaması", required: true });
-  } else if (detection.stack.rust) {
+  } else if (detection.stack?.rust) {
     steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (cargo fetch) + derleme doğrulaması (cargo check)", required: true });
-  } else if (detection.stack.cpp) {
+  } else if (detection.stack?.cpp || detection.kind === "cpp-desktop") {
     steps.push({ id: "dependencies", label: "CMake yapılandırması (cmake -B build) + derleme doğrulaması (cmake --build build)", required: true });
-  } else if (detection.stack.godot) {
+  } else if (detection.stack?.godot) {
     steps.push({ id: "dependencies", label: "Godot oyun projesi doğrulaması", required: false });
-  } else if (detection.stack.unity) {
+  } else if (detection.stack?.unity) {
     steps.push({ id: "dependencies", label: "Unity oyun projesi doğrulaması", required: false });
-  } else if (detection.stack.unreal) {
+  } else if (detection.stack?.unreal) {
     steps.push({ id: "dependencies", label: "Unreal Engine oyun projesi doğrulaması", required: false });
   }
 

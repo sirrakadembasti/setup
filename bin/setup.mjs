@@ -38,7 +38,7 @@ const VALID_COMMANDS = new Set(["detect", "plan", "setup", "wizard", "init", "ve
 const PASSTHROUGH_FLAGS = new Set(["--no-open", "--check-only", "--force", "--reconfigure"]);
 
 export function parseArgs(argv) {
-  const args = { command: "setup", root: process.cwd(), force: false, launchers: true, updatePackageJson: false, copyTools: false, port: null, dataDir: null, reconfigure: false, error: null };
+  const args = { command: "setup", root: process.cwd(), candidate: null, force: false, launchers: true, updatePackageJson: false, copyTools: false, port: null, dataDir: null, reconfigure: false, error: null };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === "--root") {
@@ -48,6 +48,13 @@ export function parseArgs(argv) {
         return args;
       }
       args.root = path.resolve(argv[++i]);
+    } else if (a === "--candidate") {
+      const next = argv[i + 1];
+      if (!next || next.startsWith("-")) {
+        args.error = "--candidate seçeneği için geçerli bir alt proje dizini veya adı belirtilmelidir.";
+        return args;
+      }
+      args.candidate = argv[++i];
     } else if (a === "--port") {
       const next = argv[i + 1];
       const portNum = Number(next);
@@ -108,6 +115,7 @@ Komutlar:
 
 Seçenekler:
   --root <yol>       Hedef uygulama kök dizini (varsayılan: cwd)
+  --candidate <yol>  Çoklu alt proje içeren repolarda belirli bir alt projeyi seç
   --port <numara>    Sihirbaz veya başlatıcı portunu özelleştir
   --data-dir <yol>   Kurulum verileri ve .env için harici dizin belirt
   --reconfigure      Kurulum kilidi olsa dahi sihirbazı yeniden yapılandırma modunda aç
@@ -185,7 +193,7 @@ function main() {
     return;
   }
 
-  const detection = detectProject(args.root);
+  const detection = detectProject(args.root, { candidate: args.candidate });
   const effectivePm = resolveEffectivePackageManager(detection.packageManager);
   const plan = buildInstallPlan({ ...detection, packageManager: effectivePm });
 
@@ -200,6 +208,19 @@ function main() {
     : "";
   console.log(`[setup v${getVersion()}] Proje: ${detection.projectName} (${detection.kind}, paket yöneticisi: ${effectivePm}${pmNote})`);
   console.log(`[setup] Kök: ${detection.root}`);
+  if (detection.candidateRoot) {
+    console.log(`[setup] Aday Alt Proje: ${detection.candidateRoot}`);
+  }
+  if (detection.subprojects) {
+    console.log(`[setup] Çok Parçalı Yapı: Backend (${detection.subprojects.backend?.dir}) + Frontend (${detection.subprojects.frontend?.dir})`);
+  }
+  if (detection.hasAmbiguity && Array.isArray(detection.candidates)) {
+    console.log("[setup] ⚠️ Bu repoda birden çok bağımsız alt proje algılandı:");
+    for (const c of detection.candidates) {
+      console.log(`  - ${c.name} (${c.dir}, rol: ${c.role}, tür: ${c.kind})`);
+    }
+    console.log("[setup] Belirli bir alt projeyi seçmek için: --candidate <dizin> kullanabilirsiniz.");
+  }
   if (plan.canInstall && !fs.existsSync(path.join(detection.root, "setup.config.json"))) {
     initProject(detection.root, { overwrite: false, updatePackageJson: false, createLaunchers: false });
     console.log(`[setup] Otomatik tanı: ${detection.scenario.label}`);

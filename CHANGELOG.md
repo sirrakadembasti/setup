@@ -3,6 +3,25 @@
 Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallarına uygun olarak bu dosyada belgelenir.
 
 ## [Yayınlanmamış]
+- **Standart Dışı ve Dağınık Repolar İçin Akıllı Mimari Algılama (Deep Discovery & Dual Orchestration):**
+  - **Derin Rekürsif Aday Taraması (`findProjectCandidates`):** Kök dizinde doğrudan `package.json`, `CMakeLists.txt`, `requirements.txt`, `.sln` bulunmadığında (veya kök dizin yalnızca dokümantasyon içerdiğinde) maksimum 3 derinlik seviyesine kadar alt dizinler otomatik taranır. `node_modules`, `.git`, `dist`, `build`, `vendor`, `.venv` gibi 25+ geçici/derleme klasörü filtrelenir.
+  - **Tamamen İçerik Bazlı Rol Analitiği (`classifyCandidate`):** Klasör adlarına bağımlı kalmadan içerikteki dosya türleri ve importlara göre roller belirlenir:
+    - *Frontend / UI:* Vite, Next.js, Nuxt, SvelteKit, Astro, saf `index.html`, React/Vue bağımlılıkları.
+    - *Backend / API:* Express, Fastify, FastAPI, Django, Flask, `go.mod`, `Cargo.toml`, ASP.NET `.csproj`, `CMakeLists.txt`.
+    - *Eski ve Yerel Masaüstü:* C# WinForms/WPF (`<UseWindowsForms>`, `<UseWPF>`, `<OutputType>WinExe</OutputType>`), Python GUI (Tkinter, PyQt5/6, PySide2/6, wxWidgets), C++ Qt/wxWidgets.
+    - *Oyun:* Godot (`project.godot`), Unity (`ProjectSettings/ProjectVersion.txt`), Unreal (`*.uproject`).
+  - **Dağınık Yapılandırma ve Bağımlılık Toplama (`findScatteredEnvExamples` - Bubble-Up):** Kök dizinde `.env.example` olmasa bile `config/`, `deploy/`, `server/` gibi alt klasörlerdeki `.env.sample` ve `.env.template` dosyaları taranıp tek bir havuzda birleştirilir.
+  - **Alt Projelere .env Dağıtımı (`executeSetupApply`):** Oluşturulan nihai `.env` dosyası ana kök dizine ek olarak hedef aday kök dizinine ve alt projelere (`srv/.env`, `ui/.env`) güvenli `0o600` izinleriyle otomatik kopyalanır.
+  - **Çok Parçalı (Frontend + Backend) Çift Süreç Orkestrasyonu (`createDualProcessController`):**
+    - Hibrit Model: Frontend derlenebiliyorsa ve statik çıktı (`dist/`) üretiyorsa arka plan sunucusuna veya yerleşik statik sunucuya devredilir (`type: "dual-static"`).
+    - Canlı Çift Süreç: Geliştirme/dev modunda Backend ana porta (`PORT`), Frontend ikincil porta (`PORT + 1` / `devPort`) atanır; frontend sürecine `API_URL`, `VITE_API_URL`, `NEXT_PUBLIC_API_URL` ortam değişkenleri otomatik bağlanır.
+    - **Kademeli Kapanma (Cascading Termination):** Eşzamanlı iki süreçten biri beklenmedik şekilde çöktüğünde diğeri anında ve temiz bir şekilde sonlandırılır (SIGTERM / taskkill) ve teşhis loglanır.
+  - **Etkileşimli Aday Seçim Paneli (Interactive Candidate Selector):**
+    - Birden çok bağımsız mikroservis/uygulama tespit edildiğinde (`hasAmbiguity: true`), Web Sihirbazı arayüzünde tek tıkla hedef projeyi değiştiren dinamik kartlar/butonlar (`chooseCandidate`) sunulur.
+    - `POST /api/select-candidate` REST API uç noktası ile çalışma zamanında seçilen adaya göre tüm sihirbaz algılama ve yapılandırma yolları anında yeniden yüklenir.
+    - CLI'da `--candidate <dizin>` parametresi eklendi ve belirsizlik durumunda tüm adaylar terminalde listelenerek yönlendirme sağlandı.
+  - **.NET Kök Proje Regresyon Düzeltmesi (`scripts/polyglot.mjs`):** `findDotnetProject` fonksiyonunda kök dizindeki `.csproj` projelerinde `restoreTarget` argümanı düzeltilerek `dotnet restore` uyumluluğu sağlandı.
+  - **Yeni Derin Tarama Test Paketi (`scripts/deep-discovery.test.mjs`):** 11 yeni entegrasyon ve birim testi eklenerek toplam test sayısı 135'e çıkarıldı; %100 başarı sağlandı.
 - **Kapsamlı Hata Senaryoları, Dayanıklılık ve Otomatik Geri Alma (Rollback) Güvenceleri:**
   - **Sinyal Yakalama ve Temiz Kapanma (`bin/setup.mjs`):** `SIGINT` (Ctrl+C) ve `SIGTERM` sinyalleri yakalanarak başlatılan çocuk süreçler ve port dinleyicileri temiz bir şekilde sonlandırılır.
   - **Dizin Yazılabilirlik Ön Denetimi (`checkDirectoryWritability`):** Kurulum başlamadan önce hedef kök ve harici veri dizinlerinin yazılabilirliği (`fs.constants.W_OK`) denetlenir; salt okunur veya yetkisiz dizinlerde anlaşılır Türkçe hata mesajıyla durdurulur.
