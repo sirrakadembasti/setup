@@ -181,6 +181,20 @@ function resolveDefaultInstallCommand() {
   if (Array.isArray(setupConfig?.install?.steps) && setupConfig.install.steps.length > 0) {
     return { steps: setupConfig.install.steps };
   }
+  if (detection.subprojects && !hasNodePackageJson) {
+    const steps = [];
+    const chosenPm = resolveEffectivePackageManager(activePackageManager);
+    for (const [role, sub] of Object.entries(detection.subprojects)) {
+      if (sub?.dir) {
+        steps.push({
+          label: `${sub.name || role} bağımlılıklarını kur (${chosenPm} install)`,
+          command: chosenPm,
+          args: ["--prefix", sub.dir, "install"],
+        });
+      }
+    }
+    if (steps.length > 0) return { steps };
+  }
   if (setupConfig?.install && Object.prototype.hasOwnProperty.call(setupConfig.install, "command")) {
     let cmd = setupConfig.install.command;
     const args = Array.isArray(setupConfig.install.args) ? setupConfig.install.args : ["install"];

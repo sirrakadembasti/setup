@@ -967,6 +967,8 @@ setup/
 
 10. **Standart Dışı & Dağınık Repolar İçin Derin Tarama ve Çift Süreç Orkestrasyonu:**
     - Kök dizinde proje dosyası yokken maksimum 3 derinlik seviyesine kadar alt klasörler taranır (`findProjectCandidates`).
+    - Kök dizinde `package.json` bulunmayan çok parçalı yapılarda (`subprojects`), başlatıcı motoru (`setup-bootstrap.mjs`) ve `initProject` alt projeleri (`backend/`, `frontend/`, `srv/`, `ui/`) otomatik tespit edip `--prefix <alt-dizin> install` adımlarıyla kurar; Port 5049 kök `ENOENT` hatası önlenir.
+    - Bağımlılık denetleyicisi (`checkDependencies`), `setup.config.json` içerisindeki adımları ve dinamik alt klasörlerdeki `node_modules` dizinlerini doğru şekilde doğrular.
     - Dağınık `.env.example` dosyaları havuzda birleştirilir (`findScatteredEnvExamples`) ve alt projelere (`srv/.env`, `ui/.env`) dağıtılır.
     - Çok parçalı Fullstack yapılarda Backend ana porta, Frontend ikincil porta (`devPort`) bağlanır (`createDualProcessController`), `API_URL` ortam değişkenleri otomatik enjekte edilir ve süreçlerden biri çöktüğünde diğeri kademeli olarak sonlandırılır.
     - Çoklu aday belirsizliğinde Web Sihirbazında interaktif kartlar (`chooseCandidate`, `POST /api/select-candidate`) ve CLI'da `--candidate` bayrağı ile anında hedef değiştirilebilir.

@@ -3,6 +3,12 @@
 Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallarına uygun olarak bu dosyada belgelenir.
 
 ## [Yayınlanmamış]
+- **Çok Parçalı (Monorepo/Subprojects) Projelerde Kök package.json Eksikliği ve Otomatik Sıralı Alt Dizin Kurulumu (--prefix):**
+  - **Sahte Paket Bayrağı Düzeltmesi (`scripts/detect-project.mjs`):** Alt dizinlerde bağımsız servisler (`backend/`, `frontend/`, `srv/`, `ui/`) bulunduğunda kök dizinde `package.json` olmamasına rağmen sabit `true` dönen `hasPackageJson` ve `packageJsonExists` bayrakları düzeltildi; kökün gerçek durumu (`validPkg`) dürüstçe raporlanır.
+  - **Otomatik Alt Dizin Kurulum Adımları (`scripts/setup-api.mjs` - `initProject`):** Kök dizininde `package.json` bulunmayan subproject yapılarında `initProject` otomatik olarak her alt dizin için `--prefix <alt-dizin> install` adımlarını (`install.steps`) yapılandırmaya ekler.
+  - **Port 5049 Bootstrap Sıralı Kurulum Desteği (`scripts/setup-bootstrap.mjs`):** Kök dizinde doğrudan `npm install` çağrılıp `ENOENT (package.json not found, çıkış kodu 4294963238)` hatası alınması engellendi; başlatıcı kökte paket yoksa subprojects dizinlerini tespit edip her birini sırayla ve güvenle yükler.
+  - **Dinamik Alt Dizin Bağımlılık Doğrulaması (`scripts/setup-bootstrap-lib.mjs` - `checkDependencies`):** Sabit `server/` ve `client/` kısıtlaması kaldırılarak `setupConfig.install.steps` içerisindeki tüm alt dizinler ve dinamik adaylar (`backend`, `frontend`, `srv`, `ui`, `api`, `web`) taranır; bağımlılıklar tamamlandığında `dependenciesInstalled: true` doğru atanır.
+  - **Yeni Çok Parçalı Kurulum Testi (`scripts/deep-discovery.test.mjs`):** Kök dizinde `package.json` olmayan monorepo projelerin kurulum ve denetim adımlarını doğrulayan 12. entegrasyon testi eklendi; testler %100 başarıyla geçmektedir.
 - **Standart Dışı ve Dağınık Repolar İçin Akıllı Mimari Algılama (Deep Discovery & Dual Orchestration):**
   - **Derin Rekürsif Aday Taraması (`findProjectCandidates`):** Kök dizinde doğrudan `package.json`, `CMakeLists.txt`, `requirements.txt`, `.sln` bulunmadığında (veya kök dizin yalnızca dokümantasyon içerdiğinde) maksimum 3 derinlik seviyesine kadar alt dizinler otomatik taranır. `node_modules`, `.git`, `dist`, `build`, `vendor`, `.venv` gibi 25+ geçici/derleme klasörü filtrelenir.
   - **Tamamen İçerik Bazlı Rol Analitiği (`classifyCandidate`):** Klasör adlarına bağımlı kalmadan içerikteki dosya türleri ve importlara göre roller belirlenir:

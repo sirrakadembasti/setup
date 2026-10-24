@@ -217,6 +217,21 @@ export function initProject(root = process.cwd(), options = {}) {
     args: installArgs,
     requireWorkspaces: detection.workspaces.isWorkspace,
   };
+  if (detection.subprojects && !existingPkg) {
+    const steps = [];
+    for (const [role, sub] of Object.entries(detection.subprojects)) {
+      if (sub?.dir) {
+        steps.push({
+          label: `${sub.name || role} bağımlılıklarını kur (${pm} install)`,
+          command: pm,
+          args: ["--prefix", sub.dir, "install"],
+        });
+      }
+    }
+    if (steps.length > 0) {
+      install.steps = steps;
+    }
+  }
   let start = null;
 
   const languageProfile = resolveLanguageProfile(resolved, detection.kind, detection.ports.app);

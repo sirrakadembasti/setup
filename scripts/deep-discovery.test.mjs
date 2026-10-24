@@ -14,6 +14,7 @@ import { resolveAppStartInvocation, createDualProcessController } from "../wizar
 import { parseArgs } from "../bin/setup.mjs";
 import { executeSetupApply } from "../wizard/shared.mjs";
 import { createSetupServer } from "../wizard/server.mjs";
+import { initProject, checkDependencies } from "./setup-api.mjs";
 
 function mkTemp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-deep-discovery-"));
@@ -415,3 +416,33 @@ test("API: POST /api/select-candidate belirsiz repolarda adayı dinamik olarak d
   assert.equal(status2.detected.projectName, "billing-svc");
   assert.equal(status2.detected.candidateRoot, "apps/billing");
 });
+
+test("Çok Parçalı Repo: Kök dizinde package.json yokken initProject subprojects için --prefix kurulum adımları üretir ve checkDependencies doğrular", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+
+  // Kök dizinde package.json YOK. Alt dizinler: srv ve ui
+  fs.mkdirSync(path.join(dir, "srv"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "ui"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "srv", "package.json"), JSON.stringify({ name: "srv", dependencies: { express: "^4.0.0" } }), "utf8");
+  fs.writeFileSync(path.join(dir, "ui", "package.json"), JSON.stringify({ name: "ui", dependencies: { vue: "^3.0.0" } }), "utf8");
+
+  const initRes = initProject(dir, { createLaunchers: false });
+  assert.equal(initRes.created, true);
+  const cfg = JSON.parse(fs.readFileSync(path.join(dir, "setup.config.json"), "utf8"));
+  assert.ok(Array.isArray(cfg.install?.steps), "install.steps tanımlanmalı");
+  assert.equal(cfg.install.steps.length, 2);
+  assert.deepEqual(cfg.install.steps[0].args, ["--prefix", "srv", "install"]);
+  assert.deepEqual(cfg.install.steps[1].args, ["--prefix", "ui", "install"]);
+
+  // node_modules yokken checkDependencies false dönmeli
+  const depsBefore = checkDependencies(dir);
+  assert.equal(depsBefore.ready, false);
+
+  // Alt dizinlere node_modules eklenince checkDependencies true dönmeli
+  fs.mkdirSync(path.join(dir, "srv", "node_modules", "express"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "ui", "node_modules", "vue"), { recursive: true });
+  const depsAfter = checkDependencies(dir);
+  assert.equal(depsAfter.ready, true);
+});
+

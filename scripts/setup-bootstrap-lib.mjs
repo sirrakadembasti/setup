@@ -231,11 +231,35 @@ export function checkDependencies(projectRoot, options = {}) {
   const paths = getSetupPaths(projectRoot, { ...options, dataDir });
   const root = paths.projectRoot;
   const hasRootPkg = fs.existsSync(path.join(root, "package.json"));
-  const serverDir = path.join(root, "server");
-  const clientDir = path.join(root, "client");
-  const serverEntry = fs.existsSync(path.join(serverDir, "package.json"));
-  const clientEntry = fs.existsSync(path.join(clientDir, "package.json"));
-  const hasAnyPackageJson = hasRootPkg || serverEntry || clientEntry;
+  const setupConfig = (() => {
+    try {
+      const p = path.join(root, "setup.config.json");
+      return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const configuredStepDirs = [];
+  if (Array.isArray(setupConfig?.install?.steps)) {
+    for (const step of setupConfig.install.steps) {
+      if (Array.isArray(step.args)) {
+        const prefixIdx = step.args.indexOf("--prefix");
+        if (prefixIdx !== -1 && step.args[prefixIdx + 1]) {
+          configuredStepDirs.push(step.args[prefixIdx + 1]);
+        }
+      }
+      if (step.cwd && typeof step.cwd === "string") {
+        configuredStepDirs.push(step.cwd);
+      }
+    }
+  }
+  const knownCandidateDirs = ["server", "client", "backend", "frontend", "srv", "ui", "api", "web", ...configuredStepDirs];
+  const uniqueSubDirs = Array.from(new Set(knownCandidateDirs));
+  const subEntries = uniqueSubDirs.filter((d) => fs.existsSync(path.join(root, d, "package.json")));
+  const hasSubprojects = subEntries.length > 0;
+  const serverEntry = fs.existsSync(path.join(root, "server", "package.json"));
+  const clientEntry = fs.existsSync(path.join(root, "client", "package.json"));
+  const hasAnyPackageJson = hasRootPkg || hasSubprojects;
 
   // Çok dilli (Python, Rust, Go) bağımlılık tespiti
   const hasPython =
@@ -263,12 +287,15 @@ export function checkDependencies(projectRoot, options = {}) {
 
   const isPolyglot = hasPython || hasRust || hasGo;
   const rootHasDeps = hasPackageDependencies(root);
-  const rootPackages = hasAnyPackageJson
-    ? (isPolyglot ? (rootHasDeps ? hasNonEmptyNodeModules(root) : true) : hasNonEmptyNodeModules(root))
+  const serverModules = serverEntry ? fs.existsSync(path.join(root, "server", "node_modules")) : true;
+  const clientModules = clientEntry ? fs.existsSync(path.join(root, "client", "node_modules")) : true;
+  const subprojectsModules = subEntries.length > 0
+    ? subEntries.every((d) => fs.existsSync(path.join(root, d, "node_modules")))
     : true;
-  const serverModules = serverEntry ? fs.existsSync(path.join(serverDir, "node_modules")) : true;
-  const clientModules = clientEntry ? fs.existsSync(path.join(clientDir, "node_modules")) : true;
-  const nodeReady = !hasAnyPackageJson ? true : rootPackages && serverModules && clientModules;
+  const rootPackages = hasRootPkg
+    ? (isPolyglot ? (rootHasDeps ? hasNonEmptyNodeModules(root) : true) : (rootHasDeps ? hasNonEmptyNodeModules(root) : (hasSubprojects ? (hasNonEmptyNodeModules(root) || subprojectsModules) : hasNonEmptyNodeModules(root))))
+    : true;
+  const nodeReady = !hasAnyPackageJson ? true : rootPackages && subprojectsModules;
 
   const ready = nodeReady && pythonReady && rustReady && goReady;
 
