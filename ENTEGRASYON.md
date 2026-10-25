@@ -188,6 +188,20 @@ Web sihirbazındaki kurulum başarılı olduğunda uygulama otomatik başlatıl�
 
 ---
 
+### Başlatma sorunlarını giderme
+
+Kurulumun başarılı olması ile uygulamanın erişime hazır olması ayrı sonuçlardır. Son ekranda başlatma hatası varsa kurulum verilerini silmeden önce aşağıdaki adımları izleyin:
+
+| Durum | Yapılacak işlem |
+| --- | --- |
+| Uygulama süreci başlatılamıyor veya kapanıyor | İlk terminaldeki uygulama çıktısını inceleyin. `setup.config.json` içindeki `start.command` / `start.args` veya algılanan proje başlatma komutunun hatasını giderin; **Uygulamayı yeniden başlat / denetle** düğmesini kullanın. |
+| Uygulama yavaş açılıyor | Başlatıcıyı çalıştırmadan önce `SETUP_APP_START_TIMEOUT_MS` değerini artırın; değer milisaniyedir (örneğin `120000`: iki dakika). Süre sınırı ilk HTTP denetimlerini de kapsar. |
+| Backend hazır, frontend hazır değil | Frontend günlüğünü ve portunu kontrol edin. Çift süreçli yapıda iki servis doğrulanmadan tarayıcıya geçilmez; kullanılan adres sağlık denetiminin döndürdüğü frontend adresidir. |
+| Yerel servis hazır, üretim adresi erişilemiyor | Yapılandırılan adresin DNS, TLS ve reverse proxy ayarlarını kontrol edin. Alt yol dağıtımlarında (`/portal` gibi) hem yolu koruyan hem de kaldıran proxy düzenleri desteklenir; dış adres ayrıca doğrulanır. |
+| Güncel davranış başka projede görünmüyor | Güncel setup kaynağından `node /guncel/setup/bin/setup.mjs init --root /hedef/proje --copy-tools --refresh-launchers` çalıştırın. Depoyu güncellemek, başka projeye önceden kopyalanan `tools/setup` dosyalarını kendiliğinden yenilemez. |
+
+Terminali kapatmak gözetilen sihirbaz ve uygulama süreçlerini sonlandırır. Başarılı kurulumdan sonra yalnız başlatma sorunu varsa **temiz kurulum gerekmez**; hata giderilip yeniden başlatma denenebilir.
+
 ## Senaryo 2: Tek Sayfalık (SPA) ve Statik Web Uygulamaları (React, Vue, Vite, Saf HTML/JS)
 
 Tarayıcıda çalışan SPA ve statik web uygulamalarında `SESSION_SECRET`, `ADMIN_PASSWORD_HASH` veya `EMAIL_PASS` gibi gizli anahtarlar istemciye **asla** sızdırılmaz. `setup`, derleme (`npm run build`) sonrasında çıktı dizinine (`dist/`, `build/`, `public/` veya `.`) yalnızca güvenli genel ayarları (`VITE_*`, `PUBLIC_*`, `NEXT_PUBLIC_*`, `REACT_APP_*` ve `deployment` bilgileri) içeren `runtime-config.json` ve `env-config.js` (`window.__SETUP_CONFIG__`) dosyalarını yazar.

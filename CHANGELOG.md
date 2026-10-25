@@ -4,6 +4,8 @@ Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallar
 
 ## [Yayınlanmamış]
 
+- **Başlatma Kılavuzu:** README ve entegrasyon belgesine kurulum sonrası erişim hatası, yeniden deneme, başlatma süresi, backend/frontend, üretim adresi ve eski `tools/setup` kopyalarını yenileme adımları eklendi.
+
 - **Doğrulanmış Otomatik Uygulama Başlatma:** Başarılı web kurulumundan sonra uygulama ilk terminalin gözetimindeki süreç ağacında otomatik başlatılır; maskelenmiş günlükler terminale aktarılır. Kurulum ve uygulama başlangıç durumları ayrıdır; hata veya zaman aşımında yeniden deneme yapılabilir. Son ekrandaki tüm geçişler HTTP erişimini denetler; backend/frontend birlikte doğrulanır ve güncel frontend adresi kullanılır. Üretim adresinde DNS/proxy erişimi hazır değilse erken yönlendirme önlenir. Masaüstü/gömülü kurulum davranışı korunur.
 
 - **Geçiş Notları:** Eski 5049 web hazırlık sayfası kaldırıldı; aşağıdaki geçmiş kayıtlar önceki davranışı anlatır. `--port` artık web sihirbazının portudur; öncelik `--port` → `SETUP_WIZARD_PORT` → `SETUP_PORT` → `ports.wizard` → `5050` şeklindedir. Entegre projelerde güncel kaynaktan `init --copy-tools --refresh-launchers --root /hedef/proje` çalıştırılarak yerel çekirdek ve başlatıcılar yenilenmelidir. Paketlerin çevrimdışı kurulması ayrıca hazır önbellek gerektirebilir.
