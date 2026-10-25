@@ -166,6 +166,31 @@ export function wrapShimCommand(command, args = [], cwd) {
   return { command, args, cwd };
 }
 
+// Vite ignores PORT. Forward the selected port only to the known Vite CLI.
+export function withApplicationPort(invocation, port) {
+  if (!invocation?.command) return invocation;
+  let command = path.basename(invocation.command).replace(/\.(cmd|exe)$/i, '').toLowerCase();
+  let args = [...(invocation.args || [])];
+  if (command === 'cmd') {
+    const index = args.findIndex((arg) => String(arg).toLowerCase() === '/c');
+    if (index < 0) return invocation;
+    command = String(args[index + 1]).toLowerCase();
+    args = args.slice(index + 2);
+  }
+  const runIndex = args.indexOf('run');
+  let vite = command === 'vite' || (['npx', 'bunx'].includes(command) && args[0] === 'vite');
+  const managerScript = ['npm', 'pnpm', 'yarn', 'bun'].includes(command) && runIndex >= 0;
+  if (managerScript) {
+    const prefixIndex = args.indexOf('--prefix');
+    const cwd = prefixIndex >= 0 ? path.resolve(invocation.cwd || process.cwd(), args[prefixIndex + 1]) : invocation.cwd || process.cwd();
+    const script = readJsonFileSafe(path.join(cwd, 'package.json'))?.scripts?.[args[runIndex + 1]];
+    vite = /^vite(?:\s|$)/.test(String(script || '').trim());
+  }
+  if (!vite) return invocation;
+  const separator = managerScript && command === 'npm' && !args.includes('--') ? ['--'] : [];
+  return { ...invocation, args: [...invocation.args, ...separator, '--host', '127.0.0.1', '--port', String(port), '--strictPort'] };
+}
+
 export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
   const root = path.resolve(projectRoot);
   const cfg = setupConfig ?? loadSetupConfig(root);
@@ -539,7 +564,16 @@ export function createDualProcessController({
 
     backendChild.stderr?.on("data", (chunk) => {
       backendStderr = (backendStderr + chunk.toString()).slice(-4000);
-      appendLog?.(`[backend-err] ${chunk.toString()}`);
+      appendLog?.(chunk.toString(), "backend-err");
+    });
+    backendChild.stdout?.on("data", (chunk) => appendLog?.(chunk.toString(), "backend"));
+    backendChild.stdout?.on("close", () => appendLog?.("", "backend", true));
+    backendChild.stderr?.on("close", () => appendLog?.("", "backend-err", true));
+    backendChild.on("error", (error) => {
+      backendStderr = error.message;
+      exitInfo.backend = { code: 127, signal: null };
+      appendLog?.(`[backend-err] ${error.message}`);
+      void stop();
     });
 
     backendChild.on("exit", (code, signal) => {
@@ -555,7 +589,8 @@ export function createDualProcessController({
 
     // Frontend başlat
     if (frontendInvocation) {
-      frontendChild = spawn(frontendInvocation.command, frontendInvocation.args, {
+      const frontend = withApplicationPort(frontendInvocation, frontendPort);
+      frontendChild = spawn(frontend.command, frontend.args, {
         cwd: frontendInvocation.cwd || projectRoot,
         env: frontendEnv,
         detached: process.platform !== "win32",
@@ -565,7 +600,16 @@ export function createDualProcessController({
 
       frontendChild.stderr?.on("data", (chunk) => {
         frontendStderr = (frontendStderr + chunk.toString()).slice(-4000);
-        appendLog?.(`[frontend-err] ${chunk.toString()}`);
+        appendLog?.(chunk.toString(), "frontend-err");
+      });
+      frontendChild.stdout?.on("data", (chunk) => appendLog?.(chunk.toString(), "frontend"));
+      frontendChild.stdout?.on("close", () => appendLog?.("", "frontend", true));
+      frontendChild.stderr?.on("close", () => appendLog?.("", "frontend-err", true));
+      frontendChild.on("error", (error) => {
+        frontendStderr = error.message;
+        exitInfo.frontend = { code: 127, signal: null };
+        appendLog?.(`[frontend-err] ${error.message}`);
+        void stop();
       });
 
       frontendChild.on("exit", (code, signal) => {

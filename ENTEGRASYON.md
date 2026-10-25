@@ -182,6 +182,10 @@ Eski `ports.bootstrap` / `SETUP_BOOTSTRAP_PORT` alanları başlatıcı için kul
 
 Terminal kurulumu ve `scripts/run-steps.mjs`, aynı komut/süreç çalıştırıcısını kullanır. Her adımda `cwd`, `skipIfExists`, paket yöneticisi fallback ve `--prefix` dizinleri aynı biçimde değerlendirilir; canlı çıktı, zaman aşımı ve iptal birlikte yönetilir. Varsayılan iş zaman aşımı 15 dakikadır (`SETUP_JOB_TIMEOUT_MS`); bağımsız çalıştırıcı başarısız adımın çıkış kodunu korur, zaman aşımında `124`, geçersiz adım tanımında `2` ile çıkar.
 
+Web sihirbazındaki kurulum başarılı olduğunda uygulama otomatik başlatılır. Başlatma komutu mevcut `start` yapılandırması veya proje algılamasıyla belirlenir. Uygulama, ilk terminalin gözettiği sihirbaz sürecinin altında çalışır; stdout/stderr sırlar maskelenerek terminale aktarılır. `/api/status` içindeki `apply.application.state`, kurulum sonucundan ayrı olarak `idle`, `starting`, `ready` veya `error` durumunu bildirir. Başlatma hatası kurulum başarısını geri almaz; `/api/start-app` aynı başlatıcı üzerinden yeniden dener ve eşzamanlı istekler ikinci süreç oluşturmaz.
+
+`/api/app-health` yalnız TCP bağlantısını değil HTTP yanıtını ve hedef sayfayı denetler. Backend/frontend yapılarında iki servis de hazır olmalıdır; son ekran doğrulanan güncel frontend adresini kullanır. Tek sunucu tarafından sunulan uygulama için kullanılmayan bir geliştirme portu beklenmez; Vite başlangıcına seçilen port açıkça iletilir. Üretim modunda yapılandırılan dış adres de HTTP üzerinden erişilebilir olmalıdır; DNS/proxy hazır değilse yönlendirme yapılmaz. İlk denetimler dahil başlatma için varsayılan süre sınırı 60 saniyedir (`SETUP_APP_START_TIMEOUT_MS`). Süre dolarsa terminal günlüğü ve yeniden deneme önerisi gösterilir. Terminal açık tutulmalıdır; kapatılınca sihirbaz ve uygulama süreçleri birlikte sonlandırılır. Masaüstü ve gömülü kurulumların mevcut yaşam döngüsü korunur.
+
 ---
 
 ## Senaryo 2: Tek Sayfalık (SPA) ve Statik Web Uygulamaları (React, Vue, Vite, Saf HTML/JS)

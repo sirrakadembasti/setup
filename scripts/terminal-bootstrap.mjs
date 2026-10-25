@@ -29,6 +29,7 @@ export function createTerminalBootstrap(options = {}) {
   let candidate = options.candidate;
   let root = repositoryRoot;
   let detection, config, dataDir, pm, packagesReady, runtimeCache;
+  let application = { state: "idle" };
   const runner = createProcessRunner({ log });
   function refreshDetection() {
     clearCommandAvailabilityCache();
@@ -60,6 +61,7 @@ export function createTerminalBootstrap(options = {}) {
       hostname: os.hostname(), runtime, installation: inspectInstallationState(root, { dataDir }), packagesReady,
       wizardPort,
       configuredPort: readConfiguredPort(root, { dataDir }),
+      application,
     };
   }
 
@@ -95,6 +97,12 @@ export function createTerminalBootstrap(options = {}) {
     let buffer = "", opened = false;
     return runner.run(call, {
       cwd, timeout, ipc, prependPaths: [path.join(setupRoot, "bin/shims")],
+      onMessage(message) {
+        if (message?.type === "setup:application") {
+          application = { state: message.state, message: message.message };
+          options.onApplicationState?.(application);
+        }
+      },
       env: {
         ...process.env, ...env, SETUP_PROJECT_ROOT: root, SETUP_PROJECT_NAME: detection.projectName,
         ...(dataDir ? { SETUP_DATA_DIR: dataDir } : {}),

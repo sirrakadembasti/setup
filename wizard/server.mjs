@@ -1,12 +1,12 @@
 import { spawn, spawnSync } from "node:child_process";
 import crypto, { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
+import { probeApplicationUrl } from "./app-readiness.mjs";
 import { resolveWizardPort } from "../scripts/cli-options.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { findListeningProcess, getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
@@ -14,11 +14,12 @@ import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, pa
 import { resolveStepCommand } from "../scripts/polyglot.mjs";
 import { buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { renderSetupPage } from "./ui.mjs";
-import { createDesktopAppController, createDualProcessController, normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveAppStartInvocation, resolveDesktopDataDir } from "./app-process.mjs";
+import { createDesktopAppController, createDualProcessController, normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveAppStartInvocation, resolveDesktopDataDir, withApplicationPort } from "./app-process.mjs";
 // Geriye uyumluluk: bu yardımcılar eskiden bu modülden dışa aktarılıyordu.
 export { normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, resolveAppStartInvocation, resolvePnpmInvocation, wrapShimCommand } from "./app-process.mjs";
 
 import {
+  redactSecrets,
   createApplyState,
   createRateLimiter,
   detectRequiredToolchain,
@@ -164,21 +165,6 @@ export function createStaticAppServer(staticDir) {
   });
 }
 
-function isPortOpen(port, timeoutMs = 700) {
-  return new Promise((resolve) => {
-    const socket = net.createConnection({ host: "127.0.0.1", port });
-    const done = (value) => {
-      socket.removeAllListeners();
-      socket.destroy();
-      resolve(value);
-    };
-    socket.setTimeout(timeoutMs);
-    socket.once("connect", () => done(true));
-    socket.once("timeout", () => done(false));
-    socket.once("error", () => done(false));
-  });
-}
-
 async function readJson(req) {
   let body = "";
   let tooLarge = false;
@@ -312,6 +298,376 @@ export function createSetupServer(token, options = {}) {
 
   function validateStepPayload(step, data) {
     return validateStepData(step, data, { allowOptionalAdmin: !detection.scenario.requiresAdmin });
+  }
+
+
+  let activeInvocation = null;
+  let startPromise = null;
+  let readinessPromise = null;
+  let startupDeadline = Infinity;
+  const outputBuffers = new Map();
+  const knownApplicationSecrets = new Set();
+  let stopping = false;
+  applyJob.application = { state: "idle", message: "Uygulama henüz başlatılmadı." };
+
+  function applicationSecrets() {
+    for (const [key, value] of Object.entries(parseDotEnvFile(envPath))) {
+      if (/password|secret|token|key|database_url/i.test(key) && value.length >= 3) knownApplicationSecrets.add(value);
+    }
+    return [...knownApplicationSecrets].sort((a, b) => b.length - a.length);
+  }
+
+  function maskApplicationText(chunk) {
+    return redactSecrets(String(chunk), applicationSecrets());
+  }
+
+  function appendApplicationLog(chunk, stream = "application", flush = false) {
+    const secrets = applicationSecrets();
+    const raw = (outputBuffers.get(stream) || "") + String(chunk);
+    const maxLength = Math.max(1, ...secrets.map((value) => value.length));
+    let boundary = raw.lastIndexOf("\n") + 1;
+    if (!boundary || secrets.some((value) => value.includes("\n"))) boundary = Math.max(0, raw.length - maxLength + 1);
+    if (flush) boundary = raw.length;
+    for (const secret of secrets) {
+      const index = raw.lastIndexOf(secret, boundary - 1);
+      if (index >= 0 && index < boundary && index + secret.length > boundary) boundary = index;
+    }
+    outputBuffers.set(stream, raw.slice(boundary));
+    if (!boundary) return;
+    const text = `[${stream}] ${redactSecrets(raw.slice(0, boundary), secrets)}`;
+    applyJob.logs.push(text);
+    if (applyJob.logs.length > 1000) applyJob.logs.shift();
+    options.onAppLog?.(text);
+  }
+
+  function applicationState(state, message) {
+    if (stopping) return;
+    applyJob.application = { state, message: maskApplicationText(message) };
+    options.onApplicationState?.(applyJob.application);
+  }
+
+  async function applicationHealth() {
+    const probe = (url, extra = {}) => probeApplicationUrl(url, {
+      timeout: applyJob.application.state === "starting" ? Math.max(1, Math.min(1000, startupDeadline - Date.now())) : 1000,
+      ...extra,
+    });
+    const appPort = applyJob.appPort || readConfiguredPort(projectRoot, { dataDir }) || Number(setupConfig?.ports?.app) || 5000;
+    const mode = applyJob.mode || "localhost";
+    const sub = dualController?.getSubprocesses();
+    const invocation = activeInvocation || options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
+    const paired = invocation?.type === "dual" || invocation?.type === "dual-static";
+    const hasSeparateUi = paired;
+    const uiPort = hasSeparateUi ? (detection.routes.devPort || appPort + 1) : appPort;
+    const loginPath = detection.scenario.isStaticOnly ? "" : (detection.routes.loginPath || "");
+    const localUrl = buildLoginUrl(`http://127.0.0.1:${uiPort}`, loginPath);
+    const apiReachable = await probe(`http://127.0.0.1:${appPort}/`, { allowNotFound: true });
+    let uiReachable = await probe(localUrl);
+    // Some proxies preserve APP_BASE_PATH; others strip it before forwarding.
+    if (!uiReachable && mode !== "localhost" && applyJob.loginUrl) {
+      const configured = new URL(applyJob.loginUrl);
+      const mountedUrl = `http://127.0.0.1:${uiPort}${configured.pathname}${configured.search}`;
+      if (mountedUrl !== localUrl) uiReachable = await probe(mountedUrl);
+    }
+    const alive = sub ? sub.backend.alive && (!sub.frontend || sub.frontend.alive) : (!appChild || (appChild.exitCode === null && !appChild.killed && !appChild.signalCode));
+    const requiresApi = paired || !detection.scenario.isStaticOnly;
+    const serviceReachable = (!requiresApi || apiReachable) && uiReachable && alive;
+    const loginUrl = mode === "localhost" ? localUrl : (applyJob.loginUrl || localUrl);
+    const publicReachable = mode === "localhost" ? uiReachable : await probe(loginUrl);
+    const reachable = serviceReachable && publicReachable;
+    return {
+      reachable, apiReachable, uiReachable, serviceReachable, publicReachable, port: appPort, uiPort, mode,
+      loginUrl,
+      publicUrl: applyJob.publicUrl, subprocesses: sub || null,
+      application: applyJob.application,
+      hint: reachable ? "Uygulama HTTP üzerinden erişime hazır." : (applyJob.application.state === "error" ? `Süreç kapandı veya erişim doğrulanamadı: ${applyJob.application.message}` : serviceReachable ? "Uygulama yerelde hazır; yapılandırılan adresin DNS/proxy/HTTP erişimi bekleniyor." : "Uygulama başlatılıyor; HTTP erişimi henüz doğrulanmadı."),
+    };
+  }
+
+  async function listenStaticApplication(directory, port) {
+    const listener = createStaticAppServer(directory);
+    spawnedStaticServer = listener;
+    try {
+      await new Promise((resolve, reject) => {
+        listener.once("error", reject);
+        listener.listen(port, "127.0.0.1", resolve);
+      });
+    } catch (error) {
+      if (spawnedStaticServer === listener) spawnedStaticServer = null;
+      throw error;
+    }
+    if (stopping) { listener.close(); return false; }
+    return true;
+  }
+
+  async function performStart() {
+    const reply = (status, body) => ({ status, body });
+    if (completeTimer) {
+      clearTimeout(completeTimer);
+      completeTimer = null;
+    }
+    if (applyJob.status !== "success" && !fs.existsSync(lockPath)) {
+      return reply(409, { message: "Uygulamayı başlatmadan önce kurulum adımlarını tamamlayın." });
+    }
+    if (isDesktop) {
+      const result = await desktopApp.start();
+      return reply(result.status, result.body);
+    }
+
+    const appPort = applyJob.appPort || readConfiguredPort(projectRoot, { dataDir }) || Number(setupConfig?.ports?.app) || 5000;
+    const invocation = withApplicationPort(options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig), appPort);
+    activeInvocation = invocation;
+    const existingHealth = await applicationHealth();
+    if (stopping) return reply(409, { message: "Kurulum süreci kapatılıyor.", reachable: false });
+    if (Date.now() >= startupDeadline && !existingHealth.reachable) return reply(408, { message: "Uygulama HTTP erişimi başlatma süresi içinde doğrulanamadı.", reachable: false });
+    if (existingHealth.serviceReachable) {
+      const holder = findListeningProcess(appPort);
+      return reply(existingHealth.reachable ? 200 : 202, {
+        message: existingHealth.reachable ? "Uygulama zaten çalışıyor." : existingHealth.hint,
+        reachable: existingHealth.reachable,
+        pid: appChild?.pid ?? holder?.pid ?? process.pid,
+        loginUrl: existingHealth.loginUrl,
+        publicUrl: applyJob.publicUrl,
+      });
+    }
+
+    if (dualController && !dualController.alive()) {
+      await dualController.stop();
+      dualController = null;
+      appChild = null;
+    }
+    if (appChild && (appChild.exitCode !== null || appChild.signalCode || appChild.killed) && spawnedStaticServer) {
+      await new Promise((resolve) => spawnedStaticServer.close(resolve));
+      spawnedStaticServer = null;
+    }
+    if (stopping) return reply(409, { message: "Kurulum süreci kapatılıyor.", reachable: false });
+    if ((!appChild || appChild.exitCode !== null || appChild.signalCode || appChild.killed) && !spawnedStaticServer && (!dualController || !dualController.alive())) {
+      if (!invocation) {
+        return reply(409, {
+          message: "Hedef projede başlatma komutu (scripts.start veya giriş dosyası) bulunamadı.",
+          reachable: false,
+        });
+      }
+      if (invocation.type === "static") {
+        if (!await listenStaticApplication(invocation.staticDir, appPort)) return reply(409, { message: "Kurulum süreci kapatılıyor.", reachable: false });
+        const health = await applicationHealth();
+        return reply(health.reachable ? 200 : 202, {
+          message: health.hint,
+          reachable: health.reachable,
+          pid: process.pid,
+          loginUrl: health.loginUrl,
+          publicUrl: applyJob.publicUrl,
+        });
+      }
+      if (invocation.type === "dual") {
+        const dotEnvVars = parseDotEnvFile(envPath);
+        const shimsDir = path.resolve(projectRoot, "bin", "shims");
+        const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
+        const prepend = [];
+        if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
+        if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
+
+        const backendPort = appPort;
+        const frontendPort = detection.routes?.devPort || (appPort + 1);
+
+        dualController = createDualProcessController({
+          projectRoot,
+          backendInvocation: invocation.backend,
+          frontendInvocation: invocation.frontend,
+          backendPort,
+          frontendPort,
+          envVars: dotEnvVars,
+          prependPaths: prepend,
+          appendLog: (msg, stream, flush) => {
+            appendApplicationLog(msg, stream, flush);
+          },
+        });
+
+        const pids = await dualController.start();
+        appChild = {
+          pid: pids.backendPid,
+          exitCode: null,
+          signalCode: null,
+          kill: () => dualController?.stop(),
+        };
+
+        for (let i = 0; i < 20 && Date.now() < startupDeadline; i++) {
+          await new Promise((r) => setTimeout(r, Math.max(1, Math.min(200, startupDeadline - Date.now()))));
+          if (stopping || !dualController) return reply(409, { message: "Kurulum süreci kapatılıyor.", reachable: false });
+          const sub = dualController.getSubprocesses();
+          if (!sub.backend.alive || (sub.frontend && !sub.frontend.alive)) {
+            const crashed = !sub.backend.alive ? sub.backend : sub.frontend;
+            const which = !sub.backend.alive ? "Backend" : "Frontend";
+            const errDetail = crashed.errorDetail || `Çıkış kodu: ${crashed.exitCode ?? crashed.signal}`;
+            return reply(409, {
+              code: "APP_CRASHED",
+              message: `${which} süreci başlatılırken çöktü veya kapandı (${errDetail}). Kademeli kapanma uygulandı.`,
+              reachable: false,
+              pid: pids.backendPid,
+              subprocesses: sub,
+              errorDetail: errDetail,
+            });
+          }
+          const health = await applicationHealth();
+          if (health.reachable) {
+            return reply(200, {
+              message: "Çift süreçli uygulama (Backend + Frontend) başlatıldı ve bağlantıya hazır.",
+              reachable: true,
+              pid: pids.backendPid,
+              subprocesses: sub,
+              loginUrl: (await applicationHealth()).loginUrl,
+              publicUrl: applyJob.publicUrl,
+            });
+          }
+        }
+
+        return reply(202, {
+          message: "Çift süreç başlatıldı ancak portlar henüz hazır değil. Lütfen biraz bekleyin.",
+          reachable: false,
+          pid: pids.backendPid,
+          subprocesses: dualController.getSubprocesses(),
+          loginUrl: (await applicationHealth()).loginUrl,
+          publicUrl: applyJob.publicUrl,
+        });
+      }
+      if (invocation.type === "dual-static") {
+        const staticPort = detection.routes?.devPort || (appPort + 1);
+        if (!await listenStaticApplication(invocation.staticDir, staticPort)) return reply(409, { message: "Kurulum süreci kapatılıyor.", reachable: false });
+
+        const dotEnvVars = parseDotEnvFile(envPath);
+        const shimsDir = path.resolve(projectRoot, "bin", "shims");
+        const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
+        const prepend = [];
+        if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
+        if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
+        const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
+
+        appChildStderr = "";
+        appChild = spawn(invocation.backend.command, invocation.backend.args, {
+          cwd: invocation.backend.cwd || projectRoot,
+          env: childEnv,
+          detached: process.platform !== "win32",
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        appChild.stdout?.on("data", (chunk) => appendApplicationLog(chunk, "stdout"));
+        appChild.stdout?.on("close", () => appendApplicationLog("", "stdout", true));
+        appChild.stderr?.on("close", () => appendApplicationLog("", "stderr", true));
+        appChild.stderr?.on("data", (chunk) => {
+          appendApplicationLog(chunk, "stderr");
+          appChildStderr += chunk.toString();
+          if (appChildStderr.length > 4000) appChildStderr = appChildStderr.slice(-4000);
+        });
+        appChild.on("error", (error) => { appChildStderr = error.message; appendApplicationLog(error.message); });
+        appChild.unref();
+      } else {
+        const dotEnvVars = parseDotEnvFile(envPath);
+        const shimsDir = path.resolve(projectRoot, "bin", "shims");
+        const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
+        const prepend = [];
+        if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
+        if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
+        const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
+
+        appChildStderr = "";
+        appChild = spawn(invocation.command, invocation.args, {
+          cwd: invocation.cwd || projectRoot,
+          env: childEnv,
+          detached: process.platform !== "win32",
+          windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        appChild.stdout?.on("data", (chunk) => appendApplicationLog(chunk, "stdout"));
+        appChild.stdout?.on("close", () => appendApplicationLog("", "stdout", true));
+        appChild.stderr?.on("close", () => appendApplicationLog("", "stderr", true));
+        appChild.stderr?.on("data", (chunk) => {
+          appendApplicationLog(chunk, "stderr");
+          appChildStderr += chunk.toString();
+          if (appChildStderr.length > 4000) appChildStderr = appChildStderr.slice(-4000);
+        });
+        appChild.on("error", (error) => { appChildStderr = error.message; appendApplicationLog(error.message); });
+        appChild.unref();
+      }
+    }
+
+    for (let i = 0; i < 16 && Date.now() < startupDeadline; i++) {
+      await new Promise((r) => setTimeout(r, Math.max(1, Math.min(200, startupDeadline - Date.now()))));
+      if (stopping) return reply(409, { message: "Kurulum süreci kapatılıyor.", reachable: false });
+      if (appChild && (appChild.exitCode !== null || appChild.signalCode)) {
+        const errDetail = appChildStderr.trim().split(/\r?\n/).slice(-5).join(" | ");
+        const reason = errDetail ? `Hata: ${errDetail}` : `Çıkış kodu: ${appChild.exitCode}`;
+        return reply(409, {
+          code: "APP_CRASHED",
+          message: `Uygulama başlatılırken çöktü veya kapandı (${reason}).`,
+          reachable: false,
+          pid: appChild?.pid ?? null,
+          exitCode: appChild.exitCode,
+          signal: appChild.signalCode ?? null,
+          errorDetail: errDetail || null,
+        });
+      }
+      if ((await applicationHealth()).reachable) {
+        return reply(200, {
+          message: "Uygulama başlatıldı ve bağlantıya hazır.",
+          reachable: true,
+          pid: appChild?.pid ?? null,
+          loginUrl: (await applicationHealth()).loginUrl,
+          publicUrl: applyJob.publicUrl,
+        });
+      }
+    }
+
+    return reply(202, {
+      message: "Başlatıldı ancak port henüz açılmadı. Birkaç saniye sonra tekrar denetleyin.",
+      reachable: false,
+      pid: appChild?.pid ?? null,
+      loginUrl: (await applicationHealth()).loginUrl,
+      publicUrl: applyJob.publicUrl,
+    });
+  }
+
+  function startApplication() {
+    if (startPromise) return startPromise;
+    if (stopping) return Promise.resolve({ status: 409, body: { message: "Kurulum süreci kapatılıyor.", reachable: false } });
+    const timeout = Number(options.appStartTimeoutMs ?? process.env.SETUP_APP_START_TIMEOUT_MS);
+    startupDeadline = Date.now() + (Number.isFinite(timeout) && timeout > 0 ? Math.max(100, timeout) : 60000);
+    startPromise = (async () => {
+      applicationState("starting", "Kurulum tamamlandı; uygulama başlatılıyor ve HTTP erişimi denetleniyor…");
+      try {
+        const result = await performStart();
+        if (result.status === 202 && Date.now() >= startupDeadline) {
+          result.status = 408;
+          result.body.message = "Uygulama belirtilen sürede HTTP erişimine hazır olmadı. Terminal günlüğünü ve gerekiyorsa DNS/proxy ayarlarını kontrol edip yeniden deneyin.";
+        }
+        if (result.body.message) result.body.message = maskApplicationText(result.body.message);
+        if (result.body.errorDetail) result.body.errorDetail = maskApplicationText(result.body.errorDetail);
+        applicationState(result.body.reachable ? "ready" : result.status >= 400 ? "error" : "starting", result.body.message);
+        if (!isDesktop && result.status === 202) void monitorApplicationReadiness();
+        return result;
+      } catch (error) {
+        const message = redactSecrets(error.message, Object.values(parseDotEnvFile(envPath)));
+        applicationState("error", message);
+        return { status: 409, body: { message, reachable: false } };
+      } finally { startPromise = null; }
+    })();
+    return startPromise;
+  }
+
+  function monitorApplicationReadiness() {
+    if (readinessPromise) return readinessPromise;
+    readinessPromise = (async () => {
+      while (!stopping && Date.now() < startupDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const health = await applicationHealth();
+        if (health.reachable) { applicationState("ready", "Uygulama başlatıldı ve HTTP erişimi doğrulandı."); return; }
+        const sub = health.subprocesses;
+        if ((appChild && (appChild.exitCode !== null || appChild.signalCode)) || (sub && (!sub.backend.alive || (sub.frontend && !sub.frontend.alive)))) {
+          applicationState("error", redactSecrets(appChildStderr || "Uygulama süreci başlatılırken kapandı.", Object.values(parseDotEnvFile(envPath))));
+          return;
+        }
+      }
+      if (!stopping) applicationState("error", "Uygulama belirtilen sürede HTTP erişimine hazır olmadı. Terminal günlüğünü ve gerekiyorsa DNS/proxy ayarlarını kontrol edip yeniden deneyin.");
+    })().catch((error) => applicationState("error", error.message)).finally(() => { readinessPromise = null; });
+    return readinessPromise;
   }
 
   const server = http.createServer(async (req, res) => {
@@ -521,245 +877,12 @@ export function createSetupServer(token, options = {}) {
       }
 
       if (req.method === "GET" && reqUrl.pathname === "/api/app-health") {
-        const mode = applyJob.mode ?? "localhost";
-        const appPort = applyJob.appPort ?? 5000;
-        // Ayrı bir ön yüz dev sunucusu yalnızca algılandıysa/yapılandırıldıysa denetlenir (sabit port yok).
-        const devPort = detection.routes.devPort;
-        const isLocal = mode === "localhost";
-        const hasDevUi = isLocal && Boolean(devPort) && devPort !== appPort;
-        const uiPort = hasDevUi ? devPort : appPort;
-        const apiReachable = await isPortOpen(appPort);
-        const uiReachable = hasDevUi ? await isPortOpen(uiPort) : apiReachable;
-        const reachable = hasDevUi ? uiReachable : apiReachable;
-        const loginUrl = hasDevUi && uiReachable && !detection.scenario.isStaticOnly ? buildLoginUrl(`http://127.0.0.1:${devPort}`, detection.routes.loginPath) : applyJob.loginUrl;
-        const appDied = Boolean(appChild && appChild.exitCode !== null);
-        const exitHint = appDied ? ` (Süreç kapandı, çıkış kodu: ${appChild.exitCode})` : "";
-        const subprocesses = dualController ? dualController.getSubprocesses() : null;
-        return sendJson(res, 200, {
-          reachable,
-          apiReachable,
-          uiReachable,
-          port: appPort,
-          uiPort,
-          mode,
-          loginUrl,
-          publicUrl: applyJob.publicUrl,
-          subprocesses,
-          hint: reachable
-            ? "Uygulama ayakta görünüyor; giriş sayfasına gidebilirsiniz."
-            : `Uygulama henüz ayakta değil (API: ${appPort})${exitHint}.`,
-        });
+        return sendJson(res, 200, await applicationHealth());
       }
 
       if (req.method === "POST" && reqUrl.pathname === "/api/start-app") {
-        if (completeTimer) {
-          clearTimeout(completeTimer);
-          completeTimer = null;
-        }
-        if (applyJob.status !== "success" && !fs.existsSync(lockPath)) {
-          return sendJson(res, 409, { message: "Uygulamayı başlatmadan önce kurulum adımlarını tamamlayın." });
-        }
-        if (isDesktop) {
-          const result = await desktopApp.start();
-          return sendJson(res, result.status, result.body);
-        }
-
-        const appPort = applyJob.appPort || readConfiguredPort(projectRoot) || Number(setupConfig?.ports?.app) || 5000;
-        if (await isPortOpen(appPort)) {
-          const holder = findListeningProcess(appPort);
-          return sendJson(res, 200, {
-            message: "Uygulama zaten çalışıyor.",
-            reachable: true,
-            pid: appChild?.pid ?? holder?.pid ?? process.pid,
-            loginUrl: applyJob.loginUrl,
-            publicUrl: applyJob.publicUrl,
-          });
-        }
-
-        if ((!appChild || appChild.exitCode !== null || appChild.killed) && !spawnedStaticServer && (!dualController || !dualController.alive())) {
-          const invocation = options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
-          if (!invocation) {
-            return sendJson(res, 409, {
-              message: "Hedef projede başlatma komutu (scripts.start veya giriş dosyası) bulunamadı.",
-              reachable: false,
-            });
-          }
-          if (invocation.type === "static") {
-            const staticSrv = createStaticAppServer(invocation.staticDir);
-            await new Promise((resolve, reject) => {
-              staticSrv.once("error", reject);
-              staticSrv.listen(appPort, "127.0.0.1", resolve);
-            });
-            spawnedStaticServer = staticSrv;
-            return sendJson(res, 200, {
-              message: "Yerleşik statik dosya sunucusu başlatıldı ve bağlantıya hazır.",
-              reachable: true,
-              pid: process.pid,
-              loginUrl: applyJob.loginUrl,
-              publicUrl: applyJob.publicUrl,
-            });
-          }
-          if (invocation.type === "dual") {
-            const dotEnvVars = parseDotEnvFile(envPath);
-            const shimsDir = path.resolve(projectRoot, "bin", "shims");
-            const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
-            const prepend = [];
-            if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
-            if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
-
-            const backendPort = appPort;
-            const frontendPort = detection.routes?.devPort || (appPort + 1);
-
-            dualController = createDualProcessController({
-              projectRoot,
-              backendInvocation: invocation.backend,
-              frontendInvocation: invocation.frontend,
-              backendPort,
-              frontendPort,
-              envVars: dotEnvVars,
-              prependPaths: prepend,
-              appendLog: (msg) => {
-                applyJob.logs.push(msg);
-              },
-            });
-
-            const pids = await dualController.start();
-            appChild = {
-              pid: pids.backendPid,
-              exitCode: null,
-              signalCode: null,
-              kill: () => dualController?.stop(),
-            };
-
-            for (let i = 0; i < 20; i++) {
-              await new Promise((r) => setTimeout(r, 200));
-              const sub = dualController.getSubprocesses();
-              if (!sub.backend.alive || (sub.frontend && !sub.frontend.alive)) {
-                const crashed = !sub.backend.alive ? sub.backend : sub.frontend;
-                const which = !sub.backend.alive ? "Backend" : "Frontend";
-                const errDetail = crashed.errorDetail || `Çıkış kodu: ${crashed.exitCode ?? crashed.signal}`;
-                return sendJson(res, 409, {
-                  code: "APP_CRASHED",
-                  message: `${which} süreci başlatılırken çöktü veya kapandı (${errDetail}). Kademeli kapanma uygulandı.`,
-                  reachable: false,
-                  pid: pids.backendPid,
-                  subprocesses: sub,
-                  errorDetail: errDetail,
-                });
-              }
-              const beOpen = await isPortOpen(backendPort);
-              const feOpen = sub.frontend ? await isPortOpen(frontendPort) : true;
-              if (beOpen || feOpen) {
-                return sendJson(res, 200, {
-                  message: "Çift süreçli uygulama (Backend + Frontend) başlatıldı ve bağlantıya hazır.",
-                  reachable: true,
-                  pid: pids.backendPid,
-                  subprocesses: sub,
-                  loginUrl: applyJob.loginUrl,
-                  publicUrl: applyJob.publicUrl,
-                });
-              }
-            }
-
-            return sendJson(res, 202, {
-              message: "Çift süreç başlatıldı ancak portlar henüz hazır değil. Lütfen biraz bekleyin.",
-              reachable: false,
-              pid: pids.backendPid,
-              subprocesses: dualController.getSubprocesses(),
-              loginUrl: applyJob.loginUrl,
-              publicUrl: applyJob.publicUrl,
-            });
-          }
-          if (invocation.type === "dual-static") {
-            const staticPort = detection.routes?.devPort || (appPort + 1);
-            const staticSrv = createStaticAppServer(invocation.staticDir);
-            await new Promise((resolve, reject) => {
-              staticSrv.once("error", reject);
-              staticSrv.listen(staticPort, "127.0.0.1", resolve);
-            });
-            spawnedStaticServer = staticSrv;
-
-            const dotEnvVars = parseDotEnvFile(envPath);
-            const shimsDir = path.resolve(projectRoot, "bin", "shims");
-            const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
-            const prepend = [];
-            if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
-            if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
-            const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
-
-            appChildStderr = "";
-            appChild = spawn(invocation.backend.command, invocation.backend.args, {
-              cwd: invocation.backend.cwd || projectRoot,
-              env: childEnv,
-              detached: process.platform !== "win32",
-              windowsHide: true,
-              stdio: ["ignore", "pipe", "pipe"],
-            });
-            appChild.stderr?.on("data", (chunk) => {
-              appChildStderr += chunk.toString();
-              if (appChildStderr.length > 4000) appChildStderr = appChildStderr.slice(-4000);
-            });
-            appChild.on("error", () => {});
-            appChild.unref();
-          } else {
-            const dotEnvVars = parseDotEnvFile(envPath);
-            const shimsDir = path.resolve(projectRoot, "bin", "shims");
-            const localShims = path.resolve(fileURLToPath(import.meta.url), "..", "..", "bin", "shims");
-            const prepend = [];
-            if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
-            if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
-            const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
-
-            appChildStderr = "";
-            appChild = spawn(invocation.command, invocation.args, {
-              cwd: invocation.cwd || projectRoot,
-              env: childEnv,
-              detached: process.platform !== "win32",
-              windowsHide: true,
-              stdio: ["ignore", "pipe", "pipe"],
-            });
-            appChild.stderr?.on("data", (chunk) => {
-              appChildStderr += chunk.toString();
-              if (appChildStderr.length > 4000) appChildStderr = appChildStderr.slice(-4000);
-            });
-            appChild.on("error", () => {});
-            appChild.unref();
-          }
-        }
-
-        for (let i = 0; i < 16; i++) {
-          await new Promise((r) => setTimeout(r, 200));
-          if (appChild && appChild.exitCode !== null) {
-            const errDetail = appChildStderr.trim().split(/\r?\n/).slice(-5).join(" | ");
-            const reason = errDetail ? `Hata: ${errDetail}` : `Çıkış kodu: ${appChild.exitCode}`;
-            return sendJson(res, 409, {
-              code: "APP_CRASHED",
-              message: `Uygulama başlatılırken çöktü veya kapandı (${reason}).`,
-              reachable: false,
-              pid: appChild?.pid ?? null,
-              exitCode: appChild.exitCode,
-              signal: appChild.signalCode ?? null,
-              errorDetail: errDetail || null,
-            });
-          }
-          if (await isPortOpen(appPort)) {
-            return sendJson(res, 200, {
-              message: "Uygulama başlatıldı ve bağlantıya hazır.",
-              reachable: true,
-              pid: appChild?.pid ?? null,
-              loginUrl: applyJob.loginUrl,
-              publicUrl: applyJob.publicUrl,
-            });
-          }
-        }
-
-        return sendJson(res, 202, {
-          message: "Başlatıldı ancak port henüz açılmadı. Birkaç saniye sonra tekrar denetleyin.",
-          reachable: false,
-          pid: appChild?.pid ?? null,
-          loginUrl: applyJob.loginUrl,
-          publicUrl: applyJob.publicUrl,
-        });
+        const result = await startApplication();
+        return sendJson(res, result.status, result.body);
       }
 
       if (req.method === "POST" && reqUrl.pathname === "/api/apply") {
@@ -786,8 +909,9 @@ export function createSetupServer(token, options = {}) {
               const summary = await applySetup(payload);
               applyJob.summary = summary;
               applyJob.status = "success";
-              applyJob.message = "Kurulum tamamlandı. Birazdan giriş sayfasına yönlendirileceksiniz.";
+              applyJob.message = "Kurulum tamamlandı. Uygulamanın başlatılması ve erişim denetimi bekleniyor.";
               applyJob.finishedAt = new Date().toISOString();
+              if (!isDesktop) void startApplication();
               const shouldAutoClose = options.autoClose === true || process.env.SETUP_AUTO_CLOSE === "true" || process.env.SETUP_AUTO_CLOSE === "1";
               if (options.onComplete && shouldAutoClose) {
                 const autoCloseDelay = typeof options.autoCloseDelay === "number" ? options.autoCloseDelay : 20_000;
@@ -831,6 +955,7 @@ export function createSetupServer(token, options = {}) {
   server.hasSpawnedApp = () => Boolean(spawnedStaticServer || dualController?.alive() || (appChild && appChild.exitCode === null));
 
   server.stopSpawnedApp = async () => {
+    stopping = true;
     if (completeTimer) {
       clearTimeout(completeTimer);
       completeTimer = null;
@@ -839,6 +964,7 @@ export function createSetupServer(token, options = {}) {
       const dc = dualController;
       dualController = null;
       await dc.stop();
+      appChild = null;
     }
     if (spawnedStaticServer) {
       const srv = spawnedStaticServer;
@@ -875,6 +1001,7 @@ export function createSetupServer(token, options = {}) {
     await exitPromise;
   };
 
+  server.once("close", () => { void server.stopSpawnedApp(); });
   return server;
 }
 
@@ -903,6 +1030,12 @@ export function startSetupWizard(options = {}) {
     dataDir,
     reconfigure: isReconfigure,
     ...options,
+    onAppLog: (text) => { console.log(`[uygulama] ${text}`); options.onAppLog?.(text); },
+    onApplicationState: (state) => {
+      console.log(`[setup:uygulama:${state.state}] ${state.message}`);
+      if (process.connected) process.send({ type: "setup:application", ...state }, () => {});
+      options.onApplicationState?.(state);
+    },
     onComplete: () => {
       if (!server.hasSpawnedApp?.()) {
         server.close();
@@ -911,7 +1044,7 @@ export function startSetupWizard(options = {}) {
   });
   server.listen(port, host, () => {
     console.log(`Kurulum sihirbazı: http://${host}:${port}/setup?token=${token}`);
-    console.log("Bu bağlantıyı paylaşmayın. Kurulum tamamlandıktan sonra uygulamayı başlatabilirsiniz.");
+    console.log("Bu bağlantıyı paylaşmayın. Kurulum tamamlandığında uygulama otomatik başlatılır; bu terminali açık tutun.");
   });
   return server;
 }

@@ -895,8 +895,8 @@ function finishApplySuccess(applyJob){
   result.className='ok';
   list.innerHTML=[
     isLocal
-      ? 'Aşağıdaki <strong>Uygulamayı başlat</strong> ile geliştirme sunucusu arka planda açılır (terminal penceresi açılmaz).'
-      : 'Aşağıdaki <strong>Uygulamayı başlat</strong> ile uygulama servisi ayağa kaldırılır.',
+      ? 'Uygulama ilk açılan terminalin gözetiminde otomatik başlatılır; HTTP erişimi doğrulanana kadar bekleyin.'
+      : 'Uygulama servisi otomatik başlatılır; günlükleri ilk açılan terminalden izleyebilirsiniz.',
     isLocal
       ? 'Tarayıcıdan giriş: <a href="'+escapedHref+'" id="loginLink">'+escapedLogin+'</a>'
       : 'Nginx + DNS: <code>setup-artifacts/nginx.conf.example</code> — sonra giriş: <a href="'+escapedHref+'" id="loginLink">'+escapedLogin+'</a>',
@@ -960,83 +960,72 @@ function finishApplySuccess(applyJob){
     note.textContent="Kurulum tamam. Uygulama bu sunucu üzerinde hazır; devam etmek için düğmeyi kullanın.";
     return;
   }
+  const showError=(err)=>{
+    note.textContent=err.message||'Uygulama başlatılamadı.';
+    note.classList.add('error');
+    if(startBtn){startBtn.disabled=false;startBtn.textContent='Uygulamayı yeniden başlat / denetle'}
+  };
+  let navigating=false;
+  const navigateWhenReady=async(event)=>{
+    event?.preventDefault?.();
+    if(navigating)return;
+    navigating=true;
+    try{
+      const {ok,data}=await fetchJson(API+'/app-health');
+      if(!ok||!data?.reachable)throw new Error(data?.hint||'Uygulama henüz erişime hazır değil. Terminal günlüğünü kontrol edin.');
+      openLogin(data.loginUrl||loginUrl);
+    }catch(err){showError(err)}finally{navigating=false}
+  };
+  if(goLogin)goLogin.onclick=navigateWhenReady;
+  if(goApp)goApp.onclick=navigateWhenReady;
+  const loginLink=document.getElementById('loginLink');
+  if(loginLink){loginLink.href='#';loginLink.onclick=navigateWhenReady}
+  let watching=false;
+  const monitor=async()=>{
+    if(watching)return;
+    watching=true;
+    try{await watchAppHealth(loginUrl,note,isLocal)}catch(err){showError(err)}finally{watching=false}
+  };
   if(startBtn){
     startBtn.hidden=false;
     startBtn.classList.remove('hidden');
-    startBtn.disabled=false;
-    startBtn.textContent=isLocal?'Uygulamayı başlat (dev)':'Uygulamayı başlat';
+    startBtn.disabled=applyJob.application?.state==='starting';
+    startBtn.textContent=startBtn.disabled?'Uygulama başlatılıyor…':'Uygulamayı yeniden başlat / denetle';
     startBtn.onclick=async()=>{
       startBtn.disabled=true;
-      startBtn.textContent='Başlatılıyor…';
       note.classList.remove('error');
-      note.textContent=isLocal
-        ? 'Geliştirme sunucusu arka planda başlatılıyor; terminal penceresi açılmaz…'
-        : 'Uygulama servisi başlatılıyor…';
+      note.textContent='Uygulama başlatılıyor; HTTP erişimi denetleniyor…';
       try{
-        const {ok,status,data}=await fetchJson(API+'/start-app',{
+        const {ok,data}=await fetchJson(API+'/start-app',{
           method:'POST',
           headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},
-          body:JSON.stringify(isLocal?{mode:'dev'}:{mode:'production'}),
+          body:JSON.stringify({mode:isLocal?'dev':'production'}),
         });
-        if(!ok||status===409){
-          throw new Error((data&&data.message)||'Uygulama başlatılamadı.');
-        }
-        const url=(data&&data.loginUrl)||loginUrl;
-        if(data&&data.reachable){
-          note.textContent='Uygulama ayakta. Giriş sayfasına gidiliyor…';
-          setTimeout(()=>openLogin(url),800);
-          return;
-        }
-        note.textContent=(data&&data.message)||'Başlatıldı; port bekleniyor…';
-        await watchAppHealth(url,note,isLocal);
-      }catch(err){
-        note.textContent=err.message||'Uygulama başlatılamadı.';
-        note.classList.add('error');
-        startBtn.disabled=false;
-        startBtn.textContent=isLocal?'Uygulamayı başlat (dev)':'Uygulamayı başlat';
-      }
+        if(!ok)throw new Error(data?.message||'Uygulama başlatılamadı.');
+        await monitor();
+      }catch(err){showError(err)}
     };
   }
-  if(goLogin)goLogin.onclick=async()=>{
-    goLogin.disabled=true;
-    note.textContent='Uygulama denetleniyor…';
-    try{
-      const {data}=await fetchJson(API+'/app-health');
-      if(data&&data.reachable){
-        openLogin(data.loginUrl||loginUrl);
-        return;
-      }
-      note.textContent=(data&&data.hint)||'Uygulama ayakta değil. “Uygulamayı başlat” ile devam edin.';
-      if(startBtn){
-        startBtn.hidden=false;
-        startBtn.classList.remove('hidden');
-      }
-    }catch(err){
-      note.textContent=err.message||'Denetim başarısız.';
-    }
-    goLogin.disabled=false;
-  };
-  if(goApp)goApp.onclick=()=>{
-    note.textContent='Adres açılıyor…';
-    const lp=applyJob.loginPath||'';location.href=isLocal?((lp&&loginUrl.endsWith(lp))?loginUrl.slice(0,-lp.length):loginUrl):(publicUrl||loginUrl);
-  };
-  note.textContent=isLocal
-    ? 'Kurulum tamam. “Uygulamayı başlat (dev)” ile uygulamayı arka planda açın; ardından giriş yapılabilir.'
-    : 'Kurulum tamam. Nginx/DNS hazır değilse “sayfaya ulaşılamıyor” alırsınız. Önce servisi başlatın, sonra domain’i açın.';
+  note.textContent=applyJob.application?.message||'Kurulum tamamlandı. Uygulama otomatik başlatılıyor; erişim doğrulaması bekleniyor…';
+  if(applyJob.application?.state==='error')showError(new Error(note.textContent));
+  else void monitor();
 }
 async function watchAppHealth(loginUrl,note,isLocal){
-  for(let i=0;i<30;i++){
-    try{
-      const {data}=await fetchJson(API+'/app-health');
-      if(data&&data.reachable){
-        note.textContent='Uygulama ayakta. Giriş sayfasına yönlendiriliyorsunuz…';
-        setTimeout(()=>{location.href=loginUrl},1200);
-        return;
-      }
-    }catch{/* yoksay */}
+  for(let i=0;i<45;i++){
+    const {ok,data}=await fetchJson(API+'/app-health');
+    if(!ok)throw new Error(data?.message||'Uygulama erişim denetimi başarısız oldu. Yeniden deneyin.');
+    if(data?.reachable){
+      note.textContent='Uygulama HTTP üzerinden erişime hazır. Sayfa açılıyor…';
+      location.href=data.loginUrl||loginUrl;
+      return;
+    }
+    if(data?.application?.state==='error')throw new Error(data.application.message||data.hint||'Uygulama başlatılamadı.');
+    note.textContent=data?.hint||'Uygulamanın HTTP erişimine hazır olması bekleniyor…';
     await new Promise(r=>setTimeout(r,2000));
   }
+  throw new Error('Uygulama zamanında erişime hazır olmadı. Terminal günlüğünü kontrol edip yeniden deneyin.');
 }
+
 async function pollApplyProgress(){
   let failures=0;
   for(let i=0;i<240;i++){

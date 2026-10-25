@@ -49,7 +49,7 @@ export function createProcessRunner({ log = console.log } = {}) {
     if (activeChild) cancellation = signal;
     stopTree(activeChild, force);
   }
-  function run(call, { cwd = process.cwd(), timeout = Number(process.env.SETUP_JOB_TIMEOUT_MS) || 900000, env = process.env, prependPaths = [shims], ipc = false, onStdout } = {}) {
+  function run(call, { cwd = process.cwd(), timeout = Number(process.env.SETUP_JOB_TIMEOUT_MS) || 900000, env = process.env, prependPaths = [shims], ipc = false, onStdout, onMessage } = {}) {
     if (activeChild) throw new Error("Başka bir kurulum işlemi halen çalışıyor.");
     cancellation = null;
     return new Promise((resolve, reject) => {
@@ -59,6 +59,7 @@ export function createProcessRunner({ log = console.log } = {}) {
         shell: false, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe", ...(ipc ? ["ipc"] : [])],
       });
       activeChild = child;
+      if (ipc && onMessage) child.on("message", onMessage);
       child.stdout.on("data", (chunk) => {
         const text = String(chunk);
         log(redactSecrets(text));
