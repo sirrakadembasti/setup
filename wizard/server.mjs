@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import crypto, { timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
@@ -7,6 +7,7 @@ import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
+import { resolveWizardPort } from "../scripts/cli-options.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { findListeningProcess, getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
 import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
@@ -859,6 +860,10 @@ export function createSetupServer(token, options = {}) {
               resolve();
             });
           });
+    // Stop the tree before its cmd/npm leader exits, otherwise Windows loses the descendants.
+    if (process.platform === "win32" && pid && child.exitCode === null) {
+      spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    }
     try {
       child.kill();
     } catch {}
@@ -891,7 +896,7 @@ export function startSetupWizard(options = {}) {
   }
   const token = process.env.SETUP_TOKEN || crypto.randomBytes(24).toString("base64url");
   const host = "127.0.0.1";
-  const port = Math.min(65535, Math.max(1024, Number(process.env.SETUP_PORT) || Number(setupConfig?.ports?.wizard) || 5050));
+  const port = resolveWizardPort({ port: options.port, config: setupConfig || {} });
   let server;
   server = createSetupServer(token, {
     projectRoot,
@@ -911,6 +916,38 @@ export function startSetupWizard(options = {}) {
   return server;
 }
 
+export function manageSetupWizardLifecycle(server) {
+  let shuttingDown = false;
+  const shutdown = async (code = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    await server.stopSpawnedApp();
+    server.close();
+    server.closeAllConnections?.();
+    process.exit(code);
+  };
+  const onInt = () => void shutdown(130);
+  const onTerm = () => void shutdown(143);
+  const onHup = () => void shutdown(129);
+  const onMessage = (message) => { if (message?.type === "setup:shutdown") void shutdown(); };
+  const onDisconnect = () => void shutdown();
+  process.once("SIGINT", onInt);
+  process.once("SIGTERM", onTerm);
+  process.once("SIGHUP", onHup);
+  process.on("message", onMessage);
+  // Closing the terminal parent also closes its IPC channel.
+  if (process.connected) process.once("disconnect", onDisconnect);
+  server.once("close", () => {
+    process.removeListener("SIGINT", onInt);
+    process.removeListener("SIGTERM", onTerm);
+    process.removeListener("SIGHUP", onHup);
+    process.removeListener("message", onMessage);
+    process.removeListener("disconnect", onDisconnect);
+    if (process.connected) process.disconnect();
+  });
+  return server;
+}
+
 if (import.meta.url && process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
-  startSetupWizard();
+  manageSetupWizardLifecycle(startSetupWizard());
 }

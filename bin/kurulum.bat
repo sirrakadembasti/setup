@@ -1,208 +1,68 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
-chcp 65001 >nul
-title setup v1.0 — Otomatik Kurulum Ön Kontrolü
-
-set "INVOKE_DIR=%CD%"
+setlocal EnableExtensions DisableDelayedExpansion
+set "LAUNCHER_MODE=package"
 set "SCRIPT_DIR=%~dp0"
-rem setup paketinin kökü (bin içinden veya doğrudan kökten çalıştırılabilir)
-if exist "%SCRIPT_DIR%bin\setup.mjs" (
-  set "SETUP_ROOT=%SCRIPT_DIR%"
-) else (
-  for %%I in ("%SCRIPT_DIR%..") do set "SETUP_ROOT=%%~fI\"
-)
+set "PROJECT_ROOT=%CD%"
+if "%LAUNCHER_MODE%"=="project" set "PROJECT_ROOT=%~dp0"
+if defined SETUP_PROJECT_ROOT set "PROJECT_ROOT=%SETUP_PROJECT_ROOT%"
+cd /d "%PROJECT_ROOT%"
+if errorlevel 1 goto directory_error
+set "SETUP_PROJECT_ROOT=%CD%"
 
-rem Hedef proje: SETUP_PROJECT_ROOT, yoksa betiğin çağrıldığı dizin (eklentinin kendi dizini değil)
-if defined SETUP_PROJECT_ROOT (
-  set "PROJECT_ROOT=%SETUP_PROJECT_ROOT%"
-) else (
-  set "PROJECT_ROOT=%INVOKE_DIR%"
-)
-
-pushd "%PROJECT_ROOT%" >nul 2>&1
-if errorlevel 1 (
-  echo [HATA] Proje dizinine girilemedi: %PROJECT_ROOT%
-  pause
-  exit /b 1
-)
-
-echo.
-echo ============================================================
-echo   setup v1.0 — Otomatik Kurulum Ön Kontrolü
-echo ============================================================
-echo Proje dizini: %PROJECT_ROOT%
-echo.
-
-rem package.json zorunlu değildir (Python, Go, .NET, Rust ve statik projeler)
-set "HAS_PACKAGE_JSON=0"
-if exist "package.json" set "HAS_PACKAGE_JSON=1"
-
-set "HAS_ERROR=0"
-set "NODE_VERSION="
-set "NODE_MAJOR="
-set "JS_RUNNER=node"
 where node >nul 2>&1
-if errorlevel 1 (
-  where bun >nul 2>&1
-  if not errorlevel 1 (
-    for /f "delims=" %%V in ('bun --version 2^>nul') do set "BUN_VERSION=%%V"
-    echo [TAMAM] Bun !BUN_VERSION! [Node.js yerine Bun calisma ortami kullanilacak]
-    set "JS_RUNNER=bun"
-  ) else (
-    echo [EKSİK] Node.js veya Bun bulunamadı.
-    set "HAS_ERROR=1"
-  )
-) else (
-  for /f "delims=" %%V in ('node -p "process.versions.node" 2^>nul') do set "NODE_VERSION=%%V"
-  for /f "delims=" %%M in ('node -p "process.versions.node.split('.')[0]" 2^>nul') do set "NODE_MAJOR=%%M"
-  if "!NODE_MAJOR!"=="18" (
-    echo [TAMAM] Node.js !NODE_VERSION!
-  ) else if "!NODE_MAJOR!"=="20" (
-    echo [TAMAM] Node.js !NODE_VERSION!
-  ) else if "!NODE_MAJOR!"=="22" (
-    echo [TAMAM] Node.js !NODE_VERSION!
-  ) else if "!NODE_MAJOR!"=="24" (
-    echo [TAMAM] Node.js !NODE_VERSION!
-  ) else (
-    where bun >nul 2>&1
-    if not errorlevel 1 (
-      for /f "delims=" %%V in ('bun --version 2^>nul') do set "BUN_VERSION=%%V"
-      echo [UYARI] Node.js !NODE_VERSION! [18, 20, 22, 24 LTS onerilir]. Sistemde Bun !BUN_VERSION! mevcut.
-      set "JS_RUNNER=bun"
-    ) else (
-      echo [UYUMSUZ] Node.js !NODE_VERSION! bulundu. Node.js 18, 20, 22 veya 24 LTS gereklidir.
-      set "HAS_ERROR=1"
-    )
-  )
-)
+if errorlevel 1 goto try_bun
+node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 18 ? 0 : 1)" >nul 2>&1
+if errorlevel 1 goto try_bun
+set "JS_RUNNER=node"
+goto locate_entry
+:try_bun
+where bun >nul 2>&1
+if errorlevel 1 goto runtime_error
+bun --version >nul 2>&1
+if errorlevel 1 goto runtime_error
+set "JS_RUNNER=bun"
 
-set "PM_NAME=npm"
-if exist "pnpm-lock.yaml" (
-  set "PM_NAME=pnpm"
-) else if exist "pnpm-workspace.yaml" (
-  set "PM_NAME=pnpm"
-) else if exist "yarn.lock" (
-  set "PM_NAME=yarn"
-) else if exist "bun.lockb" (
-  set "PM_NAME=bun"
-) else if exist "bun.lock" (
-  set "PM_NAME=bun"
-)
+:locate_entry
+if "%LAUNCHER_MODE%"=="project" goto project_entry
+set "SETUP_ENTRY=%SCRIPT_DIR%bin\setup.mjs"
+if exist "%SETUP_ENTRY%" goto run_local
+for %%I in ("%SCRIPT_DIR%..") do set "SETUP_ENTRY=%%~fI\bin\setup.mjs"
+if exist "%SETUP_ENTRY%" goto run_local
+goto entry_error
 
-if "%HAS_PACKAGE_JSON%"=="0" (
-  echo [ATLANDI] package.json yok; Node paket yöneticisi denetimi gerekmiyor.
-  goto :pm_done
-)
-where !PM_NAME! >nul 2>&1
-if errorlevel 1 (
-  where npm >nul 2>&1
-  if errorlevel 1 (
-    where bun >nul 2>&1
-    if errorlevel 1 (
-      echo [EKSİK] Paket yöneticisi [!PM_NAME! / npm / bun] bulunamadı.
-      set "HAS_ERROR=1"
-    ) else (
-      for /f "delims=" %%V in ('bun --version 2^>nul') do set "BUN_VERSION=%%V"
-      echo [TAMAM] bun !BUN_VERSION! [!PM_NAME! / npm bulunamadi, bun kullanilacak]
-      set "PM_NAME=bun"
-    )
-  ) else (
-    for /f "delims=" %%V in ('npm --version 2^>nul') do set "NPM_VERSION=%%V"
-    echo [TAMAM] npm !NPM_VERSION! [!PM_NAME! bulunamadi, npm kullanilacak]
-    set "PM_NAME=npm"
-  )
-) else (
-  for /f "delims=" %%V in ('!PM_NAME! --version 2^>nul') do set "PM_VERSION=%%V"
-  echo [TAMAM] !PM_NAME! !PM_VERSION!
-)
-:pm_done
+:project_entry
+set "SETUP_ENTRY=%SCRIPT_DIR%tools\setup\bin\setup.mjs"
+if exist "%SETUP_ENTRY%" goto run_local
+set "SETUP_ENTRY=%SCRIPT_DIR%node_modules\setup\bin\setup.mjs"
+if exist "%SETUP_ENTRY%" goto run_local
+if "%JS_RUNNER%"=="bun" goto remote_bun
+where npx >nul 2>&1
+if errorlevel 1 goto remote_bun
+npx --yes github:sirrakadembasti/setup %*
+exit /b %ERRORLEVEL%
+:remote_bun
+where bunx >nul 2>&1
+if errorlevel 1 goto entry_error
+bunx github:sirrakadembasti/setup %*
+exit /b %ERRORLEVEL%
 
-if "%HAS_ERROR%"=="1" goto :requirements
-
-set "CHECK_PORT=5049"
-if defined SETUP_BOOTSTRAP_PORT set "CHECK_PORT=%SETUP_BOOTSTRAP_PORT%"
-
-rem --- Kurulum baslangic portu kontrolu ---
-set "PORT_HOLDER_PID="
-for /f "delims=" %%P in ('!JS_RUNNER! "%SETUP_ROOT%scripts\find-port-holder.mjs" !CHECK_PORT! 2^>nul') do set "PORT_HOLDER_PID=%%P"
-
-if defined PORT_HOLDER_PID (
-  echo.
-  echo [UYARI] Kurulum başlangıç portu zaten kullanımda: 127.0.0.1:!CHECK_PORT!
-  set "PORT_PROCESS_NAME="
-  for /f "tokens=1" %%I in ('tasklist /FI "PID eq !PORT_HOLDER_PID!" /NH 2^>nul') do set "PORT_PROCESS_NAME=%%I"
-  if defined PORT_PROCESS_NAME (
-    echo Portu tutan süreç: !PORT_PROCESS_NAME! (PID !PORT_HOLDER_PID!)
-    echo !PORT_PROCESS_NAME! | findstr /I "node bun python setup" >nul 2>&1
-    if errorlevel 1 (
-      echo [DİKKAT] Bu süreç Node veya Bun gibi görünmüyor (!PORT_PROCESS_NAME!).
-      echo Bilmediğiniz veya sistem süreçlerini sonlandırmadan önce kontrol ediniz.
-    )
-  ) else (
-    echo Portu tutan süreç: PID !PORT_HOLDER_PID!
-  )
-  echo.
-  choice /C DK /N /M "Kalan kurulum süreci şimdi durdurulsun mu? [D=durdur ve devam et / K=kapat]: "
-  if errorlevel 2 goto :failed
-  taskkill /PID !PORT_HOLDER_PID! /F >nul 2>&1
-  ping -n 2 127.0.0.1 >nul
-)
-
-set "WIZARD_PORT=5050"
-if defined SETUP_WIZARD_PORT set "WIZARD_PORT=%SETUP_WIZARD_PORT%"
-set "WIZARD_PID="
-for /f "delims=" %%P in ('!JS_RUNNER! "%SETUP_ROOT%scripts\find-port-holder.mjs" !WIZARD_PORT! 2^>nul') do set "WIZARD_PID=%%P"
-if defined WIZARD_PID (
-  echo.
-  echo [UYARI] Sihirbaz portu zaten kullanımda: 127.0.0.1:!WIZARD_PORT!
-  set "WIZARD_PROCESS_NAME="
-  for /f "tokens=1" %%I in ('tasklist /FI "PID eq !WIZARD_PID!" /NH 2^>nul') do set "WIZARD_PROCESS_NAME=%%I"
-  if defined WIZARD_PROCESS_NAME (
-    echo Portu tutan süreç: !WIZARD_PROCESS_NAME! (PID !WIZARD_PID!)
-    echo !WIZARD_PROCESS_NAME! | findstr /I "node bun python setup" >nul 2>&1
-    if errorlevel 1 (
-      echo [DİKKAT] Bu süreç Node veya Bun gibi görünmüyor (!WIZARD_PROCESS_NAME!).
-      echo Bilmediğiniz veya sistem süreçlerini sonlandırmadan önce kontrol ediniz.
-    )
-  ) else (
-    echo Portu tutan süreç: PID !WIZARD_PID!
-  )
-  echo.
-  choice /C DK /N /M "Sihirbaz portu şimdi durdurulsun mu? [D=durdur ve devam / K=geç ve devam]: "
-  if not errorlevel 2 (
-    taskkill /PID !WIZARD_PID! /F >nul 2>&1
-    ping -n 2 127.0.0.1 >nul
-  )
-)
-
-echo.
-echo [TAMAM] Gerekli çalışma ortamı hazır.
-echo Web kurulum başlangıcı açılıyor...
-echo.
-set "SETUP_PROJECT_ROOT=%PROJECT_ROOT%"
-rem setup.mjs: proje algılama + setup.config.json otomatik oluşturma + başlatıcı
-!JS_RUNNER! "%SETUP_ROOT%bin\setup.mjs" --root "%PROJECT_ROOT%" %*
+:run_local
+"%JS_RUNNER%" "%SETUP_ENTRY%" %*
 set "SETUP_EXIT=%ERRORLEVEL%"
-if not "%SETUP_EXIT%"=="0" (
-  echo.
-  echo [HATA] Kurulum başlangıcı %SETUP_EXIT% koduyla kapandı.
-  pause
-)
-popd
+goto finish
+:directory_error
+echo [HATA] Proje dizinine girilemedi: "%PROJECT_ROOT%" 1>&2
+set "SETUP_EXIT=1"
+goto finish
+:runtime_error
+echo [HATA] Node.js 18 veya ustu ya da Bun gereklidir. 1>&2
+echo Node.js: https://nodejs.org/en/download - Bun: https://bun.sh 1>&2
+set "SETUP_EXIT=127"
+goto finish
+:entry_error
+echo [HATA] Yerel setup bulunamadi. tools\setup kopyasini yenileyin veya npx/bunx kurun. 1>&2
+set "SETUP_EXIT=127"
+:finish
+if "%SETUP_EXIT%"=="0" exit /b 0
+if not "%SETUP_NO_PAUSE%"=="1" pause
 exit /b %SETUP_EXIT%
-
-:requirements
-echo.
-echo ------------------------------------------------------------
-echo Kurulması veya düzeltilmesi gereken bileşenler var.
-echo Node.js LTS: https://nodejs.org/en/download
-echo Bun:         https://bun.sh
-echo ------------------------------------------------------------
-pause
-
-:failed
-echo.
-echo Kurulum başlatılmadı; mevcut dosya ve veriler değiştirilmedi.
-popd
-pause
-exit /b 1

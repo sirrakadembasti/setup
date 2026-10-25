@@ -782,7 +782,7 @@ test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişk
     JSON.stringify({
       name: "real-start-app",
       scripts: {
-        start: "node index.mjs",
+        start: 'node "index.mjs"',
       },
     }),
     "utf8",
@@ -794,7 +794,7 @@ test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişk
       "const port = Number(process.env.PORT || 5000);",
       "const server = http.createServer((req, res) => {",
       '  res.writeHead(200, { "Content-Type": "application/json" });',
-      "  res.end(JSON.stringify({ ok: true, port, adminEmail: process.env.ADMIN_EMAIL, db: process.env.DATABASE_URL }));",
+      "  res.end(JSON.stringify({ ok: true, pid: process.pid, port, adminEmail: process.env.ADMIN_EMAIL, db: process.env.DATABASE_URL }));",
       "});",
       'server.listen(port, "127.0.0.1");',
     ].join("\n"),
@@ -868,15 +868,20 @@ test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişk
     },
     body: "{}",
   });
-  assert.equal(startRes.status, 200);
+  assert.ok([200, 202].includes(startRes.status), `başlatma başarısız: ${startRes.status}`);
   const startBody = await startRes.json();
-  assert.equal(startBody.reachable, true);
   assert.equal(typeof startBody.pid, "number");
 
-  // Başlatılan uygulamaya gerçek HTTP isteği
-  const appRes = await fetch(`http://127.0.0.1:${appPort}/`);
+  // npm/cmd can outlast the API readiness window; verify the actual HTTP server.
+  let appRes;
+  for (let i = 0; i < 100; i++) {
+    try { appRes = await fetch(`http://127.0.0.1:${appPort}/`, { signal: AbortSignal.timeout(500) }); break; }
+    catch { await new Promise((resolve) => setTimeout(resolve, 100)); }
+  }
+  assert.ok(appRes, "başlatılan uygulamanın HTTP portu açılmalı");
   assert.equal(appRes.status, 200);
   const appData = await appRes.json();
+  t.after(() => { try { process.kill(appData.pid, "SIGKILL"); } catch {} });
   assert.equal(appData.ok, true);
   assert.equal(appData.port, appPort);
   assert.equal(appData.adminEmail, VALID_PAYLOAD.admin.email);
@@ -897,6 +902,13 @@ test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişk
   const startAgainBody = await startAgainRes.json();
   assert.equal(startAgainBody.reachable, true);
   assert.equal(startAgainBody.message, "Uygulama zaten çalışıyor.");
+  await server.stopSpawnedApp();
+  let leafAlive = true;
+  for (let i = 0; i < 30; i++) {
+    try { process.kill(appData.pid, 0); } catch { leafAlive = false; break; }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(leafAlive, false, "komut sarmalayıcısının altındaki uygulama da kapanmalı");
 });
 
 test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC + custom dataDir), readSetupRuntimeConfig ve verifyAdminCredentials", async (t) => {

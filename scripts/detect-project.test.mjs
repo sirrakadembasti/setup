@@ -676,7 +676,7 @@ test("bin/kurulum.sh package.json olmayan hedef projeyi (çağrıldığı dizin)
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.doesNotMatch(run.stdout, /package\.json bulunamad/);
   assert.match(run.stdout, /"kind": "python-server"/);
-  assert.equal(fs.existsSync(path.join(dir, "setup.config.json")), true);
+  assert.equal(fs.existsSync(path.join(dir, "setup.config.json")), false, "check-only yapılandırma oluşturmamalı");
 });
 
 test("PHP desteği kaldırıldı: composer.json/artisan artık PHP olarak algılanmaz", (t) => {

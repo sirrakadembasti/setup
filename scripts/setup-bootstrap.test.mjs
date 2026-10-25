@@ -200,9 +200,7 @@ test("kurulum betikleri sihirbaz portu olan SETUP_PORT'u ezmez", () => {
   const bat = fs.readFileSync(batPath, "utf8");
   const sh = fs.readFileSync(shPath, "utf8");
   assert.equal(/set\s+"SETUP_PORT=/.test(bat), false, "kurulum.bat SETUP_PORT atamamalı");
-  assert.match(bat, /CHECK_PORT=/);
   assert.equal(/SETUP_PORT=/.test(sh), false, "kurulum.sh SETUP_PORT atamamalı");
-  assert.match(sh, /CHECK_PORT=/);
 });
 
 test("stopPortProcess dinleyen süreci durdurur", async (t) => {
@@ -501,17 +499,4 @@ test("hibrit projeler: package.json + Python projesinde initProject ve checkDepe
   assert.ok(hasPythonStep, "Python adımı bulunmalı");
   assert.ok(hasNodeStep, "Node paket kurulum adımı bulunmalı");
 });
-
-test("kurulum.bat ve kurulum.sh: Node LTS uyumsuzken Bun varsa JS_RUNNER bun olarak güncellenir", () => {
-  const batPath = path.join(process.cwd(), "bin", "kurulum.bat");
-  const shPath = path.join(process.cwd(), "bin", "kurulum.sh");
-  const bat = fs.readFileSync(batPath, "utf8");
-  const sh = fs.readFileSync(shPath, "utf8");
-
-  assert.match(bat, /Sistemde Bun !BUN_VERSION! mevcut[\s\S]*?set\s+"JS_RUNNER=bun"/i);
-  assert.match(sh, /Sistemde Bun %s mevcut[\s\S]*?JS_RUNNER="bun"/i);
-});
-
-
-
 

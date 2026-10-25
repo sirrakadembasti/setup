@@ -364,6 +364,9 @@ export function createDesktopAppController({ projectRoot, setupConfig = null, ge
                 resolve();
               });
             });
+      if (process.platform === "win32" && pid && current.exitCode === null) {
+        spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      }
       try {
         current.kill();
       } catch {
@@ -482,16 +485,15 @@ export function createDualProcessController({
     frontendChild = null;
 
     for (const child of targets) {
+      if (process.platform === "win32" && child.pid && child.exitCode === null) {
+        spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+      }
       try {
         child.kill();
       } catch {}
       if (process.platform !== "win32" && child.pid) {
         try {
           process.kill(-child.pid, "SIGTERM");
-        } catch {}
-      } else if (process.platform === "win32" && child.pid) {
-        try {
-          spawnSync("taskkill", ["/pid", String(child.pid), "/f", "/t"]);
         } catch {}
       }
     }

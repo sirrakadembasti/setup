@@ -13,7 +13,7 @@
 
 - Varsayılan: `setup.config.json` + `kurulum.bat` / `kurulum.sh` yazılır; `package.json` değiştirilmez.
 - `--no-launchers`: başlatıcı üretilmez. `--update-package-json`: `package.json` içine `setup` (ve gömülü kurulumlarda `wizard`) script'i eklenir. `--force`: mevcut dosyaların üzerine yazar.
-- `--copy-tools` (`--offline` / `--tools`): `setup` çekirdek klasörünü hedef projenin içine `tools/setup` olarak kopyalar. Şirket/kurumsal ağlarda veya internet erişiminin kısıtlı olduğu ortamlarda `kurulum.bat`'ın GitHub'a hiç gitmeden %100 çevrimdışı çalışmasını sağlar.
+- `--copy-tools` (`--offline` / `--tools`): `setup` çekirdek klasörünü hedef projenin içine `tools/setup` olarak kopyalar. Başlatıcının setup çekirdeğini GitHub'dan indirmeden çalışmasını sağlar. Hedef projenin bağımlılıkları için internet veya hazır paket önbelleği gerekebilir.
 - `--root <yol>`: Hedef proje kökünü belirler. **Komut hedef projenin kendi dizininde çalıştırılıyorsa `--root .` yazılmasına gerek yoktur**, varsayılan olarak bulunulan dizin alınır. Yalnızca farklı bir dizinden çağrılıyorsa `--root /hedef/dizin` verilmelidir.
 - Yapılandırma zaten varsa `init` yalnız eksik başlatıcıları ekler; hiçbir şey yazılmadıysa çıkış kodu 1'dir.
 - `bin/kurulum.sh|bat` (eklentinin kendi ön kontrol betiği) çağrıldığı dizindeki projeyi kurar: `cd /proje && /yol/setup/bin/kurulum.sh`.
@@ -160,15 +160,27 @@ app.listen(port, "127.0.0.1", () => {
 
 ### Yöntem B: Kod Değiştirmeden CLI ile Kurulum ve Başlatma
 
-Uygulama koduna hiç dokunmadan kurulum başlatıcısını (port `5049`) ve sihirbazı (port `5050`) çalıştırabilirsiniz:
+Uygulama koduna hiç dokunmadan terminal kurulum başlatıcısını ve web sihirbazını (port `5050`) çalıştırabilirsiniz:
 
 ```bash
 # 1. Hedef repoya setup.config.json ve npm run setup betiğini ekleyin
-npx github:sirrakadembasti/setup init --root .
+npx github:sirrakadembasti/setup init --root . --update-package-json
 
 # 2. Kurulum başlatıcısını açın (bağımlılıkları kurar, ardından 5050 sihirbazına geçirir)
 npm run setup
 ```
+
+Başlatıcı tüm ön kontrolleri terminalde gösterir. Menüde `1` paketleri kurar/onarır, `2` mevcut web sihirbazını açar, `4` durumu yeniden denetler. Kurulu uygulamalarda `3` yeniden yapılandırır; mevcut/yarım kurulumlarda `5` doğrulanmış yedek alıp temiz kurulum hazırlar. Temizleme için yedek onayı ve `SETUP VERİLERİNİ SİL` metni gerekir; çalışan uygulama veya harici veritabanı otomatik temizlenmez.
+
+Tarayıcı yalnız sihirbaz hazır olduğunda açılır. `--no-open` bağlantıyı terminalde bırakır; `--port <1024-65535>` sihirbaz portunu belirler. `--check-only` salt okunur durum JSON çıktısı verir. Birden fazla bağımsız aday terminalde seçilir; `--candidate <dizin>` doğrudan hedefler. Port çakışmasında süreç bilgisi gösterilir ve yalnız açık onayla doğrulanmış Node/kurulum süreci durdurulur.
+
+Eski `ports.bootstrap` / `SETUP_BOOTSTRAP_PORT` alanları başlatıcı için kullanılmaz; 5049'da HTTP sunucusu açılmaz. `ports.wizard` / `SETUP_WIZARD_PORT` geçerliliğini korur. Terminali sihirbaz ve başlatılan uygulama çalışırken açık tutun.
+
+`setup`, doğrudan `scripts/setup-bootstrap.mjs`, `npm run setup -- ...` ve `wizard --check-only` ortak seçenek ayrıştırıcısını kullanır. Sihirbaz portu önceliği `--port` → `SETUP_WIZARD_PORT` → eski `SETUP_PORT` → `ports.wizard` → `5050` şeklindedir; izin verilen aralık 1024–65535'tir. Aday dizini, doğrudan `wizard` komutunda da kurulumun gerçek kökü olarak kullanılır.
+
+Önceden entegre edilmiş bir projeyi güncellemek için güncel setup kaynağından `node /guncel/setup/bin/setup.mjs init --root /hedef/proje --copy-tools --refresh-launchers` çalıştırın. Yapılandırma korunur; değiştirilen başlatıcılar `.bak` olarak yedeklenir. Aynı yerel kopya kendi üzerine kopyalanmaz ve güncel başlatıcıları yenileme işlemi tekrar çalıştırılabilir.
+
+Terminal kurulumu ve `scripts/run-steps.mjs`, aynı komut/süreç çalıştırıcısını kullanır. Her adımda `cwd`, `skipIfExists`, paket yöneticisi fallback ve `--prefix` dizinleri aynı biçimde değerlendirilir; canlı çıktı, zaman aşımı ve iptal birlikte yönetilir. Varsayılan iş zaman aşımı 15 dakikadır (`SETUP_JOB_TIMEOUT_MS`); bağımsız çalıştırıcı başarısız adımın çıkış kodunu korur, zaman aşımında `124`, geçersiz adım tanımında `2` ile çıkar.
 
 ---
 
@@ -459,7 +471,7 @@ npx github:sirrakadembasti/setup wizard --root . --port 5050
 
 #### Dil Profilleri (Python / Go / C# .NET / Rust)
 
-`setup init` ve kurulum başlatıcısı (5049) aşağıdaki profilleri kullanır. Kurulum adımları sırayla çalışır (`scripts/run-steps.mjs`); son adım gerçek bir **doğrulamadır** ve başarısız olursa kurulum "başarılı" sayılmaz. Gerekli araç (`python`, `go`, `dotnet`, `cargo`) kurulu değilse indirme bağlantısıyla birlikte okunur bir hata verilir.
+`setup init` ve terminal kurulum başlatıcısı aşağıdaki profilleri kullanır. Kurulum adımları terminal başlatıcısında sırayla çalışır; son adım gerçek bir **doğrulamadır** ve başarısız olursa kurulum "başarılı" sayılmaz. Gerekli araç (`python`, `go`, `dotnet`, `cargo`) kurulu değilse indirme bağlantısıyla birlikte okunur bir hata verilir.
 
 | Dil | Algılama | Kurulum adımları | Başlatma |
 | --- | --- | --- | --- |
@@ -548,7 +560,7 @@ Go projesi (`go.mod`):
   "name": "ornek-go-servisi",
   "version": "1.0.0",
   "packageManager": "npm",
-  "ports": { "bootstrap": 5049, "wizard": 5050, "app": 8080 },
+  "ports": { "wizard": 5050, "app": 8080 },
   "install": { "command": "go", "args": ["mod", "download"], "requireWorkspaces": false },
   "start": { "command": "go", "args": ["run", "."] },
   "wizard": { "enabled": true, "title": "ornek-go-servisi Kurulum Sihirbazı" },
@@ -562,7 +574,7 @@ C# .NET projesi (`*.csproj`):
   "name": "OrnekDotnetApi",
   "version": "1.0.0",
   "packageManager": "npm",
-  "ports": { "bootstrap": 5049, "wizard": 5050, "app": 5000 },
+  "ports": { "wizard": 5050, "app": 5000 },
   "install": { "command": "dotnet", "args": ["restore"], "requireWorkspaces": false },
   "start": { "command": "dotnet", "args": ["run", "--urls", "http://127.0.0.1:5000"] },
   "wizard": { "enabled": true, "title": "OrnekDotnetApi Kurulum Sihirbazı" },
@@ -746,7 +758,6 @@ Hedef reponun kök dizinindeki `setup.config.json` üzerinden portları, kurulum
   "version": "1.0.0",
   "packageManager": "npm",
   "ports": {
-    "bootstrap": 5049,
     "wizard": 5050,
     "app": 5000
   },
@@ -781,8 +792,8 @@ Hedef reponun kök dizinindeki `setup.config.json` üzerinden portları, kurulum
 
 ## 4. Güvenlik Standartları
 
-- **Yerel Dinleme:** Kurulum sunucuları (`5049` ve `5050`) yalnızca `127.0.0.1` arayüzünü dinler; uzak sunucularda SSH tüneli (`ssh -L 5049:127.0.0.1:5049 -L 5050:127.0.0.1:5050 user@sunucu`) ile güvenle erişilir.
-- **Kriptografik Oturum, CSRF ve Beyaz Liste CORS:** Her oturumda 24 baytlık tek kullanımlık token üretilir, `HttpOnly` + `SameSite=Strict` çerezleri (`setup.bootstrap`, `setup.wizard`) ve `crypto.timingSafeEqual` doğrulaması kullanılır. Yalnızca `SETUP_ALLOWED_ORIGINS` ile açıkça izin verilen masaüstü/SPA kökenlerine CORS yanıtı dönülür.
+- **Yerel Dinleme:** Web kurulum sihirbazı (`5050`) yalnızca `127.0.0.1` arayüzünü dinler; uzak sunucularda SSH tüneli (`ssh -L 5050:127.0.0.1:5050 user@sunucu`) ile güvenle erişilir.
+- **Kriptografik Oturum, CSRF ve Beyaz Liste CORS:** Her oturumda 24 baytlık tek kullanımlık token üretilir, `HttpOnly` + `SameSite=Strict` çerezleri (`setup.wizard`) ve `crypto.timingSafeEqual` doğrulaması kullanılır. Yalnızca `SETUP_ALLOWED_ORIGINS` ile açıkça izin verilen masaüstü/SPA kökenlerine CORS yanıtı dönülür.
 - **Origin ve Referer Doğrulama Tutarlılığı:** `wizard/server.mjs` ve `wizard/core.mjs` üzerindeki tüm mutasyon uçları (`POST`, `PUT`, `DELETE`), tarayıcıdan gelen `Origin` veya `Referer` başlığının `allowedOrigins` veya sunucu `Host` başlığı ile tam eşleştiğini doğrular; Origin bilgisi içermeyen web tabanlı mutasyon istekleri reddedilir.
 - **Süreç Durdurma Güvenlik Kilidi:** `stopPortProcess` port çakışmalarını çözerken hedef sürecin `node`, `npm`, `pnpm`, `yarn`, `bun`, `setup` veya `wizard` süreci olduğunu açıkça doğrular; süreç tanımlayıcısı okunamayan bilinmeyen sistem veya veritabanı servisleri otomatik sonlandırılmaz.
 - **Bellek Sızıntısız İstek Sınırlama (Rate Limiting):** `createRateLimiter` altyapısı, IP bazlı sayaçları TTL süresi dolduğunda otomatik temizler (`prune`) ve maksimum anahtar kotası (`maxBuckets: 1000`) uygulayarak uzun süre açık kalan sunucularda bellek sızıntısını önler.
@@ -872,7 +883,7 @@ const isValid = verifyAdminCredentials("/path/to/repo", "admin@ornek.com", "Paro
 
 ```bash
 # Komutlar:
-node bin/setup.mjs          # Kurulum başlatıcı arayüzünü açar (port 5049)
+node bin/setup.mjs          # Terminal menüsünde tanılama ve paket kurulumu, ardından web sihirbazı
 node bin/setup.mjs wizard   # Doğrudan kurulum sihirbazını açar (port 5050)
 node bin/setup.mjs init     # Hedef repoya yapılandırma ve başlatıcıları ekler
 node bin/setup.mjs detect   # Proje analizini yapar ve JSON planı çıktılar
@@ -882,10 +893,11 @@ node bin/setup.mjs help     # Yardım kılavuzunu gösterir
 # Seçenekler / Bayraklar:
 --root <yol>             # Hedef uygulama kök dizini (varsayılan: aktif dizin)
 --candidate <yol>        # Çok parçalı repolarda hedef alt projeyi seçer (örn: apps/web, srv/)
---port <numara>          # Sihirbaz veya başlatıcı portunu özelleştirir
+--port <numara>          # Web sihirbazı portunu özelleştirir (1024–65535)
 --data-dir <yol>         # Kurulum verileri ve .env için harici dizin belirler
 --force, -f              # init sırasında mevcut yapılandırma ve başlatıcıların üzerine yazar
 --copy-tools             # init sırasında setup çekirdeğini tools/setup içine kopyalar (--tools, --offline)
+--refresh-launchers      # init sırasında başlatıcıları yedekleyip yeniler; mevcut setup.config.json korunur
 --no-launchers           # init sırasında kurulum.bat / kurulum.sh üretmez
 --update-package-json    # init sırasında package.json içine "setup" script'i ekler
 --no-open                # Tarayıcıyı otomatik olarak açmaz
@@ -913,7 +925,10 @@ setup/
 │   ├── detect-project.mjs    # Otomatik mimari, kaynak doğrulama, paket yöneticisi ve .env tespiti
 │   ├── polyglot.mjs          # Python/Go/C#/Rust kurulum, doğrulama ve başlatma profilleri
 │   ├── run-steps.mjs         # Çok adımlı polyglot kurulum çalıştırıcısı
-│   ├── setup-bootstrap.mjs   # 5049 Web Kurulum Başlatıcısı sunucusu
+│   ├── process-runner.mjs    # Ortak komut çözümleme, günlük, zaman aşımı ve süreç temizliği
+│   ├── cli-options.mjs       # Ortak CLI seçenekleri ve güvenli aday proje seçimi
+│   ├── setup-bootstrap.mjs   # Terminal başlatıcı giriş noktası
+│   ├── terminal-bootstrap.mjs # Terminal menüsü ve kurulum işlemleri
 │   ├── setup-bootstrap-lib.mjs # Ön kontrol, port çakışması ve yedekleme mantığı
 │   ├── find-port-holder.mjs  # 4 katmanlı port dinleyici PID tespit modülü
 │   ├── version.mjs           # SemVer sürüm yönetimi ve Git etiketleme
@@ -944,10 +959,10 @@ setup/
 
 1. **Dizin İzni ve Port Meşguliyeti Ön Denetimleri:**
    - Kurulum başlamadan önce hedef kök dizininin ve harici veri dizininin yazılabilirliği (`fs.constants.W_OK`) doğrulanır. Salt okunur ortamlarda kullanıcıya net Türkçe izin uyarısı verilir.
-   - 5049 (başlatıcı) ve 5050 (sihirbaz) portları meşgulse çakışan sürecin adı ve PID'si gösterilerek `--port <yeni-port>` alternatifi sunulur.
+   - 5050 (sihirbaz) portu meşgulse çakışan sürecin adı ve PID'si gösterilerek `--port <yeni-port>` alternatifi sunulur.
 2. **Sinyal Yakalama (Graceful Teardown):**
    - Terminalde `Ctrl+C` veya `SIGTERM` tetiklendiğinde başlatılmış olan alt çocuk süreçler yetim/zombi kalmadan temiz şekilde kapatılır.
-3. **Bağımlılık Kurulumunda Canlı Hata Detayı (`job.errorDetail`) ve Zaman Aşımı:**
+3. **Bağımlılık Kurulumunda Canlı Terminal Çıktısı ve Hata Detayı ve Zaman Aşımı:**
    - Paket kurulumu (`npm install`, `cmake`, `pip` vb.) başarısız olduğunda konsol günlüğünün son 15 satırı doğrudan `/api/status` yanıtında sunulur.
    - 15 dakikayı aşan veya askıda kalan kurulum işleri `SETUP_JOB_TIMEOUT_MS` zaman aşımıyla kontrollü sonlandırılır.
 4. **Çok Dilli Araç Zinciri Ön Doğrulaması:**
@@ -967,7 +982,7 @@ setup/
 
 10. **Standart Dışı & Dağınık Repolar İçin Derin Tarama ve Çift Süreç Orkestrasyonu:**
     - Kök dizinde proje dosyası yokken maksimum 3 derinlik seviyesine kadar alt klasörler taranır (`findProjectCandidates`).
-    - Kök dizinde `package.json` bulunmayan çok parçalı yapılarda (`subprojects`), başlatıcı motoru (`setup-bootstrap.mjs`) ve `initProject` alt projeleri (`backend/`, `frontend/`, `srv/`, `ui/`) otomatik tespit edip `--prefix <alt-dizin> install` adımlarıyla kurar; Port 5049 kök `ENOENT` hatası önlenir.
+    - Kök dizinde `package.json` bulunmayan çok parçalı yapılarda (`subprojects`), başlatıcı motoru (`setup-bootstrap.mjs`) ve `initProject` alt projeleri (`backend/`, `frontend/`, `srv/`, `ui/`) otomatik tespit edip `--prefix <alt-dizin> install` adımlarıyla kurar; Kök `ENOENT` hatası önlenir.
     - Bağımlılık denetleyicisi (`checkDependencies`), `setup.config.json` içerisindeki adımları ve dinamik alt klasörlerdeki `node_modules` dizinlerini doğru şekilde doğrular.
     - Dağınık `.env.example` dosyaları havuzda birleştirilir (`findScatteredEnvExamples`) ve alt projelere (`srv/.env`, `ui/.env`) dağıtılır.
     - Çok parçalı Fullstack yapılarda Backend ana porta, Frontend ikincil porta (`devPort`) bağlanır (`createDualProcessController`), `API_URL` ortam değişkenleri otomatik enjekte edilir ve süreçlerden biri çöktüğünde diğeri kademeli olarak sonlandırılır.
@@ -989,8 +1004,8 @@ node scripts/version.mjs bump patch --tag
 Sıfır bağımlılıklı yerleşik Node test çalıştırıcısı ile tüm birim, senaryo, dayanıklılık, derin keşif ve E2E testleri:
 
 ```bash
-# Node ile (Tüm 135 test):
-node --test scripts/detect-project.test.mjs scripts/setup-bootstrap.test.mjs scripts/wizard.test.mjs scripts/find-port-holder.test.mjs scripts/deep-discovery.test.mjs
+# Node ile tüm regresyon paketi:
+npm test
 
 # veya Bun ile:
 bun test

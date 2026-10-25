@@ -571,8 +571,8 @@ export function resetInstallation(projectRoot, options = {}) {
   return { ...backup, state: inspectInstallationState(projectRoot, options) };
 }
 
-export function readConfiguredPort(projectRoot) {
-  const paths = getSetupPaths(projectRoot);
+export function readConfiguredPort(projectRoot, options = {}) {
+  const paths = getSetupPaths(projectRoot, options);
   for (const candidate of [paths.env, paths.rootEnv]) {
     if (!fs.existsSync(candidate)) continue;
     const match = fs.readFileSync(candidate, "utf8").match(/^\s*PORT\s*=\s*["']?(\d+)["']?\s*$/m);

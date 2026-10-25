@@ -347,9 +347,9 @@ test("Çift Süreç (Dual Process Runner): Süreçler eşzamanlı başlar ve Kad
   assert.equal(initialStatus.backend.port, 5600);
   assert.equal(initialStatus.frontend.port, 5601);
 
-  // Backend'in çıkmasını ve cascading termination'ın frontend'i kapatmasını bekle (en fazla 3000ms)
+  // Include process startup time on busy hosts, then require both processes to terminate.
   const startWait = Date.now();
-  while (Date.now() - startWait < 3000) {
+  while (Date.now() - startWait < 10000) {
     const sub = controller.getSubprocesses();
     if (!sub.backend.alive && !sub.frontend.alive) break;
     await new Promise((r) => setTimeout(r, 100));
