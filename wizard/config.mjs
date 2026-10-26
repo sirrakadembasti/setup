@@ -121,6 +121,12 @@ export function parseSetupPayload(raw, options = {}) {
   if (!Number.isInteger(port) || port < 1024 || port > 65535) {
     issues.push({ code: "invalid_port", message: "Sunucu portu 1024-65535 aralığında olmalıdır.", path: ["server", "port"] });
   }
+  const frontendPort = raw.server?.frontendPort !== undefined && raw.server?.frontendPort !== null && raw.server?.frontendPort !== ""
+    ? Number(raw.server.frontendPort)
+    : undefined;
+  if (frontendPort !== undefined && (!Number.isInteger(frontendPort) || frontendPort < 1024 || frontendPort > 65535)) {
+    issues.push({ code: "invalid_port", message: "Frontend portu 1024-65535 aralığında olmalıdır.", path: ["server", "frontendPort"] });
+  }
 
   const rawAdminName = String(raw.admin?.name ?? "").trim();
   const rawAdminEmail = String(raw.admin?.email ?? "").trim();
@@ -334,7 +340,7 @@ export function parseSetupPayload(raw, options = {}) {
 
   return {
     deployment,
-    server: { host, port },
+    server: { host, port, ...(frontendPort ? { frontendPort } : {}) },
     admin,
     email,
     database,
@@ -461,11 +467,30 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     put("PORT", String(payload.server.port));
   }
 
+  if (payload.server?.frontendPort) {
+    if (declared.has("FRONTEND_PORT")) put("FRONTEND_PORT", String(payload.server.frontendPort));
+    if (declared.has("DEV_PORT")) put("DEV_PORT", String(payload.server.frontendPort));
+    if (declared.has("VITE_PORT")) put("VITE_PORT", String(payload.server.frontendPort));
+    if (declared.has("NUXT_PORT")) put("NUXT_PORT", String(payload.server.frontendPort));
+  }
+
   if (payload.admin && payload.admin.email) {
     const passwordHash = payload.admin.passwordHash || hashAdminPassword(payload.admin.password);
     put("ADMIN_NAME", envValue(payload.admin.name));
     put("ADMIN_EMAIL", envValue(payload.admin.email));
     put("ADMIN_PASSWORD_HASH", envValue(passwordHash));
+    if (declared.has("SEED_ADMIN_EMAIL")) {
+      put("SEED_ADMIN_EMAIL", envValue(payload.admin.email));
+    }
+    if (declared.has("SEED_ADMIN_PASSWORD") && payload.admin.password) {
+      put("SEED_ADMIN_PASSWORD", envValue(payload.admin.password));
+    }
+    if (declared.has("SEED_ADMIN_NAME")) {
+      put("SEED_ADMIN_NAME", envValue(payload.admin.name));
+    }
+    if (declared.has("ADMIN_PASSWORD") && payload.admin.password) {
+      put("ADMIN_PASSWORD", envValue(payload.admin.password));
+    }
   }
 
   if (needsServerCore && (payload.email?.enabled || declaredAny("EMAIL_"))) {

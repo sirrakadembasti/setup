@@ -56,8 +56,12 @@ export function renderSetupPage(csrfToken, options = {}) {
       <input name="basePath" id="basePath" value="/" required>
     </div>
     <div>
-      <div class="lbl-row"><label for="port">Uygulama portu</label><span class="help" tabindex="0" data-tip="Node sunucusunun dinleyeceği TCP portu. Üretimde genelde 5000 bırakılır; Nginx bunun önüne geçer.">?</span></div>
+      <div class="lbl-row"><label for="port" id="lblPort">Uygulama portu</label><span class="help" tabindex="0" data-tip="Node sunucusunun dinleyeceği TCP portu. Üretimde genelde 5000 bırakılır; Nginx bunun önüne geçer.">?</span></div>
       <input name="port" id="port" type="number" min="1024" max="65535" value="5000" required>
+    </div>
+    <div id="frontendPortGroup" class="hidden">
+      <div class="lbl-row"><label for="frontendPort">Frontend (Arayüz) Portu</label><span class="help" tabindex="0" data-tip="Frontend arayüz veya Vite/Nuxt sunucusunun dinleyeceği TCP portu.">?</span></div>
+      <input name="frontendPort" id="frontendPort" type="number" min="1024" max="65535" value="3000">
     </div>
     <div class="full">
       <div class="lbl-row"><label for="origins">İzinli origin adresleri</label><span class="help" tabindex="0" data-tip="CORS / CSRF için virgülle ayrılmış tam adresler. Tarayıcıdan hangi kaynaktan istek atılabileceğini sınırlar. Yerelde http://localhost:5000 ve http://127.0.0.1:5000 yazın.">?</span></div>
@@ -613,7 +617,7 @@ async function loadStatus(){
     }
     if(s&&s.detected&&s.detected.defaultPort){
       setVal('port',s.detected.defaultPort);
-      applyModeDefaults();
+      applyModeDefaults();const isDual=Boolean((s&&s.detected&&s.detected.subprojects&&s.detected.subprojects.backend&&s.detected.subprojects.frontend)||(s&&s.detected&&s.detected.routes&&s.detected.routes.devPort)||(s&&s.detected&&s.detected.scenario&&s.detected.scenario.number===3));if(isDual){const fGroup=document.getElementById('frontendPortGroup');if(fGroup)fGroup.classList.remove('hidden');const lblPort=document.getElementById('lblPort');if(lblPort)lblPort.textContent='Backend (API) Portu';const devPortVal=(s&&s.detected&&s.detected.routes&&s.detected.routes.devPort)||(Number(s&&s.detected&&s.detected.defaultPort||5000)+1);setVal('frontendPort',devPortVal);}
     }
     const CORE_ENV_KEYS=new Set(['PORT','HOST','NODE_ENV','DATABASE_URL','SESSION_SECRET','ADMIN_NAME','ADMIN_EMAIL','ADMIN_PASSWORD','ADMIN_PASSWORD_HASH','EMAIL_ENABLED','EMAIL_HOST','EMAIL_PORT','EMAIL_USER','EMAIL_PASS','EMAIL_PASSWORD','EMAIL_FROM','EMAIL_FROM_EMAIL','EMAIL_FROM_NAME','EMAIL_SECURE','EMAIL_CONNECTION_TIMEOUT','EMAIL_GREETING_TIMEOUT','EMAIL_SOCKET_TIMEOUT','RETENTION_ENABLED','RETENTION_ACTION_DAYS','RETENTION_ACTION_LOG_DAYS','RETENTION_NOTIFICATION_DAYS','RETENTION_READ_NOTIFICATION_DAYS','RETENTION_EMAIL_DAYS','RETENTION_EMAIL_LOG_DAYS','RETENTION_PASSWORD_DAYS','RETENTION_PASSWORD_RESET_DAYS','FRONTEND_URL','APP_BASE_PATH','ALLOWED_ORIGINS','TRUST_PROXY_HOPS','ALLOW_RUNTIME_DEPLOYMENT_CHANGES']);
     const envVars=(s&&s.detected&&Array.isArray(s.detected.envVariables))?s.detected.envVariables.filter(v=>v&&v.key&&!CORE_ENV_KEYS.has(v.key)):[];
@@ -837,7 +841,7 @@ wizard.onsubmit=async e=>{
       url:String(f.get('dbUrl')||'').trim(),
     };
   }
-  const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy')),retention:{enabled:f.has('retention'),actionLogDays:Number(f.get('actionDays')),readNotificationDays:Number(f.get('notificationDays')),emailLogDays:Number(f.get('emailDays')),passwordResetDays:Number(f.get('passwordDays'))}},server:{host:f.get('host'),port:Number(f.get('port'))},admin:isOptionalEmptyAdmin?{name:'',email:'',password:''}:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:emailPayload,database:dbPayload,customEnv,buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
+  const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy')),retention:{enabled:f.has('retention'),actionLogDays:Number(f.get('actionDays')),readNotificationDays:Number(f.get('notificationDays')),emailLogDays:Number(f.get('emailDays')),passwordResetDays:Number(f.get('passwordDays'))}},server:{host:f.get('host'),port:Number(f.get('port')),...(f.get('frontendPort')?{frontendPort:Number(f.get('frontendPort'))}:{})},admin:isOptionalEmptyAdmin?{name:'',email:'',password:''}:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:emailPayload,database:dbPayload,customEnv,buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
   try{
     const start=await fetchJson(API+'/apply',{method:'POST',headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},body:JSON.stringify(payload)});
     const startData=start.data||{};

@@ -54,6 +54,9 @@ const cmdAvailabilityCache = new Map();
  */
 export function isCommandAvailable(cmd) {
   if (!cmd || typeof cmd !== "string") return false;
+  if (cmd === "npm" && process.env.npm_execpath && /npm(?:-cli)?(?:\.c?js)?$/i.test(process.env.npm_execpath) && fs.existsSync(process.env.npm_execpath)) {
+    return true;
+  }
   if (cmdAvailabilityCache.has(cmd)) return cmdAvailabilityCache.get(cmd);
   try {
     const isWin = process.platform === "win32";
@@ -574,11 +577,15 @@ export function resetInstallation(projectRoot, options = {}) {
 export function readConfiguredPort(projectRoot, options = {}) {
   const paths = getSetupPaths(projectRoot, options);
   for (const candidate of [paths.env, paths.rootEnv]) {
-    if (!fs.existsSync(candidate)) continue;
-    const match = fs.readFileSync(candidate, "utf8").match(/^\s*PORT\s*=\s*["']?(\d+)["']?\s*$/m);
-    if (match?.[1]) {
-      const port = Number(match[1]);
-      if (Number.isInteger(port) && port >= 1 && port <= 65535) return port;
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      const match = fs.readFileSync(candidate, "utf8").match(/^\s*PORT\s*=\s*["']?(\d+)["']?\s*$/m);
+      if (match?.[1]) {
+        const port = Number(match[1]);
+        if (Number.isInteger(port) && port >= 1 && port <= 65535) return port;
+      }
+    } catch {
+      // Windows EBUSY toleransı
     }
   }
   return 5000;

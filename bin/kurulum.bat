@@ -39,12 +39,14 @@ if "%JS_RUNNER%"=="bun" goto remote_bun
 where npx >nul 2>&1
 if errorlevel 1 goto remote_bun
 npx --yes github:sirrakadembasti/setup %*
-exit /b %ERRORLEVEL%
+set "SETUP_EXIT=%ERRORLEVEL%"
+goto finish
 :remote_bun
 where bunx >nul 2>&1
 if errorlevel 1 goto entry_error
 bunx github:sirrakadembasti/setup %*
-exit /b %ERRORLEVEL%
+set "SETUP_EXIT=%ERRORLEVEL%"
+goto finish
 
 :run_local
 "%JS_RUNNER%" "%SETUP_ENTRY%" %*

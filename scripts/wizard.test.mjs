@@ -2910,4 +2910,144 @@ test("Bulgu 4.4: checkRateLimit / createRateLimiter süresi dolan kayıtları te
 });
 
 
+test("Bulgu 5.1: buildServerEnv SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD ve SEED_ADMIN_NAME değişkenlerini otomatik doldurur", () => {
+  const payload = {
+    ...VALID_PAYLOAD,
+    admin: {
+      name: "Ahmet Admin",
+      email: "ahmet@example.com",
+      password: "Guclu_Parola_2026!",
+    },
+  };
+  const extraVars = [
+    { key: "DATABASE_URL" },
+    { key: "SEED_ADMIN_EMAIL" },
+    { key: "SEED_ADMIN_PASSWORD" },
+    { key: "SEED_ADMIN_NAME" },
+    { key: "ADMIN_PASSWORD" },
+  ];
+  const envOutput = buildServerEnv(payload, "secret1234567890123456", "sqlite:test.db", extraVars, {
+    kind: "server",
+    requiresAdmin: true,
+    isStaticOnly: false,
+  });
+  assert.match(envOutput, /ADMIN_EMAIL="ahmet@example.com"/);
+  assert.match(envOutput, /ADMIN_NAME="Ahmet Admin"/);
+  assert.match(envOutput, /SEED_ADMIN_EMAIL="ahmet@example.com"/);
+  assert.match(envOutput, /SEED_ADMIN_PASSWORD="Guclu_Parola_2026!"/);
+  assert.match(envOutput, /SEED_ADMIN_NAME="Ahmet Admin"/);
+  assert.match(envOutput, /ADMIN_PASSWORD="Guclu_Parola_2026!"/);
+});
+
+test("Bulgu 5.2: setupPayloadSchema ve buildServerEnv frontendPort desteği sunar", () => {
+  const rawPayload = {
+    ...VALID_PAYLOAD,
+    server: {
+      host: "127.0.0.1",
+      port: 3001,
+      frontendPort: 3000,
+    },
+  };
+  const parsed = setupPayloadSchema.parse(rawPayload);
+  assert.equal(parsed.server.port, 3001);
+  assert.equal(parsed.server.frontendPort, 3000);
+
+  const extraVars = [
+    { key: "PORT" },
+    { key: "FRONTEND_PORT" },
+    { key: "DEV_PORT" },
+    { key: "VITE_PORT" },
+    { key: "NUXT_PORT" },
+  ];
+  const envOutput = buildServerEnv(parsed, "secret1234567890123456", "sqlite:test.db", extraVars, {
+    kind: "server",
+    requiresAdmin: false,
+    isStaticOnly: false,
+  });
+  assert.match(envOutput, /PORT=3001/);
+  assert.match(envOutput, /FRONTEND_PORT=3000/);
+  assert.match(envOutput, /DEV_PORT=3000/);
+  assert.match(envOutput, /VITE_PORT=3000/);
+  assert.match(envOutput, /NUXT_PORT=3000/);
+});
+
+test("Bulgu 5.3: executeSetupApply build, migrate ve seed adımlarına tam ortam değişkenlerini ve sahnelenen .env dosyasını aktarır", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-env-prop-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "migrate.mjs"),
+    'import fs from "node:fs";\n' +
+    'if (!process.env.CUSTOM_JWT_SECRET) throw new Error("Missing CUSTOM_JWT_SECRET in env");\n' +
+    'if (!fs.existsSync(".env")) throw new Error("Missing .env on disk");\n' +
+    'fs.writeFileSync("migration.success", "ok");\n'
+  );
+
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({
+      name: "prop-test",
+      version: "1.0.0",
+      type: "module",
+      scripts: {
+        "db:migrate": "node migrate.mjs",
+      },
+    }),
+  );
+  fs.writeFileSync(path.join(tmpRoot, ".env.example"), "CUSTOM_JWT_SECRET=\nDATABASE_URL=\n");
+
+  const validToken = "valid-setup-token-at-least-24-characters-long";
+  const server = createSetupServer(validToken, { projectRoot: tmpRoot, dataDir: tmpRoot });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${validToken}`, { redirect: "manual" });
+  const cookiePair = loginRes.headers.get("set-cookie").split(";")[0];
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const pageHtml = await pageRes.text();
+  const csrf = JSON.parse(pageHtml.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+
+  const applyPayload = {
+    deployment: {
+      mode: "localhost",
+      publicUrl: `http://localhost:${port}/`,
+      basePath: "/",
+      allowedOrigins: [`http://localhost:${port}`],
+      trustProxyHops: 0,
+    },
+    server: { host: "127.0.0.1", port },
+    admin: { name: "Admin", email: "admin@test.com", password: "Guclu_Parola_2026!" },
+    email: { enabled: false },
+    customEnv: {
+      CUSTOM_JWT_SECRET: "my-ultra-secure-jwt-secret-key-12345",
+    },
+    buildClient: false,
+    overwriteExistingEnv: false,
+  };
+
+  const applyRes = await fetch(`${baseUrl}/api/apply`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(applyPayload),
+  });
+  const applyJson = await applyRes.json();
+  assert.equal(applyRes.status, 202, JSON.stringify(applyJson));
+
+  let statusAfter;
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
+    statusAfter = await sRes.json();
+    if (statusAfter.apply.status === "success" || statusAfter.apply.status === "error") break;
+  }
+  assert.equal(statusAfter.apply.status, "success", statusAfter.apply.message);
+  assert.ok(fs.existsSync(path.join(tmpRoot, "migration.success")), "Migration betiği ortam değişkenlerini ve .env dosyasını doğrulayarak başarıyla çalışmalı");
+});
 

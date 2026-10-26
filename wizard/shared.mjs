@@ -10,7 +10,7 @@ import { getSetupPaths, isCommandAvailable } from "../scripts/setup-bootstrap-li
 import { buildLoginUrl, detectPackageManager, parseEnvExample } from "../scripts/detect-project.mjs";
 import { resolvePolyglotMigration } from "../scripts/polyglot.mjs";
 import { buildDatabaseUrl, buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
-import { normalizeProcessEnv, pmRunInvocation, readJsonFileSafe, resolveEffectivePackageManager } from "./app-process.mjs";
+import { normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveEffectivePackageManager } from "./app-process.mjs";
 
 export { normalizeProcessEnv };
 
@@ -756,6 +756,7 @@ export async function executeSetupApply({
   );
   const temporaryEnv = `${envPath}.setup-${process.pid}`;
   let createdBackupFile = null;
+  const extraEnvDirs = [];
   const summary = [];
   const appUrl = publicAppUrl(payload);
   applyJob.publicUrl = appUrl;
@@ -764,12 +765,46 @@ export async function executeSetupApply({
   applyJob.loginPath = loginPath;
   applyJob.loginUrl = buildLoginUrl(appUrl, loginPath);
   applyJob.appPort = payload.server.port;
+  applyJob.frontendPort = payload.server?.frontendPort || detection?.routes?.devPort || (payload.server.port + 1);
   applyJob.mode = payload.deployment.mode;
   applyJob.isDesktop = Boolean(detection.scenario.isDesktop);
 
   try {
     markStep("prepare", "running");
     fs.writeFileSync(temporaryEnv, envText, { encoding: "utf8", mode: 0o600 });
+    const runtimeEnv = { ...parseDotEnvFile(temporaryEnv), DATABASE_URL: effectiveDatabaseUrl };
+
+    if (fs.existsSync(envPath)) {
+      const backupRoot = path.join(serverRoot, "backups");
+      fs.mkdirSync(backupRoot, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      createdBackupFile = path.join(backupRoot, `.env-${stamp}.bak`);
+      fs.copyFileSync(envPath, createdBackupFile);
+      summary.push("Eski .env dosyası backups altında yedeklendi.");
+    }
+    fs.copyFileSync(temporaryEnv, envPath);
+    try { fs.chmodSync(envPath, 0o600); } catch {}
+
+    if (detection?.candidateRoot) {
+      extraEnvDirs.push(path.join(projectRoot, detection.candidateRoot));
+    }
+    if (detection?.subprojects?.backend?.dir) {
+      extraEnvDirs.push(path.join(projectRoot, detection.subprojects.backend.dir));
+    }
+    if (detection?.subprojects?.frontend?.dir) {
+      extraEnvDirs.push(path.join(projectRoot, detection.subprojects.frontend.dir));
+    }
+    for (const subDir of extraEnvDirs) {
+      try {
+        if (fs.existsSync(subDir)) {
+          const targetSubEnv = path.join(subDir, ".env");
+          if (path.resolve(targetSubEnv) !== path.resolve(envPath)) {
+            fs.copyFileSync(envPath, targetSubEnv);
+            try { fs.chmodSync(targetSubEnv, 0o600); } catch {}
+          }
+        }
+      } catch {}
+    }
     markStep("prepare", "done", "Geçici ortam dosyası hazırlandı.");
 
     const rootPkg = readJsonFileSafe(path.join(projectRoot, "package.json"));
@@ -791,13 +826,13 @@ export async function executeSetupApply({
       if (serverPkg?.scripts?.build) {
         markStep("buildServer", "running");
         const inv = pmRunInvocation(pm, "build", path.join(projectRoot, "server"));
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, runtimeEnv, appendLog);
         markStep("buildServer", "done", "server build");
         summary.push("Sunucu derlemesi tamamlandı.");
       } else if (!serverPkg && !clientPkg && rootPkg?.scripts?.build) {
         markStep("buildServer", "running");
         const inv = pmRunInvocation(pm, "build", projectRoot);
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, runtimeEnv, appendLog);
         markStep("buildServer", "done", "root build");
         summary.push("Proje derlemesi tamamlandı.");
       } else if (Array.isArray(detection?.workspaces?.packageDirs)) {
@@ -809,7 +844,7 @@ export async function executeSetupApply({
         if (serverPackageDir) {
           markStep("buildServer", "running");
           const inv = pmRunInvocation(pm, "build", path.join(projectRoot, serverPackageDir));
-          await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot, runtimeEnv, appendLog);
           markStep("buildServer", "done", `${serverPackageDir} build`);
           summary.push("Sunucu derlemesi tamamlandı.");
         } else {
@@ -846,13 +881,13 @@ export async function executeSetupApply({
       if (clientPkg?.scripts?.build) {
         markStep("buildClient", "running");
         const inv = pmRunInvocation(pm, "build", path.join(projectRoot, "client"));
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, runtimeEnv, appendLog);
         markStep("buildClient", "done", "client build");
         summary.push("İstemci derlemesi tamamlandı.");
       } else if (rootPkg?.scripts?.["build:client"]) {
         markStep("buildClient", "running");
         const inv = pmRunInvocation(pm, "build:client", projectRoot);
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, runtimeEnv, appendLog);
         markStep("buildClient", "done", "build:client");
         summary.push("İstemci derlemesi tamamlandı.");
       } else if (Array.isArray(detection?.workspaces?.packageDirs)) {
@@ -864,7 +899,7 @@ export async function executeSetupApply({
         if (clientPackageDir) {
           markStep("buildClient", "running");
           const inv = pmRunInvocation(pm, "build", path.join(projectRoot, clientPackageDir));
-          await runCommand(inv.command, inv.args, inv.cwd || projectRoot, {}, appendLog);
+          await runCommand(inv.command, inv.args, inv.cwd || projectRoot, runtimeEnv, appendLog);
           markStep("buildClient", "done", `${clientPackageDir} build`);
           summary.push("İstemci derlemesi tamamlandı.");
         } else {
@@ -913,14 +948,14 @@ export async function executeSetupApply({
       if (migrateScript) {
         markStep("migrate", "running", migrateScript);
         const inv = pmRunInvocation(pm, migrateScript, migrateDir);
-        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, { DATABASE_URL: effectiveDatabaseUrl }, appendLog);
+        await runCommand(inv.command, inv.args, inv.cwd || projectRoot, runtimeEnv, appendLog);
         markStep("migrate", "done", migrateScript);
         summary.push("Veritabanı migration'ları uygulandı.");
       } else {
         const polyglotMigrate = resolvePolyglotMigration(projectRoot, detection?.kind, setupConfig);
         if (polyglotMigrate) {
           markStep("migrate", "running", polyglotMigrate.label);
-          await runCommand(polyglotMigrate.command, polyglotMigrate.args, polyglotMigrate.cwd || projectRoot, { DATABASE_URL: effectiveDatabaseUrl }, appendLog);
+          await runCommand(polyglotMigrate.command, polyglotMigrate.args, polyglotMigrate.cwd || projectRoot, runtimeEnv, appendLog);
           markStep("migrate", "done", polyglotMigrate.label);
           summary.push(`${polyglotMigrate.label} uygulandı.`);
         } else {
@@ -961,7 +996,7 @@ export async function executeSetupApply({
       }
       if (seedInv) {
         try {
-          await runCommand(seedInv.command, seedInv.args, seedInv.cwd || projectRoot, { DATABASE_URL: effectiveDatabaseUrl }, appendLog);
+          await runCommand(seedInv.command, seedInv.args, seedInv.cwd || projectRoot, runtimeEnv, appendLog);
           summary.push(`Veritabanı tohumlama (${seedLabel}) uygulandı.`);
         } catch (seedErr) {
           summary.push(`Veritabanı tohumlama atlandı veya başarısız oldu (${seedLabel}): ${seedErr.message}`);
@@ -988,42 +1023,9 @@ export async function executeSetupApply({
     summary.push("Nginx örneği setup-artifacts altında üretildi.");
 
     markStep("env", "running");
-    if (fs.existsSync(envPath)) {
-      const backupRoot = path.join(serverRoot, "backups");
-      fs.mkdirSync(backupRoot, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      createdBackupFile = path.join(backupRoot, `.env-${stamp}.bak`);
-      fs.copyFileSync(envPath, createdBackupFile);
-      summary.push("Eski .env dosyası backups altında yedeklendi.");
+    if (fs.existsSync(temporaryEnv)) {
+      try { fs.unlinkSync(temporaryEnv); } catch {}
     }
-    fs.renameSync(temporaryEnv, envPath);
-    try {
-      fs.chmodSync(envPath, 0o600);
-    } catch {}
-
-    // Alt proje ve aday köklere de .env kopyala
-    const extraEnvDirs = [];
-    if (detection?.candidateRoot) {
-      extraEnvDirs.push(path.join(projectRoot, detection.candidateRoot));
-    }
-    if (detection?.subprojects?.backend?.dir) {
-      extraEnvDirs.push(path.join(projectRoot, detection.subprojects.backend.dir));
-    }
-    if (detection?.subprojects?.frontend?.dir) {
-      extraEnvDirs.push(path.join(projectRoot, detection.subprojects.frontend.dir));
-    }
-    for (const subDir of extraEnvDirs) {
-      try {
-        if (fs.existsSync(subDir)) {
-          const targetSubEnv = path.join(subDir, ".env");
-          if (path.resolve(targetSubEnv) !== path.resolve(envPath)) {
-            fs.copyFileSync(envPath, targetSubEnv);
-            try { fs.chmodSync(targetSubEnv, 0o600); } catch {}
-          }
-        }
-      } catch {}
-    }
-
     markStep("env", "done", ".env");
     summary.push("Gizli ayarlar .env dosyasına yazıldı.");
 
@@ -1049,8 +1051,28 @@ export async function executeSetupApply({
     if (createdBackupFile && fs.existsSync(createdBackupFile)) {
       try {
         fs.copyFileSync(createdBackupFile, envPath);
+        for (const subDir of extraEnvDirs) {
+          if (fs.existsSync(subDir)) {
+            const targetSubEnv = path.join(subDir, ".env");
+            if (path.resolve(targetSubEnv) !== path.resolve(envPath)) {
+              fs.copyFileSync(createdBackupFile, targetSubEnv);
+            }
+          }
+        }
         summary.push("Kurulum hatası nedeniyle önceki .env yedeği geri yüklendi.");
       } catch {}
+    } else {
+      if (fs.existsSync(envPath)) {
+        try { fs.unlinkSync(envPath); } catch {}
+      }
+      for (const subDir of extraEnvDirs) {
+        if (fs.existsSync(subDir)) {
+          const targetSubEnv = path.join(subDir, ".env");
+          if (fs.existsSync(targetSubEnv)) {
+            try { fs.unlinkSync(targetSubEnv); } catch {}
+          }
+        }
+      }
     }
     if (fs.existsSync(lockPath)) {
       try {

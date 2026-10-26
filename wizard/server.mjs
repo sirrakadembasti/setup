@@ -357,7 +357,7 @@ export function createSetupServer(token, options = {}) {
     const invocation = activeInvocation || options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
     const paired = invocation?.type === "dual" || invocation?.type === "dual-static";
     const hasSeparateUi = paired;
-    const uiPort = hasSeparateUi ? (detection.routes.devPort || appPort + 1) : appPort;
+    const uiPort = hasSeparateUi ? (applyJob.frontendPort || detection.routes.devPort || appPort + 1) : appPort;
     const loginPath = detection.scenario.isStaticOnly ? "" : (detection.routes.loginPath || "");
     const localUrl = buildLoginUrl(`http://127.0.0.1:${uiPort}`, loginPath);
     const apiReachable = await probe(`http://127.0.0.1:${appPort}/`, { allowNotFound: true });
@@ -467,7 +467,7 @@ export function createSetupServer(token, options = {}) {
         if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
 
         const backendPort = appPort;
-        const frontendPort = detection.routes?.devPort || (appPort + 1);
+        const frontendPort = applyJob.frontendPort || detection.routes?.devPort || (appPort + 1);
 
         dualController = createDualProcessController({
           projectRoot,

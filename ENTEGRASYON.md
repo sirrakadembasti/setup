@@ -380,6 +380,16 @@ export default function HomePage() {
 }
 ```
 
+### 4. Monorepo / Çok Parçalı Repolarda Çift Port (Backend + Frontend) ve Migration Mimarisi
+
+Alt dizinlerde bağımsız servisler barındıran monorepo veya full-stack projelerde (`backend/` + `frontend/` veya `srv/` + `ui/`):
+
+1. **Ayrı Port Yönetimi:** Web sihirbazı Senaryo 3 algıladığında 2. adımda iki ayrı port sorar:
+   - **Backend (API) Portu:** API servisinin dinleyeceği ana port (`PORT`, varsayılan: `3001` vb.).
+   - **Frontend Portu:** Ön yüz geliştirme/sunucu portu (`FRONTEND_PORT`, `DEV_PORT`, `VITE_PORT`, `NUXT_PORT`, varsayılan: `3000` vb.).
+2. **Çift Süreç (Dual Process Runner):** Kurulum tamamlandığında `createDualProcessController` ile backend ve frontend eşzamanlı başlatılır; ön yüz servisine API adresi (`API_URL`, `VITE_API_URL`, `NUXT_PUBLIC_API_BASE`) dinamik bağlanır.
+3. **Migration & Seed Ortam Yayılımı:** `db:migrate` ve `seed` betikleri çalıştırılmadan önce `.env` dosyası disk üzerinde geçici olarak sahnelenir ve tüm ortam değişkenleri (`JWT_REFRESH_SECRET`, `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` vb.) alt süreçlere eksiksiz aktarılır. Betik başarısız olursa oluşturulan geçici `.env` temizlenir ve sistem önceki durumuna otomatik geri alınır.
+
 ---
 
 ## Senaryo 4: Diğer Sunucu Uygulamaları (Fastify/Koa/Hono, Python FastAPI/Django, Go, C# .NET, Rust)
