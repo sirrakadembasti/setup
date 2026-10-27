@@ -52,11 +52,14 @@ node /path/to/setup/bin/setup.mjs init --root /hedef/proje --copy-tools --refres
 - **Hibrit ve Çok Parçalı Yapılar:** Kök dizindeki `package.json` ile birlikte `backend/`, `frontend/`, `execution/`, `llm-yonetimi/`, `srv/`, `ui/` gibi alt projeler tespit edilir. (`tools/setup`, `e2e`, `docs`, `scripts`, `tests` gibi araç klasörleri otomatik hariç tutulur.)
 - **Ortam Şablonları:** Kök ve alt dizinlerdeki `.env.example` dosyaları tek bir yapılandırma havuzunda birleştirilir.
 
-### Adım 2 — Terminal Menüsü ve Paket Kurulumu (`terminal-bootstrap.mjs` & `run-steps.mjs`)
-Terminal ekranında projenin durumu (`Yeni kurulum` / `Uygulama zaten kurulu`) ve paketlerin durumu (`Paketler: hazır` / `kurulum/onarım bekliyor`) gösterilir:
-- **`1) Paketleri Kur / Onar`:** Kök dizin ve tüm alt projeler için sıralı (`[1/N] ... [N/N]`) paket kurulumunu çalıştırır.
+### Adım 2 — Terminal Kontrol Paneli ve Paket Kurulumu (`terminal-bootstrap.mjs` & `run-steps.mjs`)
+Terminal ekranında kurulum adımlarının anlık ilerleme durumu (`[✓]` Tamamlandı, `[→]` Sıradaki Adım, `[ ]` Bekliyor) ve sıralı işlem menüsü (`1–5` ve `0`) yapılandırılmış bir panel olarak gösterilir:
+- **Adım İlerlemesi ve Öneri Kutusu:** Hangi adımların tamamlandığı (`[✓] 3. Bağımlılık kurulumu — Tamamlandı (Tekrar kurulum gerekmez)`) ve hangi adımın sırada olduğu (`[→] 4. Web kurulum sihirbazı (5050) — Sıradaki Adım (Seçenek 2)`) açıkça işaretlenir.
+- **Sıralı İşlem Menüsü (`1–5, 0`):** Tüm seçenekler (`1) Paketleri Kur / Onar`, `2) Kurulum Sihirbazına Geç`, `3) Yeniden Yapılandır`, `4) Yeniden Denetle`, `5) Yedekle ve Temiz Kuruluma Geç`, `0) Çıkış`) numara atlamadan sıralı biçimde ve o anki durum rozetleriyle (`[✓ Tamamlandı]`, `[→ Sıradaki Adım]`, `[Pasif]`) listelenir.
+- **Tekrar Kurulum Koruması ve Hata Yakalama:**
+  - Paketler zaten kurulmuş ve doğrulanmışsa (`Paketler: hazır`), kullanıcı yanlışlıkla tekrar **`1`** seçtiğinde sistem paketlerin zaten kurulu olduğunu bildirir ve açık onay (`[e/H]`) almadan tekrar kurulum yapmaz.
+  - Uygulama zaten kuruluysa (`Uygulama zaten kurulu` / `installation.lock` mevcut), **`2`** seçildiğinde sıfırdan kurulum engellenir ve mevcut verileri kaybetmeden **`3) Yeniden Yapılandır`** moduna geçiş önerilir.
 - **Otomatik Bun & Shim Köprüsü (`bin/shims/`):** Bilgisayarda `npm`, `pnpm` veya `yarn` kurulu değilse işlemler otomatik olarak **Bun** üzerinden yürütülür. `postinstall` içindeki `npm --prefix ../alt-paket ci` gibi komutlar ve `package-lock.json` + `overrides` içeren projeler çevrimdışı Bun önbelleğiyle (`~/.bun/install/cache`) uyumlu şekilde kurulur.
-- **Doğrulama:** Tüm alt projelerin `node_modules` dizinleri kontrol edilir; eksiksizse durum **`Paketler: hazır`** (`Bulunanlar: Paketler`) olarak işaretlenir.
 
 ### Adım 3 — Web Kurulum Sihirbazı (`127.0.0.1:5050` — `wizard/server.mjs`)
 Terminalde **`2) Kurulum Sihirbazına Geç`** seçildiğinde tarayıcıda 5 adımlı kurulum arayüzü açılır:

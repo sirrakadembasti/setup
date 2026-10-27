@@ -347,3 +347,61 @@ test("terminal bootstrap detects pre-installed packages on startup and runs all 
   assert.equal(setup2.status().packagesReady, true);
   assert.equal(setup2.status().installation.evidence.dependenciesInstalled, true);
 });
+
+test("terminal panel renders sequential options 1-5 and 0 without skipping numbers and protects against redundant reinstall", async (t) => {
+  let runCount = 0;
+  const root = fixture(t, {
+    install: {
+      command: process.execPath,
+      args: ["-e", "require('fs').mkdirSync('node_modules/example',{recursive:true});require('fs').appendFileSync('install-runs','x')"],
+    },
+  });
+  let transcript = "";
+  const output = new Writable({ write(chunk, enc, cb) { transcript += chunk; cb(); } });
+  // 1. kurulum -> başarılı
+  // 1. kurulum tekrar seçildiğinde -> zaten kurulu uyarısı verir ve 'h' ile atlanır
+  // 3. seçenek (kurulu değilken) -> hata yakalanır
+  // 5. seçenek (temizken) -> hata yakalanır
+  // 9. seçenek (geçersiz) -> uyarı verir
+  // 0 -> çıkış
+  await runTerminalBootstrap({
+    root,
+    input: Readable.from(["1\n1\nh\n3\n5\n9\n0\n"]),
+    output,
+    noOpen: true,
+  });
+
+  runCount = fs.readFileSync(path.join(root, "install-runs"), "utf8").length;
+  assert.equal(runCount, 1, "paketler kurulduktan sonra onay verilmezse tekrar kurulum yapılmamalı");
+  assert.match(transcript, /1\) Paketleri Kur \/ Onar/);
+  assert.match(transcript, /2\) Kurulum Sihirbazına Geç/);
+  assert.match(transcript, /3\) Yeniden Yapılandır/);
+  assert.match(transcript, /4\) Yeniden Denetle/);
+  assert.match(transcript, /5\) Yedekle ve Temiz Kuruluma Geç/);
+  assert.match(transcript, /0\) Çıkış/);
+  assert.match(transcript, /\[✓\] 3\. Bağımlılık kurulumu/);
+  assert.match(transcript, /\[→\] 4\. Web kurulum sihirbazı/);
+  assert.match(transcript, /Paket kurulumu atlandı/);
+  assert.match(transcript, /Yeniden yapılandırma için mevcut kurulum gerekir/);
+  assert.match(transcript, /Temizlenecek mevcut veya yarım kurulum bulunamadı/);
+  assert.match(transcript, /Geçerli bir seçenek girin/);
+});
+
+test("terminal panel in installed state marks all steps complete and prevents accidental fresh wizard", async (t) => {
+  const root = fixture(t, { install: { command: null } });
+  fs.mkdirSync(path.join(root, "data"), { recursive: true });
+  fs.writeFileSync(path.join(root, "data/installation.lock"), "locked");
+  fs.writeFileSync(path.join(root, ".env"), "PORT=58473\n");
+  let transcript = "";
+  const output = new Writable({ write(chunk, enc, cb) { transcript += chunk; cb(); } });
+  // 2 seçildiğinde zaten kurulu uyarısı verir, 'h' ile iptal edilir, 0 ile çıkılır
+  await runTerminalBootstrap({
+    root,
+    input: Readable.from(["2\nh\n0\n"]),
+    output,
+    noOpen: true,
+  });
+  assert.match(transcript, /Bu uygulama zaten kurulmuş durumda\. Tekrar kurulum yapmanıza gerek yoktur/);
+  assert.match(transcript, /Sıfırdan kurulum tekrar yapılamaz/);
+  assert.match(transcript, /İşlem iptal edildi/);
+});

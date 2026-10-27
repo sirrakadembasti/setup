@@ -84,7 +84,11 @@ export function createTerminalBootstrap(options = {}) {
   function prepare() {
     if (detection.hasAmbiguity) throw new Error("Önce bir aday alt proje seçin (--candidate <dizin>).");
     if (!buildInstallPlan(detection).canInstall) throw new Error("Bu dizinde kurulum planlanamadı. Geçerli proje bulunamadı.");
-    fs.accessSync(root, fs.constants.W_OK);
+    try {
+      fs.accessSync(root, fs.constants.W_OK);
+    } catch {
+      throw new Error(`Hedef dizinde yazma izni yok: ${root}. Lütfen dizin izinlerini kontrol edin.`);
+    }
     if (!fs.existsSync(path.join(root, "setup.config.json"))) {
       initProject(root, { overwrite: false, updatePackageJson: false, createLaunchers: false });
       config = loadSetupConfig(root) || {};
@@ -116,6 +120,7 @@ export function createTerminalBootstrap(options = {}) {
       },
     });
   }
+
   function installSteps() {
     if (!detection.scenario.requiresDependencies || config.install?.command === null) return [];
     if (config.install?.steps?.length) return config.install.steps;
@@ -204,6 +209,120 @@ function openBrowser(url) {
   child.unref();
 }
 
+function formatStepLine(step, index, s) {
+  const num = index + 1;
+  const isInstalled = s.installation.state === "installed";
+  const isPartial = s.installation.state === "partial";
+  const runtimeOk = Boolean(s.runtime.nodeSupported && s.runtime.packageManagerSupported);
+  if (step.id === "precheck") {
+    return runtimeOk
+      ? `  [✓] ${num}. ${step.label} — Uygun`
+      : `  [✗] ${num}. ${step.label} — Uyumsuz/Eksik`;
+  }
+  if (step.id === "ports") {
+    return `  [✓] ${num}. ${step.label} — Hazır (Sihirbaz Portu: ${s.wizardPort})`;
+  }
+  if (step.id === "dependencies") {
+    if (s.packagesReady) return `  [✓] ${num}. ${step.label} — Tamamlandı (Tekrar kurulum gerekmez)`;
+    return `  [→] ${num}. ${step.label} — Sıradaki Adım (Seçenek 1)`;
+  }
+  if (step.id === "wizard") {
+    if (isInstalled) return `  [✓] ${num}. ${step.label} — Tamamlandı`;
+    if (s.packagesReady) return `  [→] ${num}. ${step.label} — Sıradaki Adım (Seçenek 2)`;
+    return `  [ ] ${num}. ${step.label} — Bekliyor (Önce 1. adımı tamamlayın)`;
+  }
+  if (step.id === "apply") {
+    if (isInstalled) return `  [✓] ${num}. ${step.label} — Tamamlandı`;
+    if (isPartial) return `  [!] ${num}. ${step.label} — Kısmi/Eski kurulum verisi mevcut`;
+    return `  [ ] ${num}. ${step.label} — Bekliyor`;
+  }
+  if (step.id === "start") {
+    if (isInstalled) return `  [✓] ${num}. ${step.label} — Kurulum Tamamlandı`;
+    return `  [ ] ${num}. ${step.label} — Bekliyor`;
+  }
+  if (step.id === "abort") {
+    return `  [✗] ${num}. ${step.label}`;
+  }
+  return `  - ${step.label}`;
+}
+
+export function formatTerminalPanel(s) {
+  const divider = "========================================================================";
+  const subDivider = "------------------------------------------------------------------------";
+  const stateLabel = {
+    fresh: "Yeni kurulum",
+    partial: "Yarım/eski kurulum",
+    installed: "Uygulama zaten kurulu",
+  }[s.installation.state] || s.installation.state;
+  const pkgLabel = s.packagesReady ? "hazır" : "kurulum/onarım bekliyor";
+  const foundList = Object.entries(s.installation.evidence)
+    .filter(([, v]) => v)
+    .map(([k]) => evidenceLabels[k] || k)
+    .join(", ") || "Kurulum verisi yok";
+
+  const lines = [
+    "",
+    divider,
+    ` [setup] ${s.project} | ${s.scenario.label}`,
+    ...(s.scenario.summary ? [` ${s.scenario.summary}`] : []),
+    subDivider,
+    `Dizin: ${s.directory}`,
+    `Sistem: ${s.platform} (${s.hostname})`,
+    `Node.js: ${s.runtime.nodeVersion} (${s.runtime.nodeSupported ? "uygun" : "uyumsuz"}) | ${s.runtime.packageManager}: ${s.runtime.packageManagerVersion || "gerekmiyor/bulunamadı"} (${s.runtime.packageManagerSupported ? "uygun" : "eksik/uyumsuz"})`,
+    `Durum: ${stateLabel} | Paketler: ${pkgLabel}`,
+    `Bulunanlar: ${foundList}`,
+    subDivider,
+    "KURULUM ADIMLARI VE İLERLEME DURUMU:",
+    ...s.plan.steps.map((step, idx) => formatStepLine(step, idx, s)),
+  ];
+
+  if (!s.hasAmbiguity && s.plan.canInstall) {
+    lines.push(subDivider);
+    if (!s.runtime.nodeSupported || !s.runtime.packageManagerSupported) {
+      lines.push("[UYARI] Çalışma ortamı gereksinimleri eksik. Node.js >=18 ve uygun paket yöneticisi kurulu olmalıdır.");
+    } else if (s.installation.state === "installed") {
+      lines.push("[BİLGİ] Bu uygulama zaten kurulmuş durumda. Tekrar kurulum yapmanıza gerek yoktur.");
+      lines.push("[ÖNERİ] Mevcut ayarları güncellemek için '3' (Yeniden Yapılandır), temiz kurulum için '5' seçeneğini kullanın.");
+    } else if (s.packagesReady) {
+      lines.push("[BİLGİ] Paket kurulumu tamamlanmış durumda. Paketleri tekrar kurmanıza gerek yoktur.");
+      lines.push("[ÖNERİ] Kuruluma devam etmek için '2' (Kurulum Sihirbazına Geç) seçeneğini girin.");
+    } else {
+      lines.push("[ÖNERİ] Kuruluma başlamak için önce '1' (Paketleri Kur / Onar) seçeneğini girin.");
+    }
+
+    const opt1Tag = s.packagesReady
+      ? "[✓ Tamamlandı - Tekrar kurulum gerekmez]"
+      : "[→ Sıradaki Adım - Bağımlılıkları kur]";
+    const opt2Tag = s.installation.state === "installed"
+      ? "[✓ Tamamlandı - Tekrar kurulum kapalı]"
+      : s.packagesReady
+        ? `[→ Sıradaki Adım - Port: ${s.wizardPort}]`
+        : "[Bekliyor - Önce 1. adımı tamamlayın]";
+    const opt3Tag = s.installation.state === "installed"
+      ? "[→ Önerilen - Mevcut ayarları güncelle]"
+      : "[Pasif - İlk kurulum sonrası aktif olur]";
+    const opt4Tag = "[Durumu ve dosyaları tekrar kontrol et]";
+    const opt5Tag = s.installation.state !== "fresh"
+      ? "[Aktif - Yedek al ve kurulumu sıfırla]"
+      : "[Pasif - Silinecek kurulum verisi yok]";
+
+    lines.push(
+      subDivider,
+      "İŞLEM MENÜSÜ:",
+      `1) Paketleri Kur / Onar              ${opt1Tag}`,
+      `2) Kurulum Sihirbazına Geç           ${opt2Tag}`,
+      `3) Yeniden Yapılandır                ${opt3Tag}`,
+      `4) Yeniden Denetle                   ${opt4Tag}`,
+      `5) Yedekle ve Temiz Kuruluma Geç     ${opt5Tag}`,
+      "0) Çıkış",
+      divider,
+    );
+  } else {
+    lines.push(divider);
+  }
+  return lines.join("\n");
+}
+
 export async function runTerminalBootstrap(options = {}) {
   const output = options.output || process.stdout;
   const input = options.input || process.stdin;
@@ -225,11 +344,14 @@ export async function runTerminalBootstrap(options = {}) {
   process.on("exit", onExit);
   try {
     while (!cancelled) {
-      const s = setup.status();
-      log(`\n[setup] ${s.project} | ${s.scenario.label}\n${s.scenario.summary || ""}\nDizin: ${s.directory}\nSistem: ${s.platform} (${s.hostname})\nNode.js: ${s.runtime.nodeVersion} (${s.runtime.nodeSupported ? "uygun" : "uyumsuz"}) | ${s.runtime.packageManager}: ${s.runtime.packageManagerVersion || "gerekmiyor/bulunamadı"} (${s.runtime.packageManagerSupported ? "uygun" : "eksik/uyumsuz"})`);
-      log(`Durum: ${{ fresh: "Yeni kurulum", partial: "Yarım/eski kurulum", installed: "Uygulama zaten kurulu" }[s.installation.state]} | Paketler: ${s.packagesReady ? "hazır" : "kurulum/onarım bekliyor"}`);
-      log(`Bulunanlar: ${Object.entries(s.installation.evidence).filter(([, v]) => v).map(([k]) => evidenceLabels[k] || k).join(", ") || "Kurulum verisi yok"}`);
-      for (const step of s.plan.steps) log(`  - ${step.label}`);
+      let s;
+      try {
+        s = setup.status();
+      } catch (err) {
+        log(`[HATA] Proje durumu okunurken beklenmeyen bir hata oluştu: ${err.message}`);
+        return;
+      }
+      log(formatTerminalPanel(s));
       if (s.hasAmbiguity) {
         log("Birden fazla aday alt proje bulundu:");
         s.candidates.forEach((c, i) => log(`  ${i + 1}) ${c.name} (${c.dir}, ${c.role}, ${c.kind})`));
@@ -239,34 +361,75 @@ export async function runTerminalBootstrap(options = {}) {
         continue;
       }
       if (!s.plan.canInstall) throw new Error("Bu dizinde kurulum planlanamadı. Geçerli proje bulunamadı.");
-      log(`\n1) Paketleri Kur / Onar\n2) Kurulum Sihirbazına Geç${s.installation.state === "installed" ? "\n3) Yeniden Yapılandır" : ""}\n4) Yeniden Denetle${s.installation.state !== "fresh" ? "\n5) Yedekle ve Temiz Kuruluma Geç" : ""}\n0) Çıkış`);
-      const action = await ask("Seçiminiz: ");
+      const action = await ask("Seçiminiz (1-5 veya 0): ");
       if (action === null || action === "0") return;
+      if (action === "") {
+        log("[UYARI] Boş seçim yapıldı. Lütfen menüden geçerli bir seçenek girin (1-5 veya 0).");
+        continue;
+      }
       try {
         if (action === "1") {
-          if (!s.runtime.nodeSupported || !s.runtime.packageManagerSupported) throw new Error("Desteklenmeyen çalışma ortamı. Node.js >=18 ve geçerli bir paket yöneticisi gerekir.");
+          if (!s.runtime.nodeSupported || !s.runtime.packageManagerSupported) {
+            throw new Error("Desteklenmeyen çalışma ortamı. Node.js >=18 ve geçerli bir paket yöneticisi gerekir.");
+          }
+          if (s.packagesReady && s.installation.dependencies?.ready) {
+            log("[BİLGİ] Tüm paketler zaten kurulu ve doğrulandı. Tekrar kurulum yapılmasına gerek yoktur.");
+            const confirmReinstall = await ask("Paketleri yine de yeniden doğrulamak / onarmak istiyor musunuz? [e/H]: ");
+            if (!["e", "evet"].includes((confirmReinstall || "").toLowerCase())) {
+              log("[BİLGİ] Paket kurulumu atlandı. Sıradaki adım için '2' (Kurulum Sihirbazına Geç) seçeneğini kullanabilirsiniz.");
+              continue;
+            }
+          }
           await setup.install();
+          log("[BAŞARILI] Paket kurulumu tamamlandı. Sıradaki adım: 2) Kurulum Sihirbazına Geç");
         } else if (action === "2" || action === "3") {
-          if (action === "3" && s.installation.state !== "installed" && !options.reconfigure) throw new Error("Yeniden yapılandırma için mevcut kurulum gerekir.");
-          try { await setup.startWizard({ reconfigure: action === "3" || options.reconfigure }); }
+          let useReconfigure = action === "3" || Boolean(options.reconfigure);
+          if (action === "2" && s.installation.state === "installed" && !useReconfigure) {
+            log("[UYARI] Bu uygulama zaten kurulu (Kurulum kilidi mevcut). Sıfırdan kurulum tekrar yapılamaz.");
+            const switchToReconf = await ask("Mevcut verileri koruyarak Yeniden Yapılandır (3. adım) moduna geçmek ister misiniz? [e/H]: ");
+            if (!["e", "evet"].includes((switchToReconf || "").toLowerCase())) {
+              log("[BİLGİ] İşlem iptal edildi. Temiz kurulum için 5) Yedekle ve Temiz Kuruluma Geç seçeneğini kullanabilirsiniz.");
+              continue;
+            }
+            useReconfigure = true;
+          }
+          if (action === "3" && s.installation.state !== "installed" && !options.reconfigure) {
+            throw new Error("Yeniden yapılandırma için mevcut kurulum gerekir. Önce 2) Kurulum Sihirbazına Geç adımını tamamlayın.");
+          }
+          if (!useReconfigure && !s.packagesReady) {
+            throw new Error("Paketler eksik. Önce 1) Paketleri Kur / Onar adımını tamamlayın.");
+          }
+          try { await setup.startWizard({ reconfigure: useReconfigure }); }
           catch (err) {
             if (err.code !== "WIZARD_PORT_BUSY") throw err;
-            log(err.message);
+            log(`[UYARI] ${err.message}`);
             const answer = await ask("Portu kullanan doğrulanmış Node/kurulum süreci durdurulsun mu? [e/H]: ");
-            if (answer?.toLowerCase() !== "e") continue;
-            await setup.startWizard({ reconfigure: action === "3" || options.reconfigure, killOccupant: true });
+            if (!["e", "evet"].includes((answer || "").toLowerCase())) continue;
+            await setup.startWizard({ reconfigure: useReconfigure, killOccupant: true });
           }
           return;
         } else if (action === "5") {
-          if (s.installation.state === "fresh") throw new Error("Temizlenecek mevcut veya yarım kurulum bulunamadı.");
-          log("Mevcut .env, yerel veritabanı, oturumlar ve yüklenen dosyalar kaldırılır. Önce doğrulanmış yedek alınır. Uygulamayı durdurun.");
+          if (s.installation.state === "fresh") {
+            throw new Error("Temizlenecek mevcut veya yarım kurulum bulunamadı. Uygulama zaten temiz durumda.");
+          }
+          log("[UYARI] Mevcut .env, yerel veritabanı, oturumlar ve yüklenen dosyalar kaldırılır. Önce doğrulanmış yedek alınır. Uygulamayı durdurun.");
           const ack = await ask("Zorunlu yedeği ve verilerin kaldırılmasını onaylıyor musunuz? [e/H]: ");
-          if (ack?.toLowerCase() !== "e") continue;
+          if (!["e", "evet"].includes((ack || "").toLowerCase())) {
+            log("[BİLGİ] Temiz kurulum işlemi iptal edildi.");
+            continue;
+          }
           const confirmation = await ask(`Devam etmek için ${CLEAN_INSTALL_CONFIRMATION} yazın: `);
           await setup.reset({ backupAcknowledged: true, confirmation });
-        } else if (action === "4") setup.refresh();
-        else log("Geçerli bir seçenek girin.");
-      } catch (err) { log(`[HATA] ${err.message}`); }
+          log("[BAŞARILI] Mevcut kurulum yedeklendi ve sıfırlandı. Artık temiz kurulum yapabilirsiniz.");
+        } else if (action === "4") {
+          setup.refresh();
+          log("[BİLGİ] Proje ve kurulum durumu yeniden denetlendi.");
+        } else {
+          log(`[UYARI] Geçersiz seçim: '${action}'. Geçerli bir seçenek girin (1-5 veya 0).`);
+        }
+      } catch (err) {
+        log(`[HATA] ${err.message}`);
+      }
     }
   } finally {
     setup.cancel(); rl.close();

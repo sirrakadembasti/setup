@@ -28,11 +28,12 @@ Detaylı kod şablonlarına geçmeden önce `setup` aracının nasıl çalışt�
    • Dağınık .env.example dosyalarının tek havuzda toplanması
        │
        ▼
-2. TERMİNAL MENÜSÜ VE PAKET KURULUMU (scripts/terminal-bootstrap.mjs & run-steps.mjs)
-   • Mevcut kurulum ve paket durumunun ("Paketler: hazır" / "kurulum bekliyor") kontrolü
+2. TERMİNAL KONTROL PANELİ VE PAKET KURULUMU (scripts/terminal-bootstrap.mjs & run-steps.mjs)
+   • Adım bazlı canlı ilerleme işaretleri ([✓] Tamamlandı, [→] Sıradaki Adım, [ ] Bekliyor)
+   • Numara atlamayan sıralı işlem menüsü (1, 2, 3, 4, 5 ve 0) ve aktif/pasif durum rozetleri
+   • Kurulu paketlerin veya kurulu uygulamanın yanlışlıkla tekrar kurulmasını önleyen onay koruması
    • [1] seçildiğinde kök ve alt projelerin sırayla (--prefix <dizin> install) kurulması
    • npm/pnpm/yarn yoksa bin/shims/ üzerinden otomatik Bun çevirisi ve çevrimdışı bun.lock uyumu
-   • Tüm alt dizinlerde node_modules doğrulaması
        │
        ▼
 3. WEB KURULUM SİHİRBAZI - PORT 5050 (wizard/server.mjs & wizard/shared.mjs)
@@ -216,7 +217,12 @@ npx github:sirrakadembasti/setup init --root . --update-package-json
 npm run setup
 ```
 
-Başlatıcı tüm ön kontrolleri terminalde gösterir. Menüde `1` paketleri kurar/onarır, `2` mevcut web sihirbazını açar, `4` durumu yeniden denetler. Kurulu uygulamalarda `3` yeniden yapılandırır; mevcut/yarım kurulumlarda `5` doğrulanmış yedek alıp temiz kurulum hazırlar. Temizleme için yedek onayı ve `SETUP VERİLERİNİ SİL` metni gerekir; çalışan uygulama veya harici veritabanı otomatik temizlenmez.
+Başlatıcı tüm ön kontrolleri, kurulum adımlarının canlı ilerleme durumunu (`[✓]`, `[→]`, `[ ]`) ve yönlendirme önerilerini (`[BİLGİ]` / `[ÖNERİ]`) yapılandırılmış bir terminal panelinde gösterir. Menüde `1` ile `5` arasındaki tüm seçenekler ve `0` (Çıkış) her zaman sıralı olarak (numara atlamadan) ve durum rozetleriyle listelenir:
+- `1) Paketleri Kur / Onar`: Bağımlılıkları kurar ve doğrular. Paketler zaten kuruluysa (`Paketler: hazır`), gereksiz tekrar kurulumu önlemek için kullanıcıyı uyarır ve açık onay (`[e/H]`) ister.
+- `2) Kurulum Sihirbazına Geç`: Web kurulum sihirbazını açar. Uygulama zaten kuruluysa (`installation.lock` mevcutsa) sıfırdan kurulumu engeller ve kullanıcıya `3) Yeniden Yapılandır` moduna geçişi önerir.
+- `3) Yeniden Yapılandır`: Kurulu uygulamalarda verileri silmeden ayarları günceller.
+- `4) Yeniden Denetle`: Proje ve kurulum durumunu yeniden kontrol eder.
+- `5) Yedekle ve Temiz Kuruluma Geç`: Mevcut/yarım kurulumlarda doğrulanmış yedek alıp temiz kurulum hazırlar. Temizleme için yedek onayı ve `SETUP VERİLERİNİ SİL` metni gerekir; çalışan uygulama veya harici veritabanı otomatik temizlenmez.
 
 Tarayıcı yalnız sihirbaz hazır olduğunda açılır. `--no-open` bağlantıyı terminalde bırakır; `--port <1024-65535>` sihirbaz portunu belirler. `--check-only` salt okunur durum JSON çıktısı verir. Birden fazla bağımsız aday terminalde seçilir; `--candidate <dizin>` doğrudan hedefler. Port çakışmasında süreç bilgisi gösterilir ve yalnız açık onayla doğrulanmış Node/kurulum süreci durdurulur.
 
