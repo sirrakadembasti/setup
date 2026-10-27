@@ -92,7 +92,7 @@ export function initProject(root = process.cwd(), options = {}) {
     fs.mkdirSync(targetToolsDir, { recursive: true });
     const canonical = (value) => process.platform === "win32" ? fs.realpathSync(value).toLowerCase() : fs.realpathSync(value);
     const copyingItself = canonical(targetToolsDir) === canonical(setupRoot);
-    const items = copyingItself ? [] : ["bin", "scripts", "wizard", "utils", "templates", "CHANGELOG.md", "README.md", "ENTEGRASYON.md", "package.json", "VERSION"];
+    const items = copyingItself ? [] : ["bin", "scripts", "wizard", "utils", "templates", "docs", "README.md", "package.json", "VERSION"];
     for (const item of items) {
       const src = path.join(setupRoot, item);
       const dst = path.join(targetToolsDir, item);

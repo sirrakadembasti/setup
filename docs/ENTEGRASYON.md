@@ -1,6 +1,52 @@
 # setup — 5 Mimari Senaryo Entegrasyon ve Uygulama Kılavuzu (v1.0)
 
-`setup` (`https://github.com/sirrakadembasti/setup.git`), herhangi bir GitHub reposundaki Node.js, SPA/statik web, full-stack, çoklu dil (Python, Go, C# .NET, Rust) veya masaüstü (Electron, Tauri) uygulamasını son kullanıcıların ve sistem yöneticilerinin terminal komutlarıyla boğuşmadan tarayıcı veya masaüstü penceresi üzerinden kurabilmesi için tasarlanmış sıfır bağımlılıklı kurulum eklentisidir.
+`setup` (`https://github.com/sirrakadembasti/setup.git`), herhangi bir GitHub reposundaki Node.js, SPA/statik web, Full-Stack/Monorepo, çok dilli (Python, Go, C# .NET, Rust, C/C++) veya masaüstü/oyun (Electron, Tauri, WinForms/WPF, PyQt, Unity/Unreal/Godot) uygulamasını terminal komutlarıyla uğraşmadan kurup çalıştırmak için tasarlanmış **sıfır bağımlılıklı** kurulum eklentisidir.
+
+---
+
+## 🧭 Uygulama Yapısı ve İşleyiş Özeti (Büyük Resim)
+
+Detaylı kod şablonlarına geçmeden önce `setup` aracının nasıl çalıştığını ve hangi bileşenlerden oluştuğunu aşağıdaki özet üzerinden inceleyebilirsiniz.
+
+### 1. Üç Farklı Kullanım Modu
+
+| Kullanım Modu | Ne Zaman Seçilir? | Nasıl Çalışır? |
+|---|---|---|
+| **A) Sıfır Kod Değişikliği (Başlatıcı / CLI Modu)** | Uygulama koduna dokunmadan dışarıdan kurulum istendiğinde **(Önerilen)** | `setup init --copy-tools` ile projeye `kurulum.bat`, `kurulum.sh` ve `setup.config.json` eklenir. Kullanıcı başlatıcıya çift tıklar. |
+| **B) Gömülü Middleware Modu (`mountSetupGuard`)** | Kurulum sihirbazının doğrudan uygulamanın kendi portunda (`/setup`) çalışması istendiğinde | Express, Fastify, Hono veya Next.js içine middleware olarak eklenir; `data/installation.lock` oluşana kadar istekleri `/setup` ekranına yönlendirir. |
+| **C) Masaüstü IPC / Sidecar Modu** | Electron veya Tauri masaüstü uygulamalarında | Kurulum ekranı masaüstü penceresinde açılır; veriler işletim sisteminin kullanıcı veri dizinine (`%APPDATA%` vb.) yazılır. |
+
+### 2. Adım Adım Çalışma Akışı (Yaşam Döngüsü)
+
+```text
+[kurulum.bat / kurulum.sh]
+       │
+       ▼
+1. MİMARİ ALGILAMA (scripts/detect-project.mjs)
+   • Dil, çerçeve, paket yöneticisi (npm/pnpm/yarn/bun) ve Senaryo (1–5) tespiti
+   • Kök package.json + alt projelerin (backend/, frontend/, execution/, llm-yonetimi/ vb.) tespiti
+   • Dağınık .env.example dosyalarının tek havuzda toplanması
+       │
+       ▼
+2. TERMİNAL MENÜSÜ VE PAKET KURULUMU (scripts/terminal-bootstrap.mjs & run-steps.mjs)
+   • Mevcut kurulum ve paket durumunun ("Paketler: hazır" / "kurulum bekliyor") kontrolü
+   • [1] seçildiğinde kök ve alt projelerin sırayla (--prefix <dizin> install) kurulması
+   • npm/pnpm/yarn yoksa bin/shims/ üzerinden otomatik Bun çevirisi ve çevrimdışı bun.lock uyumu
+   • Tüm alt dizinlerde node_modules doğrulaması
+       │
+       ▼
+3. WEB KURULUM SİHİRBAZI - PORT 5050 (wizard/server.mjs & wizard/shared.mjs)
+   • [2] seçildiğinde tarayıcıda 5 adımlı sihirbazın açılması
+   • Dağıtım modu, Backend/Frontend portları, Veritabanı (canlı testli) ve Admin hesabı seçimi
+   • .env dosyasının kök ve alt projelere yazılması, build + migration + seed çalıştırılması
+   • Hata olursa atomik geri alma (rollback); başarılıysa data/installation.lock kaydı
+       │
+       ▼
+4. DOĞRULANMIŞ UYGULAMA BAŞLATMA (wizard/app-process.mjs)
+   • Uygulamanın (tek sunucu, statik sunucu veya Backend+Frontend çift süreç) başlatılması
+   • API ve UI (devPort / frontendPort) HTTP erişilebilirliğinin (/api/app-health) doğrulanması
+   • Tarayıcının otomatik olarak çalışan uygulamaya yönlendirilmesi
+```
 
 ---
 
@@ -940,9 +986,11 @@ node bin/setup.mjs help     # Yardım kılavuzunu gösterir
 ```text
 setup/
 ├── VERSION                   # Aktif sürüm (1.0.0)
-├── CHANGELOG.md              # Sürüm değişiklik günlüğü
-├── ENTEGRASYON.md            # Tüm mimariler için kapsamlı entegrasyon ve API kılavuzu
-├── README.md                 # Hızlı başlangıç ve son kullanıcı özeti
+├── README.md                 # Hızlı başlangıç, uygulama yapısı ve işleyiş özeti
+├── docs/
+│   ├── ENTEGRASYON.md        # Tüm mimariler için kapsamlı entegrasyon ve API kılavuzu
+│   ├── CHANGELOG.md          # Sürüm değişiklik günlüğü
+│   └── bilgi-notu.md         # Mimari bilgi notu
 ├── package.json
 ├── bin/
 │   ├── setup.mjs             # Ana CLI aracı (setup, wizard, init, detect, version)

@@ -1,132 +1,145 @@
 # setup (v1.0) — Evrensel Uygulama Kurulum Aracı
 
-GitHub'dan indirilen projelerde mimariyi algılayan, **tanılama ve bağımlılık kurulumunu terminal menüsünde**, uygulama yapılandırmasını ise **web sihirbazında** yürüten bağımsız kurulum eklentisidir.
+GitHub'dan indirilen veya şirket içinde paylaşılan projelerde **mimariyi otomatik algılayan**, **bağımlılık kurulumunu terminal menüsünde**, **uygulama yapılandırmasını (`.env`, veritabanı, yönetici hesabı) ise web sihirbazında** yürüten sıfır bağımlılıklı kurulum eklentisidir.
 
 ---
 
 ## ⚡ Hızlı Başlangıç
 
 ### 1. İndirilen Bir Projeyi Kurup Çalıştırmak (Son Kullanıcı)
-GitHub'dan indirdiğiniz herhangi bir projenin kök dizininde terminalden tek komut çalıştırın:
+
+Projede başlatıcı dosyaları varsa doğrudan çift tıklayın veya terminalden çalıştırın:
+- **Windows:** `kurulum.bat`
+- **Linux / macOS:** `./kurulum.sh`
+
+Projede başlatıcı yoksa proje kök dizininde tek komut çalıştırın:
 
 ```bash
 # npm / npx ile:
 npx github:sirrakadembasti/setup
 
-# veya Bun / bunx ile (iş bilgisayarlarında npm kısıtlıysa):
+# Bun / bunx ile (npm kısıtlı kurumsal bilgisayarlarda):
 bunx github:sirrakadembasti/setup
 ```
 
-> **İpucu:** Projede başlatıcı dosyaları varsa doğrudan çift tıklayabilirsiniz:
-> - **Windows:** `kurulum.bat`
-> - **Linux / macOS:** `./kurulum.sh`
-
-Depodaki ve `setup init` tarafından üretilen başlatıcılar aynı kaynaktan gelir. Node.js **18 veya üstü** kullanılır; uygun Node yoksa Bun denenir. Proje tanılama, paket yöneticisi seçimi ve kurulum işleri ortak terminal akışında yürütülür.
-
----
-
 ### 2. Kendi Reponuza Kurulum Sihirbazı Eklemek (Geliştirici)
-Projenizin kök dizininde aşağıdaki komutu çalıştırarak çift tıklanabilir başlatıcıları (`kurulum.bat`, `kurulum.sh`) ve yapılandırma dosyasını (`setup.config.json`) otomatik oluşturun:
+
+Projenizin kök dizininde aşağıdaki komutu çalıştırarak `kurulum.bat`, `kurulum.sh` ve `setup.config.json` dosyalarını otomatik oluşturun:
 
 ```bash
-# Bun / bunx ile:
-bunx github:sirrakadembasti/setup init
+# Kurumsal / Çevrimdışı Ağlar İçin (setup çekirdeğini tools/setup altına kopyalar):
+node /path/to/setup/bin/setup.mjs init --copy-tools
 
-# veya npm / npx ile:
-npx github:sirrakadembasti/setup init
+# veya GitHub üzerinden:
+bunx github:sirrakadembasti/setup init --copy-tools
+npx github:sirrakadembasti/setup init --copy-tools
 
-# Çevrimdışı / Yerel klasörden (tools/setup):
-node tools/setup/bin/setup.mjs init
-
-# Şirket / Kurumsal Ağlar İçin (setup çekirdeğini yerel kopyadan kullanır):
-bun /path/to/setup/bin/setup.mjs init --copy-tools
-# veya:
-node /path/to/setup/bin/setup.mjs init --offline
+# Önceden eklenmiş bir projede başlatıcıları ve tools/setup kopyasını güncellemek için:
+node /path/to/setup/bin/setup.mjs init --root /hedef/proje --copy-tools --refresh-launchers
 ```
-
-```bash
-# Belirli bir alt projeyi hedeflemek (Çok parçalı veya monorepo repolar için):
-bunx github:sirrakadembasti/setup --candidate apps/web
-# veya:
-npx github:sirrakadembasti/setup --candidate apps/web
-```
-
-> **İpucu:** Proje dizinindeyken `--root .` yazmanıza gerek yoktur; komut doğrudan çalıştırıldığı klasörü hedefler. Farklı bir dizini hedeflemek için `--root /hedef/dizin` belirtebilirsiniz. Çoklu alt proje içeren repolarda belirli bir projeyi kurmak için `--candidate <alt-dizin>` parametresini kullanabilirsiniz. `--copy-tools`, setup çekirdeğini `tools/setup` klasörüne yerleştirerek başlatıcının GitHub'dan indirilmesini önler. Hedef projenin paketleri için internet erişimi veya hazır paket önbelleği gerekebilir.
 
 ---
 
-## 🔄 Nasıl Çalışır?
-
-Önceden kurulum eklentisi eklenmiş bir projeyi güncellemek için **güncel setup kopyasından** çalıştırın:
-
-```bash
-node /guncel/setup/bin/setup.mjs init --root /hedef/proje --copy-tools --refresh-launchers
-```
-
-Bu komut `setup.config.json` dosyasını korur, değiştirilecek başlatıcıları tarihli `.bak` dosyalarına yedekler ve yerel `tools/setup` kopyasını yeniler. Başka projelerdeki eski kopyalar kendiliğinden güncellenmez. Başlatıcılar zaten güncelse işlem güvenle tekrar çalıştırılabilir.
-
-`node bin/setup.mjs`, `node scripts/setup-bootstrap.mjs` ve `npm run setup -- ...` aynı seçenekleri işler. Örneğin `npm run setup -- --root /hedef/proje --port 5051 --check-only` yalnız durum JSON çıktısı verir. `wizard --check-only` de dosya oluşturmadan aynı denetimi yapar.
+## 🔄 Uygulama Nasıl Çalışır? (4 Adımda İşleyiş)
 
 ```text
-[ Proje Dizini ] ──> 1. Terminalde Tanılama ──> 2. Terminalde Paket Kurulumu ──> 3. Web Sihirbazı (Port 5050) ──> [ Uygulama Hazır ]
+[1. Mimari Algılama] ──> [2. Terminalde Paket Kurulumu] ──> [3. Web Sihirbazı (5050)] ──> [4. Doğrulanmış Başlatma]
 ```
 
-1. **Akıllı Proje Tespiti:** Kök dizini ve kaynak kodları tarayarak dili, mimariyi, paket yöneticisini (`npm`, `pnpm`, `yarn`, `bun`) ve `.env.example` değişkenlerini otomatik belirler.
-2. **Terminal Kurulum Başlatıcısı:** Proje ve çalışma ortamı raporunu gösterir. `1` ile paketleri kurun/onarın, tamamlanınca `2` ile web sihirbazına geçin. Canlı işlem çıktıları terminalde izlenir; gerekli dil araçları eksikse kurulum bilgisi gösterilir. Port 5049 kullanılmaz.
-3. **Web Kurulum Sihirbazı (`127.0.0.1:5050`):** `.env` dosyasını, veritabanını ve isteğe bağlı ilk yönetici hesabını oluşturup uygulamanızı başlatır.
+### Adım 1 — Başlatma ve Akıllı Mimari Algılama (`detect-project.mjs`)
+`kurulum.bat` veya `kurulum.sh` çalıştırıldığında önce sistemdeki uygun çalışma zamanı (**Node.js >= 18** veya **Bun**) seçilir. Ardından proje klasörü taranarak:
+- **Mimari Senaryo (Senaryo 1–5):** Tekil sunucu, SPA/Statik web, Full-Stack/Monorepo, Çok Dilli (Python/Go/.NET/Rust/C++) veya Masaüstü/Oyun olduğu belirlenir.
+- **Hibrit ve Çok Parçalı Yapılar:** Kök dizindeki `package.json` ile birlikte `backend/`, `frontend/`, `execution/`, `llm-yonetimi/`, `srv/`, `ui/` gibi alt projeler tespit edilir. (`tools/setup`, `e2e`, `docs`, `scripts`, `tests` gibi araç klasörleri otomatik hariç tutulur.)
+- **Ortam Şablonları:** Kök ve alt dizinlerdeki `.env.example` dosyaları tek bir yapılandırma havuzunda birleştirilir.
 
-Kurulum adımları başarıyla tamamlandığında web uygulaması otomatik başlatılır. İlk açılan terminal başlatıcıyı ve uygulama süreçlerini gözetir; maskelenmiş uygulama günlükleri burada görünür. Tarayıcıya geçiş için gerçek HTTP erişimi doğrulanır; backend ve frontend ayrıysa ikisinin de hazır olması gerekir. Hata veya zaman aşımında son ekranda açıklama ve yeniden deneme düğmesi gösterilir; başarılı kurulum verileri korunur. Masaüstü uygulamalarının mevcut başlatma düğmesi ve gömülü kurulum akışı korunur.
+### Adım 2 — Terminal Menüsü ve Paket Kurulumu (`terminal-bootstrap.mjs` & `run-steps.mjs`)
+Terminal ekranında projenin durumu (`Yeni kurulum` / `Uygulama zaten kurulu`) ve paketlerin durumu (`Paketler: hazır` / `kurulum/onarım bekliyor`) gösterilir:
+- **`1) Paketleri Kur / Onar`:** Kök dizin ve tüm alt projeler için sıralı (`[1/N] ... [N/N]`) paket kurulumunu çalıştırır.
+- **Otomatik Bun & Shim Köprüsü (`bin/shims/`):** Bilgisayarda `npm`, `pnpm` veya `yarn` kurulu değilse işlemler otomatik olarak **Bun** üzerinden yürütülür. `postinstall` içindeki `npm --prefix ../alt-paket ci` gibi komutlar ve `package-lock.json` + `overrides` içeren projeler çevrimdışı Bun önbelleğiyle (`~/.bun/install/cache`) uyumlu şekilde kurulur.
+- **Doğrulama:** Tüm alt projelerin `node_modules` dizinleri kontrol edilir; eksiksizse durum **`Paketler: hazır`** (`Bulunanlar: Paketler`) olarak işaretlenir.
 
-**Kurulum tamamlandı ama uygulama açılmadıysa:** İlk terminali açık tutup uygulama günlüğündeki hatayı giderin; son ekrandan **Uygulamayı yeniden başlat / denetle** düğmesini kullanın. Başlatma için varsayılan süre sınırı 60 saniyedir; yavaş uygulamalarda `SETUP_APP_START_TIMEOUT_MS` ile ayarlanabilir. Eski `tools/setup` kopyası bulunan projelerde yukarıdaki yenileme komutu da çalıştırılmalıdır. Ayrıntılar: [Başlatma sorunlarını giderme](ENTEGRASYON.md#başlatma-sorunlarını-giderme).
+### Adım 3 — Web Kurulum Sihirbazı (`127.0.0.1:5050` — `wizard/server.mjs`)
+Terminalde **`2) Kurulum Sihirbazına Geç`** seçildiğinde tarayıcıda 5 adımlı kurulum arayüzü açılır:
+1. **Dağıtım Modu:** Yerel (`localhost`) veya Alan Adı / Reverse Proxy seçimi.
+2. **Sunucu ve Portlar:** Backend API portu ve (Full-Stack projelerde) Frontend portunun belirlenmesi.
+3. **Veritabanı:** SQLite, PostgreSQL, MySQL veya özel bağlantı dizesi seçimi (**Canlı Bağlantı Sınaması** düğmesi ile anlık kontrol).
+4. **Yönetici ve E-posta:** İlk yönetici (Admin) hesabı ve isteğe bağlı SMTP ayarları.
+5. **Uygulama (`Apply`):** `.env` dosyası kök ve alt projelere güvenli izinlerle yazılır; varsa derleme (`build`), veritabanı göçü (`migrate`) ve tohumlama (`seed`) çalıştırılır; `data/installation.lock` oluşturulur. (Hata olursa tüm değişiklikler otomatik geri alınır.)
 
-Terminal menüsünde ayrıca **yeniden yapılandırma**, **yeniden denetleme** ve **doğrulanmış yedekle temiz kurulum** seçenekleri bulunur. Temiz kurulum açık onay ve doğrulama metni ister. Sihirbaz portu doluysa süreç bilgisi gösterilir; yalnız onayınızla doğrulanmış kurulum süreci durdurulur. Terminali sihirbaz bitene kadar açık tutun.
+### Adım 4 — Doğrulanmış Uygulama Başlatma (`app-process.mjs`)
+Kurulum tamamlandığında uygulama otomatik olarak başlatılır:
+- Hem API sunucusunun hem de (varsa) ayrı Frontend / `devPort` (`5173` vb.) arayüzünün gerçek HTTP yanıtı döndürdüğü doğrulanır.
+- Hazır olduğunda tarayıcı otomatik olarak uygulamanın giriş sayfasına yönlendirilir.
+- Uygulama günlükleri (parola ve sırlar `******` ile maskelenmiş olarak) ilk açılan terminal ekranından canlı izlenir.
 
-`--port 5051` sihirbaz portunu değiştirir (1024–65535). Öncelik sırası `--port` → `SETUP_WIZARD_PORT` → eski `SETUP_PORT` → `ports.wizard` → `5050` şeklindedir. `--no-open` tarayıcıyı açmadan bağlantıyı gösterir; `--check-only` dosya oluşturmadan ve port açmadan durum JSON çıktısı verir. Birden fazla bağımsız uygulama bulunduğunda hedef terminalden veya `--candidate <dizin>` ile seçilir. Doğrudan `wizard --candidate <dizin>` komutu da seçilen dizini kurulum kökü olarak kullanır.
+> **İpucu (Başlatma Sorunları):** Kurulum bitti ancak uygulama açılmadıysa kurulumu silmenize gerek yoktur. İlk terminaldeki hata çıktısını kontrol edip son ekrandaki **"Uygulamayı yeniden başlat / denetle"** düğmesini kullanabilirsiniz. Ayrıntılar: [Başlatma sorunlarını giderme](docs/ENTEGRASYON.md#başlatma-sorunlarını-giderme).
 
 ---
 
-## 🏗️ Desteklenen Mimariler
+## 🧩 Uygulama Yapısı (Klasör ve Modül Özeti)
+
+`setup` dört ana katmandan oluşur:
+
+| Klasör / Dosya | Görevi |
+|---|---|
+| **`bin/`** | **Başlatıcılar ve Paket Yöneticisi Köprüleri** |
+| ├─ `bin/setup.mjs` | Ana CLI giriş noktası (`setup`, `wizard`, `init`, `detect`, `version`). |
+| ├─ `bin/kurulum.bat` / `kurulum.sh` | Çift tıklanabilir Windows ve Linux/macOS başlatıcı şablonları. |
+| └─ `bin/shims/` | `npm`, `pnpm`, `yarn`, `npx` çağrılarını çalışma zamanında Bun'a çeviren uyumluluk katmanı (`npm-shim.mjs`, `pnpm-shim.mjs`). |
+| **`scripts/`** | **Mimari Algılama ve Terminal Kurulum Motoru** |
+| ├─ `detect-project.mjs` | Proje dili, çerçevesi, alt projeleri (`subprojects`), portları ve `.env.example` dosyalarını tarar. |
+| ├─ `terminal-bootstrap.mjs` | İnteraktif terminal menüsünü (Paket kurma, Sihirbaz başlatma, Yeniden yapılandırma, Yedekli sıfırlama) yönetir. |
+| ├─ `run-steps.mjs` & `process-runner.mjs` | Kök ve alt dizin kurulum adımlarını (`--prefix`), canlı log akışını, zaman aşımını ve süreç ağacı temizliğini yürütür. |
+| ├─ `polyglot.mjs` | Python, Go, C# .NET, Rust ve C/C++ (CMake) projeleri için kurulum ve başlatma profillerini barındırır. |
+| └─ `setup-api.mjs` | `initProject`, `inspect` ve programatik ESM API fonksiyonlarını dışa aktarır. |
+| **`wizard/`** | **Web Kurulum Sihirbazı (Port 5050) ve Uygulama Yöneticisi** |
+| ├─ `server.mjs` & `core.mjs` | Yerel HTTP sihirbaz sunucusu, gömülü Express/Fastify/Next.js middleware çekirdeği ve sağlık kontrolü (`/api/app-health`). |
+| ├─ `shared.mjs` & `config.mjs` | `.env` üretimi, `scrypt` parola özetleme, `build` / `migrate` / `seed` adımları ve atomik geri alma (rollback) mantığı. |
+| ├─ `app-process.mjs` | Tekil sunucu, çift süreç (Backend + Frontend) ve masaüstü uygulama süreçlerini başlatır ve izler. |
+| └─ `ui.html.mjs` | 5 adımlı Türkçe web sihirbazı arayüzü. |
+| **`docs/`** | **Dokümantasyon ve Değişiklik Günlüğü** |
+| ├─ [`docs/ENTEGRASYON.md`](docs/ENTEGRASYON.md) | 5 mimari senaryo için detaylı entegrasyon kılavuzu, kod şablonları ve CLI/API referansı. |
+| └─ [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Sürüm geçmişi ve yapılan tüm geliştirmelerin detaylı kaydı. |
+
+---
+
+## 🏗️ Desteklenen 5 Mimari Senaryo
 
 | Senaryo | Mimari Türü | Desteklenen Teknolojiler |
 |---|---|---|
 | **Senaryo 1** | **Node.js Sunucu** | Express.js, Fastify, Koa, Hono |
-| **Senaryo 2** | **SPA & Statik Web** | React, Vue, Vite, Saf HTML/JS |
-| **Senaryo 3** | **Full-Stack (SSR, Monorepo & Çift Süreç)** | Next.js (App Router), Nuxt, SvelteKit, Astro, bağımsız Backend + Frontend (`srv/` + `ui/`), pnpm/npm/yarn/bun workspaces |
+| **Senaryo 2** | **SPA & Statik Web** | React, Vue, Vite, Saf HTML/JS (yerleşik güvenli statik sunucu dahil) |
+| **Senaryo 3** | **Full-Stack, Monorepo & Çok Parçalı** | Next.js, Nuxt, SvelteKit, Astro, `backend/` + `frontend/` + alt paketler, `pnpm`/`npm`/`yarn`/`bun` workspaces |
 | **Senaryo 4** | **Çok Dilli Backend** | Python (FastAPI, Django, Flask), Go, C# .NET, Rust, C/C++ (CMake, Makefile, Meson) |
-| **Senaryo 5** | **Masaüstü ve Oyunlar** | Electron (gömülü IPC), Tauri (Sidecar), C# WinForms / WPF (.NET), Python GUI (Tkinter, PyQt, PySide), Unity, Unreal Engine, Godot |
+| **Senaryo 5** | **Masaüstü ve Oyunlar** | Electron (IPC), Tauri (Sidecar), C# WinForms / WPF, Python GUI (Tkinter, PyQt, PySide), Unity, Unreal, Godot |
 
 ---
 
-## 🌟 Temel Avantajlar
+## 🌟 Öne Çıkan Özellikler
 
-- **Standart Dışı ve Dağınık Repolar İçin Derin Tarama (Deep Recursive Discovery):** Kök dizinde `package.json` olmasa dahi 3 derinlik seviyesine kadar alt klasörleri tarar, içerik analitiği ile rolleri (Frontend, Backend, Desktop) belirler ve alt dizindeki projeyi tek tıkla kurar.
-- **Çok Parçalı ve Hibrit Repolar (Backend + Frontend + Alt Paketler) İçin Sıralı Kurulum ve Çift Süreç Orkestrasyonu:** Kök dizinde `package.json` olmasa da veya E2E/orkestrasyon amaçlı bir kök `package.json` bulunsa da `backend/`, `frontend/`, `execution/`, `llm-yonetimi/`, `srv/`, `ui/` gibi alt klasörlerdeki tüm bileşenleri Senaryo 3 (`node-fullstack`) altında algılar; hem kök hem alt dizinler için sıralı `--prefix` kurulum adımları üretir, tüm alt paketlerin `node_modules` varlığını doğrular ve tekrar açılışta `Paketler: hazır` (`Bulunanlar: Paketler`) durumunu korur. Canlı geliştirme modunda veya tekil orkestrasyon betiklerinde hem API portunu hem de `devPort` (`frontendPort`) UI adresini doğrular.
-- **Dağınık Yapılandırma Birleştirme (Bubble-Up):** `config/`, `deploy/`, `server/` gibi klasörlerdeki dağınık `.env.example` dosyalarını otomatik havuzda birleştirir ve üretilen `.env`'yi tüm alt projelere güvenle dağıtır.
-- **Etkileşimli Aday Seçim Paneli:** Repoda birden çok bağımsız mikroservis/uygulama olduğunda terminal menüsünden, Web Sihirbazı üzerinden veya CLI'dan `--candidate <dizin>` ile hedef projeyi seçtirir.
-- **Sıfır Bağımlılık ve Genişletilmiş Sürüm Desteği:** Yalnızca Node.js (>=18, Node 20, 22, 24, 25, 26+) veya Bun yerleşik modüllerini kullanır; `npm install` gerektirmez.
-- **C/C++ ve Oyun Motorları (Unity/Unreal/Godot) Desteği:** `CMakeLists.txt`, `Makefile` veya oyun motoru yapılandırmaları (`project.godot`, Unity `ProjectVersion.txt`, Unreal `*.uproject`) otomatik tanınır; derleme ve başlatma adımları sıfır ayarla işletilir.
-- **Kapsamlı Hata Yönetimi ve Otomatik Geri Alma (Rollback):** Kurulum adımlarında (derleme, veritabanı migration veya seed) hata oluşursa üretilen geçici dosyalar temizlenir, eski `.env` yedeği (`backups/.env-*.bak`) otomatik olarak geri yüklenir ve bozuk lock bırakılmaz.
-- **Akıllı Ağ ve Soket Hata Çözümlemesi:** Canlı veritabanı ve SMTP sınamalarında sistem soket kodları (`ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND`, `EHOSTUNREACH`) kullanıcı dostu Türkçe hata açıklamalarına dönüştürülür.
-- **Sinyal Yakalama ve Zombi Süreç Koruması:** Terminal kapatıldığında veya `Ctrl+C` (`SIGINT`, `SIGTERM`) yapıldığında süreç ağacı temizlenir, yetim süreç kalması önlenir.
-- **Dizin İzni ve Port Çakışması Ön Denetimleri:** Kurulum öncesinde dizin yazılabilirliği (`fs.constants.W_OK`) ve port meşguliyeti denetlenir; kullanıcıya alternatif port veya süreç sonlandırma önerilir.
-- **Arayüzde Görsel Hata Vurgulama ve Yeniden Bağlanma:** Form doğrulama hatalarında ilgili alanlar kırmızı çerçeveyle işaretlenir; sunucu kesintilerinde tepede beliren bildirim çubuğuyla yeniden bağlanma olanağı sunulur; butonlarda çift tıklama koruması bulunur.
-- **Erken Çökme Teşhisi (`APP_CRASHED`):** Uygulama başlatıldıktan sonraki ilk 3.2 saniyede çökerse çıkış kodu, sinyal ve stderr satırlarıyla anında kullanıcıya bildirilir.
-- **Dual npm / bunx, Gelişmiş `npm-shim` ve Çevrimdışı `bun.lock` Uyumluluğu:** İş ortamlarında `npm` çalışmasa dahi sistemdeki `bun` algılanarak kurulumdan derlemeye tüm süreç sorunsuz tamamlanır. `bin/shims` (`npm`, `pnpm`, `yarn`, `bunx`) katmanı `postinstall` betiklerindeki `npm --prefix <dizin> ci` çağrılarını Bun çalışma dizinine (`cwd`) ve `install` komutuna çevirir; `package-lock.json` ve `overrides` içeren projelerde çevrimdışı Bun önbelleğinden (`~/.bun/install/cache`) ağ hatası almadan kurulum yapılmasını sağlar.
-- **Monorepo (Workspaces) Desteği:** `pnpm-workspace.yaml`, `apps/*` ve `packages/*` mimarisindeki monorepoların bağımlılıkları, derleme adımları (`buildServer`, `buildClient`) ve migration'ları (`packages/db`) otomatik algılanır ve işletilir.
-- **Dinamik Paket Yöneticisi Fallback'i:** Proje `pnpm` veya `yarn` istese bile sistemde o araç yoksa ve yalnızca `bun` varsa, kurulum ve derleme otomatik olarak `bun`'a yönlendirilir; alt script çağrıları (`bin/shims`) çökmeden çalışır.
-- **Esnek Veritabanı ve Kurumsal SMTP / Google Workspace:** SQLite'ın yanı sıra PostgreSQL, MySQL ve Özel Bağlantı Dizesi (Connection String) desteği; Google Workspace kurumsal alan adları (`@sirket.com`) ve genel SMTP sunucuları ile tam uyumluluk.
-- **Gelişmiş .env Ayrıştırması:** Standart POSIX `export ` önekleri, satır içi yorumlar (`# comment`) ve çok satırlı tırnaklı dizgeler bozulmadan ayrıştırılır.
-- **Canlı Ağ Sınaması (Active Pre-Apply Probing):** Veritabanı (TCP port) ve SMTP sunucusuna (ESMTP 220 banner okuma) arayüzden tek tıkla canlı bağlantı testi.
-- **Canlı İşlem Günlüğü ve Güvenli Sır Maskeleme:** Kurulum adımları esnasında derleme ve migration çıktıları arayüzdeki canlı terminal konsolundan izlenir; parolalar ve bağlantı sırları (`******`) otomatik sansürlenir.
-- **Çok Dilli Migration ve Tohumlama (Seeding):** Node.js script'lerinin yanı sıra Django, Alembic, .NET EF, Rust migration'ları, kaynak koddan port tespiti ve otomatik `seed` betiği yürütümü.
-- **Yeniden Yapılandırma Modu (`--reconfigure`):** Kurulu sistemi yıkıcı temiz kuruluma zorlamadan ayarları, portları ve `.env` dosyasını güvenle güncelleme imkanı.
-- **Güvenli ve Yüksek Performanslı:** Tarayıcı uygulamalarına gizli anahtarları sızdırmaz, CSRF, origin tutarlılığı, bellek sızıntısız rate limiting (`createRateLimiter`), akış tabanlı statik dosya sunumu (`createReadStream`) ve symlink sınır kontrolü (`realpathSync`) içerir.
-- **Kapsamlı Test Kapsamı:** Yerleşik otomasyon testleri; mimari senaryoları, terminal başlatıcısını, derin taramayı, çift süreç yönetimini, port çakışmalarını, CSRF korumalarını, çok dilli profilleri ve hata dayanıklılığını kapsar. Testleri `npm test` ile çalıştırabilirsiniz.
+### 1. Akıllı Algılama ve Çok Parçalı Repo Desteği
+- **Derin Tarama ve Hibrit Mimari:** Kök dizinde `package.json` olmasa da veya E2E/orkestrasyon amaçlı bir kök `package.json` bulunsa da alt dizinlerdeki tüm bileşenleri (`backend`, `frontend`, `execution`, `llm-yonetimi`, `srv`, `ui`) otomatik algılar ve sırayla kurar.
+- **Dağınık `.env.example` Birleştirme:** Alt klasörlerdeki örnek ortam dosyalarını birleştirir; üretilen `.env` dosyasını kök ve alt projelere dağıtır.
+- **Etkileşimli Aday Seçimi:** Birden fazla bağımsız uygulama barındıran repolarda terminalden, web arayüzünden veya `--candidate <dizin>` parametresiyle hedef seçimi sunar.
+
+### 2. Kurumsal Ağ, Bun Fallback ve Çevrimdışı Uyumluluk
+- **Sıfır Bağımlılık:** Yalnızca yerleşik Node.js (>=18) veya Bun modüllerini kullanır.
+- **Gelişmiş `bin/shims` Katmanı:** Sistemde `npm`, `pnpm` veya `yarn` yoksa tüm kurulum ve alt betikleri (`npm --prefix <dir> ci`, `pnpm --filter <pkg>`) şeffaf biçimde Bun'a çevirir.
+- **Çevrimdışı `bun.lock` Ön Hazırlığı:** `package-lock.json` ve `overrides` içeren projelerde yerel Bun önbelleğini (`~/.bun/install/cache`) kullanarak ağ engeline takılmadan kurulum yapar.
+
+### 3. Web Sihirbazı ve Çift Süreç Orkestrasyonu
+- **Canlı Ön Kontroller:** Veritabanı (TCP) ve SMTP bağlantılarını kurulumdan önce tek tıkla test eder.
+- **Çift Süreç (Backend + Frontend) Yönetimi:** Geliştirme veya çift sunucu modunda Backend ve Frontend süreçlerini birlikte başlatır, `API_URL` ve `ALLOWED_ORIGINS` köprülerini kurar; süreçlerden biri çökerse diğerini temizce kapatır.
+- **Yeniden Yapılandırma (`--reconfigure`) ve Yedekli Temiz Kurulum:** Mevcut verileri silmeden ayarları güncelleme veya SHA-256 doğrulanmış yedek (`backups/`) alarak sıfırlama imkanı sunar.
+
+### 4. Güvenlik ve Hata Dayanıklılığı
+- **Atomik Rollback:** Derleme, migration veya seed adımlarından biri başarısız olursa yarım `.env` ve kilit dosyalarını temizleyip önceki kararlı yedeği geri yükler.
+- **Gizli Bilgi Koruması:** SPA projelerinde gizli anahtarları (`SESSION_SECRET`, `DATABASE_URL`, `ADMIN_PASSWORD_HASH`) tarayıcıya sızdırmaz; terminal ve web günlüklerinde parolaları `******` ile maskeler.
+- **Kapsamlı Test Paketi:** 215+ birim ve entegrasyon testi (`npm test`) ile tüm senaryolar doğrulanmıştır.
 
 ---
 
 ## 📚 Kapsamlı Dokümantasyon
 
-Tüm mimarilere özel kopyala-yapıştır kod şablonları, framework middleware entegrasyonları, programatik ESM API referansı ve detaylı parametreler için:
-
-👉 **[ENTEGRASYON.md](ENTEGRASYON.md) — 5 Mimari Senaryo ve Geliştirici Kılavuzu**
+- 👉 **[docs/ENTEGRASYON.md](docs/ENTEGRASYON.md) — 5 Mimari Senaryo, Uygulama Yapısı ve Geliştirici Kılavuzu**
+- 👉 **[docs/CHANGELOG.md](docs/CHANGELOG.md) — Değişiklik Günlüğü (Changelog)**

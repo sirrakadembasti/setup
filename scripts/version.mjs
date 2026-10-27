@@ -17,7 +17,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(scriptDir, "..");
 const versionFile = path.join(rootDir, "VERSION");
 const pkgFile = path.join(rootDir, "package.json");
-const changelogFile = path.join(rootDir, "CHANGELOG.md");
+const changelogFile = fs.existsSync(path.join(rootDir, "docs", "CHANGELOG.md")) ? path.join(rootDir, "docs", "CHANGELOG.md") : path.join(rootDir, "CHANGELOG.md");
 
 export function parseSemver(versionString) {
   const cleaned = String(versionString || "").trim().replace(/^v/i, "");
