@@ -3051,3 +3051,90 @@ test("Bulgu 5.3: executeSetupApply build, migrate ve seed adımlarına tam ortam
   assert.ok(fs.existsSync(path.join(tmpRoot, "migration.success")), "Migration betiği ortam değişkenlerini ve .env dosyasını doğrulayarak başarıyla çalışmalı");
 });
 
+test("Hedef Proje Odaklı Tek Sayfa Web Sihirbazı: 4 kart düzeni, modül rozetleri ve opsiyonel yönetici ile tek tıkla kurulum", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-target-centric-"));
+  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  fs.writeFileSync(
+    path.join(tmpRoot, "package.json"),
+    JSON.stringify({ name: "xfactor-e2e", devDependencies: { "@playwright/test": "^1.0.0" } }),
+    "utf8",
+  );
+  for (const sub of ["backend", "frontend"]) {
+    fs.mkdirSync(path.join(tmpRoot, sub), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpRoot, sub, "package.json"),
+      JSON.stringify({
+        name: `@xfactor/${sub}`,
+        dependencies: sub === "frontend" ? { react: "^18.0.0" } : { express: "^4.0.0" },
+      }),
+      "utf8",
+    );
+  }
+  fs.writeFileSync(path.join(tmpRoot, ".env.example"), "PORT=5000\nAPI_SECRET_KEY=demo-key\n", "utf8");
+
+  const validToken = "target-centric-token-123456";
+  const server = createSetupServer(validToken, { projectRoot: tmpRoot, dataDir: tmpRoot });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const { port } = server.address();
+  const baseUrl = `http://127.0.0.1:${port}`;
+
+  const loginRes = await fetch(`${baseUrl}/setup?token=${validToken}`, { redirect: "manual" });
+  const cookiePair = loginRes.headers.get("set-cookie").split(";")[0];
+  const pageRes = await fetch(`${baseUrl}/setup`, { headers: { Cookie: cookiePair } });
+  const pageHtml = await pageRes.text();
+
+  assert.match(pageHtml, /1\. Hedef Proje ve Sistem Hazırlık Özeti/);
+  assert.match(pageHtml, /2\. Hedef Proje Portları ve Ortam Değişkenleri/);
+  assert.match(pageHtml, /3\. Veritabanı ve Veri Hazırlığı/);
+  assert.match(pageHtml, /4\. Kaydet, Hazırla ve Hedef Uygulamayı Başlat/);
+  assert.match(pageHtml, /Ayarları Kaydet ve Hedef Uygulamayı Başlat/);
+
+  const statusRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
+  const statusJson = await statusRes.json();
+  assert.ok(statusJson.detected.repositoryName.startsWith("setup-target-centric-"));
+  assert.ok(Array.isArray(statusJson.detected.subprojectList) && statusJson.detected.subprojectList.length >= 2);
+
+  const csrf = JSON.parse(pageHtml.match(/window\.__SETUP__=(\{[^;]+\});/)[1]).csrfToken;
+  const applyPayload = {
+    deployment: {
+      mode: "localhost",
+      publicUrl: `http://localhost:${port}/`,
+      basePath: "/",
+      allowedOrigins: [`http://localhost:${port}`],
+      trustProxyHops: 0,
+    },
+    server: { host: "127.0.0.1", port: 5000, frontendPort: 5001 },
+    admin: { name: "", email: "", password: "" },
+    email: { enabled: false },
+    customEnv: { API_SECRET_KEY: "custom-val-99" },
+    buildClient: false,
+    overwriteExistingEnv: true,
+  };
+
+  const applyRes = await fetch(`${baseUrl}/api/apply`, {
+    method: "POST",
+    headers: {
+      Cookie: cookiePair,
+      "X-Setup-CSRF": csrf,
+      Origin: `http://localhost:${port}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(applyPayload),
+  });
+  const applyJson = await applyRes.json();
+  assert.equal(applyRes.status, 202, JSON.stringify(applyJson));
+
+  let statusAfter;
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
+    statusAfter = await sRes.json();
+    if (statusAfter.apply.status === "success" || statusAfter.apply.status === "error") break;
+  }
+  assert.equal(statusAfter.apply.status, "success", statusAfter.apply.message);
+  assert.equal(fs.existsSync(path.join(tmpRoot, "admin.json")), false, "Boş bırakılan opsiyonel yönetici için admin.json oluşturulmamalı");
+  assert.match(fs.readFileSync(path.join(tmpRoot, ".env"), "utf8"), /API_SECRET_KEY="?custom-val-99"?/);
+});
+
+

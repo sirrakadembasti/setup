@@ -417,7 +417,7 @@ export function createSetupWizardCore(options = {}) {
       try {
         const rawPayload = body && typeof body === "object" ? body : {};
         const shouldWait = Boolean(rawPayload.wait || options.syncApply);
-        const payload = setupPayloadSchema.parse(rawPayload, { allowOptionalAdmin: !detection.scenario.requiresAdmin });
+        const payload = setupPayloadSchema.parse(rawPayload, { allowOptionalAdmin: true });
 
         applyJob.status = "running";
         applyJob.message = "Kurulum uygulanıyor; adımlar ekranda canlı izleniyor…";

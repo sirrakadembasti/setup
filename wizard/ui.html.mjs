@@ -10,7 +10,10 @@ export function renderSetupPage(csrfToken, options = {}) {
 <html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${pageTitle}</title>
 <style>
-:root{color-scheme:light;--p:#5138ee;--bg:#f4f6fb;--card:#fff;--line:#dbe1ec;--muted:#64748b;--danger:#b91c1c;--ok:#047857;--run:#2563eb;--tip:#0f172a}*{box-sizing:border-box}body{margin:0;background:var(--bg);font:15px/1.5 system-ui;color:#111827}.wrap{max-width:980px;margin:32px auto;padding:0 16px}.hero,.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px;margin-bottom:16px;box-shadow:0 8px 24px #1725540d}.hero h1{margin:0}.muted{color:var(--muted)}.steps{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:18px 0}.step{padding:10px;border:1px solid var(--line);border-radius:10px;text-align:center;font-size:12px}.step.on{background:var(--p);color:#fff}.pane{display:none}.pane.on{display:block}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.full{grid-column:1/-1}label{display:block;font-weight:650;margin:8px 0 5px}input,select{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff}input[type=checkbox]{width:auto}.actions{display:flex;justify-content:space-between;gap:10px;margin-top:22px}button{border:0;border-radius:9px;padding:11px 17px;font-weight:770;cursor:pointer}button.primary{background:var(--p);color:#fff}button.secondary{background:#e8ecf5}button:disabled{opacity:.55}.check{padding:10px;border-bottom:1px solid var(--line)}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:15px;border-radius:10px;max-height:320px;overflow:auto}.warn{padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px}.error{color:var(--danger);font-weight:650}.ok{color:var(--ok);font-weight:650}.pwd-wrap{position:relative;display:flex;align-items:center;gap:8px}.pwd-wrap input{flex:1;padding-right:44px}.pwd-toggle{position:absolute;right:8px;border:0;background:transparent;cursor:pointer;font-size:18px;line-height:1;padding:6px;border-radius:8px;color:var(--muted)}.pwd-toggle:hover{background:#eef2ff;color:var(--p)}.pwd-rules{margin:10px 0 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:#f8fafc}.pwd-rules div{padding:3px 0;font-size:14px}.pwd-rules .pass{color:var(--ok);font-weight:650}.pwd-rules .fail{color:var(--danger);font-weight:650}.pwd-rules .running{color:var(--run);font-weight:650}
+:root{color-scheme:light;--p:#5138ee;--bg:#f4f6fb;--card:#fff;--line:#dbe1ec;--muted:#64748b;--danger:#b91c1c;--ok:#047857;--run:#2563eb;--tip:#0f172a}*{box-sizing:border-box}body{margin:0;background:var(--bg);font:15px/1.5 system-ui;color:#111827}.wrap{max-width:980px;margin:32px auto;padding:0 16px}.hero,.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:24px;margin-bottom:16px;box-shadow:0 8px 24px #1725540d}.hero h1{margin:0}.muted{color:var(--muted)}.steps{display:none}.step{padding:10px;border:1px solid var(--line);border-radius:10px;text-align:center;font-size:12px}.step.on{background:var(--p);color:#fff}.pane{display:block;padding:18px 0;border-bottom:1px solid var(--line)}.pane:first-of-type{padding-top:0}.pane:last-of-type{border-bottom:0;padding-bottom:0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.full{grid-column:1/-1}label{display:block;font-weight:650;margin:8px 0 5px}input,select{width:100%;padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff}input[type=checkbox]{width:auto}.actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px}button{border:0;border-radius:9px;padding:11px 17px;font-weight:770;cursor:pointer}button.primary{background:var(--p);color:#fff}button.secondary{background:#e8ecf5}button:disabled{opacity:.55}.check{padding:8px 10px;border-bottom:1px solid var(--line);font-size:14px}pre{white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:15px;border-radius:10px;max-height:320px;overflow:auto}.warn{padding:12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px}.error{color:var(--danger);font-weight:650}.ok{color:var(--ok);font-weight:650}.pwd-wrap{position:relative;display:flex;align-items:center;gap:8px}.pwd-wrap input{flex:1;padding-right:44px}.pwd-toggle{position:absolute;right:8px;border:0;background:transparent;cursor:pointer;font-size:18px;line-height:1;padding:6px;border-radius:8px;color:var(--muted)}.pwd-toggle:hover{background:#eef2ff;color:var(--p)}.pwd-rules{margin:10px 0 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:#f8fafc}.pwd-rules div{padding:3px 0;font-size:14px}.pwd-rules .pass{color:var(--ok);font-weight:650}.pwd-rules .fail{color:var(--danger);font-weight:650}.pwd-rules .running{color:var(--run);font-weight:650}
+.mod-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:8px;background:#eef2ff;border:1px solid #c7d2fe;color:#1e1b4b;font-size:12px;font-weight:600;margin:4px 6px 0 0}
+details.opt-box{margin-top:12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc}
+details.opt-box>summary{cursor:pointer;font-weight:650;font-size:14px;color:#1e293b;user-select:none}
 .lbl-row{display:flex;align-items:center;gap:6px;margin:8px 0 5px;flex-wrap:wrap}.lbl-row label{margin:0;font-weight:650}.help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;border:1px solid #c7d2fe;background:#eef2ff;color:var(--p);font-size:11px;font-weight:700;cursor:help;position:relative;line-height:1}.help:hover,.help:focus{background:var(--p);color:#fff;outline:none}.help::after{content:attr(data-tip);position:absolute;left:50%;top:24px;transform:translateX(-50%);width:min(280px,70vw);padding:10px 12px;background:var(--tip);color:#fff;border-radius:8px;font-size:12px;font-weight:400;line-height:1.45;opacity:0;pointer-events:none;transition:opacity .12s;z-index:30;text-align:left;white-space:normal}.help:hover::after,.help:focus::after{opacity:1}.tip-note{margin:6px 0 0;font-size:12px;color:var(--muted)}
 .input-error{border-color:var(--danger)!important;background:#fef2f2!important}
 .field-error-msg{color:var(--danger);font-size:12px;margin-top:4px;font-weight:600}
@@ -20,43 +23,18 @@ export function renderSetupPage(csrfToken, options = {}) {
 </style></head><body>
 <div id="offlineBanner" class="offline-banner hidden"><span>⚠️ Sunucu bağlantısı koptu. Yeniden bağlanılıyor…</span><button type="button" id="btnReconnect" class="secondary" style="padding:4px 12px;font-size:12px;border:0;border-radius:6px;cursor:pointer">Tekrar Dene</button></div>
 <main class="wrap">
-<section class="hero"><h1>${pageTitle}</h1><p class="muted">Sunucuyu doğrular, güvenli ayarları kaydeder, veritabanını hazırlar ve ilk yöneticiyi oluşturur.</p><div id="scenarioInfo" class="warn" style="margin-top:10px">Proje mimarisi algılanıyor…</div><div class="warn" style="margin-top:8px"><strong>Kurulum şeması:</strong> 1) Ön kontrol · 2) Adres / kurulum biçimi (yerel veya kurum) · 3) Veri ve saklama · 4) Yönetici ve e-posta · 5) Uygula. Bu araç yalnız ilk kurulum içindir; Nginx, TLS veya güvenlik duvarını kendiliğinden değiştirmez.</div></section>
-<div class="steps"><div class="step on">1. Sunucu</div><div class="step">2. Adres</div><div class="step">3. Veri</div><div class="step">4. Güvenlik</div><div class="step">5. Uygula</div></div>
+<section class="hero"><h1>${pageTitle}</h1><p class="muted">Hedef GitHub projesinin çalışma zamanı gereksinimlerini doğrular, port ve ortam değişkenlerini (<code>.env</code>) hazırlar ve uygulamayı tek tıkla başlatır.</p><div id="scenarioInfo" class="warn" style="margin-top:10px">Hedef proje mimarisi algılanıyor…</div></section>
+<div class="steps"><div class="step on">1. Proje Özeti</div><div class="step">2. Port &amp; Ortam</div><div class="step">3. Veritabanı</div><div class="step">4. İsteğe Bağlı</div><div class="step">5. Başlat</div></div>
 <form id="wizard" class="card">
 <section class="pane on">
-  <h2>Sunucu ön kontrolü <span class="help" tabindex="0" data-tip="Kuruluma başlamadan önce Node.js sürümü, yazma izinleri ve mevcut kurulum artıkları denetlenir. Kırmızı bir madde varsa önce onu düzeltin.">?</span></h2>
+  <h2>1. Hedef Proje ve Sistem Hazırlık Özeti <span class="help" tabindex="0" data-tip="Hedef projenin gereksinim duyduğu çalışma zamanı, dizin yazma izinleri ve algılanan alt modüller burada listelenir.">?</span></h2>
   <div id="checks">Kontrol ediliyor…</div>
-  <p class="muted">İşletim sistemi, Node.js, bellek, ağ ve yazma izinleri denetlenir.</p>
 </section>
 <section class="pane">
-  <h2>Yayın adresi ve kurulum biçimi <span class="help" tabindex="0" data-tip="Uygulamanın nerede ve nasıl yayınlanacağını belirler: yerel demo (localhost), alt alan adı (subdomain) veya kurum sitesi alt yolu (subpath).">?</span></h2>
+  <h2>2. Hedef Proje Portları ve Ortam Değişkenleri (<code>.env</code>) <span class="help" tabindex="0" data-tip="Hedef uygulamanın çalışacağı yerel portları ve projede tanımlı .env.example değişkenlerini buradan düzenleyebilirsiniz. Varsayılan değerler otomatik doldurulmuştur.">?</span></h2>
   <div class="grid">
     <div>
-      <div class="lbl-row"><label for="mode">Kurulum biçimi</label><span class="help" tabindex="0" data-tip="Yerel: yalnız bu bilgisayarda deneme (http://localhost). Subdomain: https://uygulama.kurum.com. Alt yol: https://kurum.com/app gibi.">?</span></div>
-      <select name="mode" id="mode">
-        <option value="localhost">Yerel / localhost (deneme)</option>
-        <option value="subdomain">Subdomain (üretim önerilen)</option>
-        <option value="subpath">Kurum sitesi altında alt yol</option>
-      </select>
-      <p class="tip-note" id="modeNote">Yerel kurulumda reverse proxy ve TLS gerekmez.</p>
-    </div>
-    <div>
-      <div class="lbl-row"><label for="host">Uygulamanın dinleyeceği adres</label><span class="help" tabindex="0" data-tip="127.0.0.1: yalnız bu makine + reverse proxy. 0.0.0.0: ağdaki diğer bilgisayarlar da bağlanabilir (güvenlik duvarı gerekir).">?</span></div>
-      <select name="host" id="host">
-        <option value="127.0.0.1">127.0.0.1 (yalnız bu makine / reverse proxy)</option>
-        <option value="0.0.0.0">0.0.0.0 (ağdan erişim)</option>
-      </select>
-    </div>
-    <div class="full">
-      <div class="lbl-row"><label for="publicUrl">Herkese açık adres</label><span class="help" tabindex="0" data-tip="Kullanıcıların tarayıcıya yazacağı adrestir. Üretimde HTTPS zorunludur. Yerelde http://localhost:5000 yeterlidir.">?</span></div>
-      <input name="publicUrl" id="publicUrl" type="url" required placeholder="http://localhost:5000">
-    </div>
-    <div>
-      <div class="lbl-row"><label for="basePath">Alt yol</label><span class="help" tabindex="0" data-tip="Uygulamanın kök altındaki yolu. Yerel ve subdomain kurulumunda / kalır. Subpath örn: /app">?</span></div>
-      <input name="basePath" id="basePath" value="/" required>
-    </div>
-    <div>
-      <div class="lbl-row"><label for="port" id="lblPort">Uygulama portu</label><span class="help" tabindex="0" data-tip="Node sunucusunun dinleyeceği TCP portu. Üretimde genelde 5000 bırakılır; Nginx bunun önüne geçer.">?</span></div>
+      <div class="lbl-row"><label for="port" id="lblPort">Uygulama / Backend Portu</label><span class="help" tabindex="0" data-tip="Hedef sunucunun dinleyeceği TCP portu.">?</span></div>
       <input name="port" id="port" type="number" min="1024" max="65535" value="5000" required>
     </div>
     <div id="frontendPortGroup" class="hidden">
@@ -64,30 +42,59 @@ export function renderSetupPage(csrfToken, options = {}) {
       <input name="frontendPort" id="frontendPort" type="number" min="1024" max="65535" value="3000">
     </div>
     <div class="full">
-      <div class="lbl-row"><label for="origins">İzinli origin adresleri</label><span class="help" tabindex="0" data-tip="CORS / CSRF için virgülle ayrılmış tam adresler. Tarayıcıdan hangi kaynaktan istek atılabileceğini sınırlar. Yerelde http://localhost:5000 ve http://127.0.0.1:5000 yazın.">?</span></div>
-      <input name="origins" id="origins" required placeholder="http://localhost:5000">
+      <div class="lbl-row"><label for="publicUrl">Uygulama Erişim Adresi</label><span class="help" tabindex="0" data-tip="Uygulamanın açılacağı yerel veya genel adres.">?</span></div>
+      <input name="publicUrl" id="publicUrl" type="url" required placeholder="http://localhost:5000">
+      <p class="tip-note" id="modeNote">Yerel çalışma modu: reverse proxy veya ek ağ ayarı gerekmez.</p>
     </div>
-    <div>
-      <div class="lbl-row"><label for="proxy">Güvenilir proxy sayısı</label><span class="help" tabindex="0" data-tip="Önünüzdeki reverse proxy (Nginx/IIS) sayısı. Yerelde 0. Nginx varsa 1. Zincirde 2+ proxy varsa artırın.">?</span></div>
-      <input name="proxy" id="proxy" type="number" min="0" max="5" value="1">
-    </div>
-    <div id="customEnvSection" class="full hidden" style="margin-top:12px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc">
-      <h3 style="margin:0 0 8px;font-size:15px">Proje Ortam Değişkenleri (.env.example)</h3>
-      <p class="tip-note" style="margin:0 0 10px">Repoda bulunan özel değişkenleri buradan düzenleyebilirsiniz.</p>
+    <div id="customEnvSection" class="full hidden" style="margin-top:6px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc">
+      <h3 style="margin:0 0 6px;font-size:15px">Hedef Proje Ortam Değişkenleri (<code>.env.example</code>)</h3>
+      <p class="tip-note" style="margin:0 0 10px">Hedef repoda bulunan özel değişkenler ve varsayılan değerleri aşağıda hazır olarak listelenmiştir:</p>
       <div id="customEnvFields" class="grid"></div>
     </div>
+    <details class="opt-box full">
+      <summary>⚙️ Gelişmiş Yayın, Ağ ve Reverse Proxy Ayarları (Yerel kullanımda değiştirmenize gerek yoktur)</summary>
+      <div class="grid" style="margin-top:12px">
+        <div>
+          <div class="lbl-row"><label for="mode">Çalışma / Yayın Biçimi</label><span class="help" tabindex="0" data-tip="Yerel: yalnız bu bilgisayarda çalıştırma (http://localhost). Subdomain: https://uygulama.kurum.com. Alt yol: https://kurum.com/app gibi.">?</span></div>
+          <select name="mode" id="mode">
+            <option value="localhost">Yerel / localhost (Varsayılan)</option>
+            <option value="subdomain">Subdomain (Üretim / Alan Adı)</option>
+            <option value="subpath">Kurum sitesi altında alt yol</option>
+          </select>
+        </div>
+        <div>
+          <div class="lbl-row"><label for="host">Dinlenecek Ağ Arayüzü (Host)</label><span class="help" tabindex="0" data-tip="127.0.0.1: yalnız bu bilgisayar. 0.0.0.0: yerel ağdaki diğer cihazlar da erişebilir.">?</span></div>
+          <select name="host" id="host">
+            <option value="127.0.0.1">127.0.0.1 (Yalnız bu bilgisayar)</option>
+            <option value="0.0.0.0">0.0.0.0 (Ağdan erişim)</option>
+          </select>
+        </div>
+        <div>
+          <div class="lbl-row"><label for="basePath">Alt Yol (Base Path)</label><span class="help" tabindex="0" data-tip="Uygulamanın kök altındaki yolu. Yerel kullanımda / kalır.">?</span></div>
+          <input name="basePath" id="basePath" value="/" required>
+        </div>
+        <div>
+          <div class="lbl-row"><label for="proxy">Güvenilir Proxy Sayısı</label><span class="help" tabindex="0" data-tip="Önünüzdeki reverse proxy (Nginx/IIS) sayısı. Yerelde 0.">?</span></div>
+          <input name="proxy" id="proxy" type="number" min="0" max="5" value="0">
+        </div>
+        <div class="full">
+          <div class="lbl-row"><label for="origins">İzinli CORS Origin Adresleri</label><span class="help" tabindex="0" data-tip="Tarayıcıdan hangi adreslerden API isteği atılabileceğini belirler.">?</span></div>
+          <input name="origins" id="origins" required placeholder="http://localhost:5000">
+        </div>
+      </div>
+    </details>
   </div>
 </section>
-<section class="pane">
-  <h2>Veritabanı ve saklama <span class="help" tabindex="0" data-tip="SQLite, PostgreSQL, MySQL veya özel bağlantı dizesi ile veritabanı ayarlanır. Saklama politikası eski operasyon kayıtlarını otomatik temizler.">?</span></h2>
-  <div class="grid" style="margin-bottom:16px">
+<section class="pane" id="dbPaneSection">
+  <h2>3. Veritabanı ve Veri Hazırlığı <span class="help" tabindex="0" data-tip="Hedef proje veritabanı kullanıyorsa bağlantı türünü seçebilirsiniz. Yerel SQLite varsayılan olarak hazırdır.">?</span></h2>
+  <div class="grid" style="margin-bottom:8px">
     <div class="full">
       <div class="lbl-row">
         <label for="dbProvider">Veritabanı Sağlayıcısı</label>
-        <span class="help" tabindex="0" data-tip="Yerel geliştirme için SQLite uygundur. Kurumsal ve yüksek trafikli ortamlar için PostgreSQL veya MySQL önerilir.">?</span>
+        <span class="help" tabindex="0" data-tip="Yerel çalıştırma için SQLite varsayılan olarak seçilidir ve ek kurulum gerektirmez.">?</span>
       </div>
       <select name="dbProvider" id="dbProvider">
-        <option value="sqlite">SQLite (Yerel dosya tabanlı - Önerilen Başlangıç)</option>
+        <option value="sqlite">SQLite / Yerel Proje Veritabanı (Ek kurulum gerekmez — Önerilen)</option>
         <option value="postgres">PostgreSQL</option>
         <option value="mysql">MySQL / MariaDB</option>
         <option value="custom">Özel Bağlantı Dizesi (Connection String)</option>
@@ -95,7 +102,7 @@ export function renderSetupPage(csrfToken, options = {}) {
     </div>
     <div id="dbSqliteWrap" class="full">
       <div class="tip-note" style="margin:0;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px">
-        <strong>SQLite Seçildi:</strong> Veritabanı dosyası proje veri dizininde (<code>data/app.db</code>) otomatik tutulur. Harici veritabanı sunucusu kurulumu gerekmez.
+        <strong>✓ Yerel Veritabanı Hazır:</strong> Hedef projenin kendi yerel veritabanı veya SQLite dosyası otomatik kullanılır; harici veritabanı sunucusu kurmanıza gerek yoktur.
       </div>
     </div>
     <div id="dbServerWrap" class="full hidden grid" style="gap:14px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc">
@@ -132,106 +139,94 @@ export function renderSetupPage(csrfToken, options = {}) {
       <span id="testDbResult" style="font-size:12px"></span>
     </div>
   </div>
-  <div class="warn">Operasyon kayıtları için saklama sürelerini aşağıdan yapılandırabilirsiniz.</div>
-  <div class="grid">
-    <div class="full">
-      <div class="lbl-row"><label><input name="retention" type="checkbox"> Operasyon kayıtları için saklama politikasını etkinleştir</label><span class="help" tabindex="0" data-tip="Açıksa eski işlem / bildirim / e-posta logları belirli gün sayısından sonra silinir. Kapatırsanız kayıtlar birikir.">?</span></div>
-    </div>
-    <div>
-      <div class="lbl-row"><label for="actionDays">İşlem logu (gün)</label><span class="help" tabindex="0" data-tip="Denetim amaçlı işlem kayıtlarının saklanacağı gün sayısı (en az 30).">?</span></div>
-      <input name="actionDays" id="actionDays" type="number" min="30" value="365">
-    </div>
-    <div>
-      <div class="lbl-row"><label for="notificationDays">Okunmuş bildirim (gün)</label><span class="help" tabindex="0" data-tip="Okunmuş bildirim kayıtlarının saklanma süresi.">?</span></div>
-      <input name="notificationDays" id="notificationDays" type="number" min="7" value="180">
-    </div>
-    <div>
-      <div class="lbl-row"><label for="emailDays">E-posta logu (gün)</label><span class="help" tabindex="0" data-tip="Gönderilen sistem e-postalarının loglanma süresi.">?</span></div>
-      <input name="emailDays" id="emailDays" type="number" min="7" value="90">
-    </div>
-    <div>
-      <div class="lbl-row"><label for="passwordDays">Parola talebi (gün)</label><span class="help" tabindex="0" data-tip="Parola sıfırlama taleplerinin kayıtlarının saklanma süresi.">?</span></div>
-      <input name="passwordDays" id="passwordDays" type="number" min="7" value="90">
-    </div>
+  <div class="hidden" aria-hidden="true">
+    <input name="retention" type="checkbox">
+    <input name="actionDays" id="actionDays" type="number" min="30" value="365">
+    <input name="notificationDays" id="notificationDays" type="number" min="7" value="180">
+    <input name="emailDays" id="emailDays" type="number" min="7" value="90">
+    <input name="passwordDays" id="passwordDays" type="number" min="7" value="90">
   </div>
-</section>
-<section class="pane">
-  <h2>İlk yönetici ve e-posta <span class="help" tabindex="0" data-tip="Sistemdeki ilk admin hesabı burada açılır. Gmail ayarı isteğe bağlıdır; parola sıfırlama için kullanılır.">?</span></h2>
-  <div id="adminOptionalNote" class="warn hidden" style="margin-bottom:12px">Bu mimaride (SPA / Statik / Masaüstü) yerel yönetici hesabı isteğe bağlıdır; boş bırakıp doğrudan geçebilirsiniz.</div>
-  <div class="grid">
-    <div>
-      <div class="lbl-row"><label for="adminName">Yönetici adı</label><span class="help" tabindex="0" data-tip="Panelde görünecek ad soyad.">?</span></div>
-      <input name="adminName" id="adminName" required maxlength="100">
-    </div>
-    <div>
-      <div class="lbl-row"><label for="adminEmail">Yönetici e-postası</label><span class="help" tabindex="0" data-tip="Giriş ve bildirimlerde kullanılacak e-posta. Bu adresle ilk giriş yapılır.">?</span></div>
-      <input name="adminEmail" id="adminEmail" type="email" required>
-    </div>
-    <div class="full">
-      <div class="lbl-row"><label for="adminPassword">Yönetici parolası</label><span class="help" tabindex="0" data-tip="En az 12 karakter; büyük/küçük harf ve rakam içermeli; password, 123456, qwerty, admin123 gibi kolay tahmin edilemez.">?</span></div>
-      <div class="pwd-wrap">
-        <input name="adminPassword" id="adminPassword" type="password" required autocomplete="new-password" maxlength="128" spellcheck="false">
-        <button type="button" class="pwd-toggle" data-pwd="adminPassword" aria-label="Parolayı göster/gizle" title="Parolayı göster/gizle">👁️</button>
-      </div>
-      <div class="pwd-rules" id="pwdRules" aria-live="polite"></div>
-      <div id="adminSeedNotice" class="tip-note" style="margin-top:10px;padding:10px 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;line-height:1.5">
-        <strong>ℹ️ Hesap Saklama Modeli:</strong> İlk yönetici hesabı <code>data/admin.json</code> ve <code>.env</code> dosyalarına scrypt özetiyle kaydedilir.
-      </div>
-    </div>
-    <div class="full">
-      <div class="lbl-row"><label><input name="emailEnabled" id="emailEnabled" type="checkbox"> E-posta bildirimlerini (SMTP) etkinleştir</label><span class="help" tabindex="0" data-tip="İsteğe bağlı. Parola sıfırlama ve sistem bildirimleri için Gmail veya kurumsal SMTP sunucusu kullanılır.">?</span></div>
-    </div>
-    <div id="emailFields" class="grid full hidden" style="gap:14px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#f8fafc;margin-top:6px">
-      <div>
-        <div class="lbl-row"><label for="emailProvider">E-posta Sağlayıcısı</label><span class="help" tabindex="0" data-tip="Gmail kullanıyorsanız otomatik smtp.gmail.com port 587/465 seçilir. Diğer sağlayıcılar için Kurumsal / Özel SMTP seçin.">?</span></div>
-        <select name="emailProvider" id="emailProvider">
-          <option value="gmail">Google Gmail (Uygulama Parolası)</option>
-          <option value="custom">Kurumsal / Özel SMTP Sunucusu</option>
-        </select>
-      </div>
-      <div id="customSmtpHostWrap" class="hidden">
-        <div class="lbl-row"><label for="emailHost">SMTP Sunucu Adresi (Host)</label><span class="help" tabindex="0" data-tip="Örn: smtp.office365.com, mail.kurum.com veya IP adresi.">?</span></div>
-        <input name="emailHost" id="emailHost" placeholder="smtp.kurum.com">
-      </div>
-      <div id="customSmtpPortWrap" class="hidden">
-        <div class="lbl-row"><label for="emailPort">SMTP Portu</label><span class="help" tabindex="0" data-tip="Genelde STARTTLS için 587, SSL için 465, düz için 25.">?</span></div>
-        <input name="emailPort" id="emailPort" type="number" min="1" max="65535" value="587">
-      </div>
-      <div>
-        <div class="lbl-row"><label for="emailUser" id="lblEmailUser">Gmail hesabı</label><span class="help" tabindex="0" data-tip="Gönderim ve giriş için e-posta adresi veya kullanıcı adı.">?</span></div>
-        <input name="emailUser" id="emailUser" placeholder="hesap@gmail.com">
-      </div>
-      <div>
-        <div class="lbl-row"><label for="fromEmail">Gönderen e-posta (From)</label><span class="help" tabindex="0" data-tip="Kullanıcıların göreceği From adresi.">?</span></div>
-        <input name="fromEmail" id="fromEmail" type="email" placeholder="hesap@gmail.com">
-      </div>
-      <div>
-        <div class="lbl-row"><label for="emailPassword" id="lblEmailPassword">Gmail uygulama parolası</label><span class="help" tabindex="0" data-tip="Google Hesap > Güvenlik > Uygulama parolaları (16 karakter) veya SMTP parolası.">?</span></div>
-        <div class="pwd-wrap">
-          <input name="emailPassword" id="emailPassword" type="password" autocomplete="new-password" spellcheck="false">
-          <button type="button" class="pwd-toggle" data-pwd="emailPassword" aria-label="Parolayı göster/gizle" title="Parolayı göster/gizle">👁️</button>
+  <details class="opt-box" id="optionalAdminDetails">
+    <summary>👤 İsteğe Bağlı: Başlangıç Yöneticisi (Seed / Admin) ve SMTP E-posta Ayarları (Boş bırakılabilir)</summary>
+    <div style="margin-top:12px">
+      <div id="adminOptionalNote" class="warn" style="margin-bottom:12px">Bu alanlar isteğe bağlıdır. Hedef projeyi varsayılan kullanıcı/seed ayarlarıyla başlatmak için boş bırakabilirsiniz.</div>
+      <div class="grid">
+        <div>
+          <div class="lbl-row"><label for="adminName">Yönetici adı</label><span class="help" tabindex="0" data-tip="İsteğe bağlı başlangıç yöneticisi adı.">?</span></div>
+          <input name="adminName" id="adminName" maxlength="100" placeholder="İsteğe bağlı">
+        </div>
+        <div>
+          <div class="lbl-row"><label for="adminEmail">Yönetici e-postası</label><span class="help" tabindex="0" data-tip="İsteğe bağlı başlangıç yöneticisi e-postası.">?</span></div>
+          <input name="adminEmail" id="adminEmail" type="email" placeholder="admin@ornek.com">
+        </div>
+        <div class="full">
+          <div class="lbl-row"><label for="adminPassword">Yönetici parolası</label><span class="help" tabindex="0" data-tip="Girilirse en az 12 karakter; büyük/küçük harf ve rakam içermelidir.">?</span></div>
+          <div class="pwd-wrap">
+            <input name="adminPassword" id="adminPassword" type="password" autocomplete="new-password" maxlength="128" spellcheck="false" placeholder="Boş bırakılırsa varsayılan proje ayarları kullanılır">
+            <button type="button" class="pwd-toggle" data-pwd="adminPassword" aria-label="Parolayı göster/gizle" title="Parolayı göster/gizle">👁️</button>
+          </div>
+          <div class="pwd-rules hidden" id="pwdRules" aria-live="polite"></div>
+          <div id="adminSeedNotice" class="tip-note" style="margin-top:10px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:10px;line-height:1.5">
+            <strong>ℹ️ Hesap Saklama Modeli:</strong> Doldurulursa yönetici bilgileri <code>.env</code> ve varsa projenin seed betiğine aktarılır.
+          </div>
+        </div>
+        <div class="full">
+          <div class="lbl-row"><label><input name="emailEnabled" id="emailEnabled" type="checkbox"> E-posta bildirimlerini (SMTP) etkinleştir</label></div>
+        </div>
+        <div id="emailFields" class="grid full hidden" style="gap:14px;padding:14px;border:1px solid var(--line);border-radius:12px;background:#fff;margin-top:6px">
+          <div>
+            <div class="lbl-row"><label for="emailProvider">E-posta Sağlayıcısı</label></div>
+            <select name="emailProvider" id="emailProvider">
+              <option value="gmail">Google Gmail (Uygulama Parolası)</option>
+              <option value="custom">Kurumsal / Özel SMTP Sunucusu</option>
+            </select>
+          </div>
+          <div id="customSmtpHostWrap" class="hidden">
+            <div class="lbl-row"><label for="emailHost">SMTP Sunucu Adresi (Host)</label></div>
+            <input name="emailHost" id="emailHost" placeholder="smtp.kurum.com">
+          </div>
+          <div id="customSmtpPortWrap" class="hidden">
+            <div class="lbl-row"><label for="emailPort">SMTP Portu</label></div>
+            <input name="emailPort" id="emailPort" type="number" min="1" max="65535" value="587">
+          </div>
+          <div>
+            <div class="lbl-row"><label for="emailUser" id="lblEmailUser">Gmail hesabı</label></div>
+            <input name="emailUser" id="emailUser" placeholder="hesap@gmail.com">
+          </div>
+          <div>
+            <div class="lbl-row"><label for="fromEmail">Gönderen e-posta (From)</label></div>
+            <input name="fromEmail" id="fromEmail" type="email" placeholder="hesap@gmail.com">
+          </div>
+          <div>
+            <div class="lbl-row"><label for="emailPassword" id="lblEmailPassword">Gmail uygulama parolası</label></div>
+            <div class="pwd-wrap">
+              <input name="emailPassword" id="emailPassword" type="password" autocomplete="new-password" spellcheck="false">
+              <button type="button" class="pwd-toggle" data-pwd="emailPassword" aria-label="Parolayı göster/gizle" title="Parolayı göster/gizle">👁️</button>
+            </div>
+          </div>
+          <div>
+            <div class="lbl-row"><label for="fromName">Gönderen adı</label></div>
+            <input name="fromName" id="fromName" value="Sistem Bildirimi">
+          </div>
+          <div id="customSmtpSecureWrap" class="full hidden">
+            <div class="lbl-row"><label><input name="emailSecure" id="emailSecure" type="checkbox"> Güvenli Bağlantı (SSL/TLS - Port 465)</label></div>
+          </div>
+          <div class="full" style="display:flex;align-items:center;gap:12px;margin-top:6px">
+            <button type="button" class="secondary" id="btnTestEmail" style="padding:8px 14px;font-size:13px">✉️ SMTP Bağlantısını Sına</button>
+            <span id="testEmailResult" style="font-size:12px"></span>
+          </div>
         </div>
       </div>
-      <div>
-        <div class="lbl-row"><label for="fromName">Gönderen adı</label><span class="help" tabindex="0" data-tip="E-postalarda görünen gönderen ismi.">?</span></div>
-        <input name="fromName" id="fromName" value="Sistem Bildirimi">
-      </div>
-      <div id="customSmtpSecureWrap" class="full hidden">
-        <div class="lbl-row"><label><input name="emailSecure" id="emailSecure" type="checkbox"> Güvenli Bağlantı (SSL/TLS - Port 465)</label><span class="help" tabindex="0" data-tip="Port 465 (SSL) için işaretleyin; 587 (STARTTLS) için boş bırakın.">?</span></div>
-      </div>
-      <div class="full" style="display:flex;align-items:center;gap:12px;margin-top:6px">
-        <button type="button" class="secondary" id="btnTestEmail" style="padding:8px 14px;font-size:13px">✉️ SMTP Bağlantısını Sına</button>
-        <span id="testEmailResult" style="font-size:12px"></span>
-      </div>
     </div>
-  </div>
+  </details>
 </section>
 <section class="pane">
-  <h2>Doğrula ve uygula <span class="help" tabindex="0" data-tip="Aşağıdaki onayla .env yazılır, veritabanı hazırlanır, ilk yönetici açılır ve istenirse üretim derlemesi alınır. Adımlar canlı izlenir.">?</span></h2>
-  <p>Uygulama; <code>.env</code> dosyasını atomik olarak yazar, migration'ları uygular, ilk yöneticiyi oluşturur ve istenirse üretim derlemesini hazırlar.</p>
-  <div class="lbl-row"><label><input name="buildClient" type="checkbox" checked> Uygulamayı üretim için derle</label><span class="help" tabindex="0" data-tip="Üretimde açık tutun. Hızlı yerel deneme için kapatabilirsiniz.">?</span></div>
-  <div class="lbl-row"><label><input name="overwrite" type="checkbox"> Var olan .env dosyasını yedekleyip değiştir</label><span class="help" tabindex="0" data-tip="Daha önce .env yazılmışsa bu onay olmadan kurulum durur. Eski dosya backups altına kopyalanır.">?</span></div>
-  <div class="lbl-row"><label><input name="confirm" type="checkbox" required> Girilen bilgileri kontrol ettim ve kalıcı kurulumu onaylıyorum</label><span class="help" tabindex="0" data-tip="Bu onay olmadan kurulum uygulanmaz. Ayarlar kalıcıdır; sonra yönetici panelinden düzenlenebilir.">?</span></div>
+  <h2>4. Kaydet, Hazırla ve Hedef Uygulamayı Başlat <span class="help" tabindex="0" data-tip="Tek tıkla .env dosyaları hedef projeye ve alt modüllere yazılır, varsa migration/derleme adımları çalıştırılır ve hedef uygulama başlatılarak tarayıcıda açılır.">?</span></h2>
+  <div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:10px">
+    <div class="lbl-row"><label><input name="overwrite" type="checkbox" checked> Var olan <code>.env</code> dosyalarını yedekleyerek güncelle</label></div>
+    <div class="lbl-row"><label><input name="buildClient" type="checkbox"> Başlatmadan önce üretim derlemesi (<code>build</code>) çalıştır</label><span class="help" tabindex="0" data-tip="Yerel geliştirme/çalıştırma (dev) modunda kapalı bırakmanız daha hızlı başlatma sağlar.">?</span></div>
+    <div class="lbl-row hidden"><label><input name="confirm" type="checkbox" checked required> Onay</label></div>
+  </div>
   <div id="applyProgress" class="pwd-rules hidden" aria-live="polite"></div>
   <div id="applyConsoleWrap" class="hidden" style="margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden">
     <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 12px;background:#1e293b;color:#f8fafc;font-size:12px">
@@ -240,9 +235,9 @@ export function renderSetupPage(csrfToken, options = {}) {
     </div>
     <pre id="applyConsole" style="margin:0;border-radius:0;max-height:200px;font-size:11px;line-height:1.45;background:#0f172a;color:#cbd5e1;overflow-y:auto"></pre>
   </div>
-  <pre id="result">Henüz uygulanmadı.</pre>
+  <pre id="result">Hazır. Aşağıdaki düğmeye tıklayarak hedef uygulamayı yapılandırıp başlatabilirsiniz.</pre>
   <div id="doneBox" class="warn hidden">
-    <h3 style="margin:0 0 8px">Sonraki adımlar</h3>
+    <h3 style="margin:0 0 8px">Hedef Uygulama Durumu ve Bağlantılar</h3>
     <ol id="nextSteps" style="margin:0;padding-left:18px;line-height:1.7"></ol>
     <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap">
       <button type="button" class="primary" id="startApp">Uygulamayı başlat</button>
@@ -252,7 +247,7 @@ export function renderSetupPage(csrfToken, options = {}) {
     <p class="muted" id="redirectNote" style="margin:10px 0 0"></p>
   </div>
 </section>
-<div class="actions"><button type="button" class="secondary" id="prev" disabled>Geri</button><button type="button" class="primary" id="next">İleri</button><button type="submit" class="primary" id="apply" hidden>Kurulumu Uygula</button></div></form></main>
+<div class="actions"><button type="button" class="secondary" id="prev" hidden disabled>Geri</button><button type="button" class="primary" id="next" hidden>İleri</button><button type="submit" class="primary" id="apply" style="width:100%;padding:14px 20px;font-size:16px">🚀 Ayarları Kaydet ve Hedef Uygulamayı Başlat</button></div></form></main>
 <script>window.__SETUP__=${boot};
 const wizard=document.getElementById('wizard'),prev=document.getElementById('prev'),next=document.getElementById('next'),apply=document.getElementById('apply'),checks=document.getElementById('checks'),result=document.getElementById('result'),pwdRules=document.getElementById('pwdRules');
 const panes=[...document.querySelectorAll('.pane')],steps=[...document.querySelectorAll('.step')];let page=0;
@@ -496,7 +491,8 @@ if(dbProv)dbProv.addEventListener('change',()=>{syncDbRequirements();validateDat
 applyModeDefaults();
 syncEmailRequirements();
 syncDbRequirements();
-function show(n){page=n;panes.forEach((x,i)=>x.classList.toggle('on',i===n));steps.forEach((x,i)=>x.classList.toggle('on',i===n));prev.disabled=n===0;next.hidden=n===panes.length-1;apply.hidden=n!==panes.length-1}
+window.__OPTIONAL_ADMIN__=true;
+function show(n){page=n;panes.forEach((x,i)=>x.classList.toggle('on',i===n));steps.forEach((x,i)=>x.classList.toggle('on',i===n));prev.disabled=n===0;next.hidden=true;apply.hidden=false}
 prev.onclick=()=>show(page-1);
 next.onclick=()=>{
   const fields=[...panes[page].querySelectorAll('input,select')];
@@ -536,7 +532,12 @@ document.querySelectorAll('.pwd-toggle').forEach(btn=>{
 });
 const adminPwd=wizard.elements.namedItem('adminPassword');
 if(adminPwd){
-  adminPwd.addEventListener('input',()=>{renderPasswordRules();fieldError(adminPwd,adminPasswordError(adminPwd.value))});
+  adminPwd.addEventListener('input',()=>{
+    const hasVal=Boolean(String(adminPwd.value||'').trim());
+    if(pwdRules)pwdRules.classList.toggle('hidden',!hasVal);
+    renderPasswordRules();
+    fieldError(adminPwd,hasVal?adminPasswordError(adminPwd.value):'');
+  });
   renderPasswordRules();
 }
 const API=(window.__SETUP__&&window.__SETUP__.apiBase)||'/api';
@@ -585,14 +586,18 @@ async function loadStatus(){
       const label=CHECK_LABELS[k]||k;
       return '<div class="check '+(v?'ok':'error')+'">'+(v?'✓ ':'✕ ')+escapeHtml(label)+'</div>';
     }).join('');
-    checks.innerHTML=rows+'<pre>'+escapeHtml(JSON.stringify(s.detected,null,2))+'</pre>';
+    checks.innerHTML=rows+'<details class="opt-box" style="margin-top:10px"><summary>🔍 Algılanan Proje ve Sistem Detayları (Geliştirici JSON)</summary><pre style="margin-top:8px">'+escapeHtml(JSON.stringify(s.detected,null,2))+'</pre></details>';
     const sInfo=document.getElementById('scenarioInfo');
     if(sInfo&&s&&s.detected&&s.detected.scenario){
-      let text='<strong>Algılanan Mimari:</strong> Senaryo '+escapeHtml(s.detected.scenario.number)+' — '+escapeHtml(s.detected.scenario.label)+'<div class="tip-note" style="margin-top:4px">'+escapeHtml(s.detected.scenario.summary||'')+'</div>';
+      const repoLabel=s.detected.repositoryName||s.detected.projectName||'Hedef Proje';
+      const pkgLabel=(s.detected.projectName&&s.detected.projectName!==repoLabel)?' ('+s.detected.projectName+')':'';
+      let text='<div><strong>🎯 Hedef Proje:</strong> '+escapeHtml(repoLabel+pkgLabel)+' &nbsp;|&nbsp; <strong>Mimari:</strong> Senaryo '+escapeHtml(s.detected.scenario.number)+' — '+escapeHtml(s.detected.scenario.label)+'</div><div class="tip-note" style="margin-top:4px">'+escapeHtml(s.detected.scenario.summary||'')+'</div>';
       if(s.detected.candidateRoot){
         text+='<div class="tip-note" style="margin-top:4px;color:var(--run)">📁 <strong>Hedef Alt Proje:</strong> '+escapeHtml(s.detected.candidateRoot)+'</div>';
       }
-      if(s.detected.subprojects){
+      if(Array.isArray(s.detected.subprojectList)&&s.detected.subprojectList.length>0){
+        text+='<div style="margin-top:8px"><strong style="font-size:13px">Algılanan Proje Alt Modülleri:</strong><div>'+s.detected.subprojectList.map(sp=>'<span class="mod-badge">📦 '+escapeHtml(sp.dir)+(sp.name&&sp.name!==sp.dir?' ('+escapeHtml(sp.name)+')':'')+'</span>').join('')+'</div></div>';
+      }else if(s.detected.subprojects){
         text+='<div class="tip-note" style="margin-top:4px;color:var(--run)">🔀 <strong>Çok Parçalı Mimari:</strong> Backend ('+escapeHtml(s.detected.subprojects.backend?.dir||'')+') + Frontend ('+escapeHtml(s.detected.subprojects.frontend?.dir||'')+')</div>';
       }
       if(s.detected.hasAmbiguity&&Array.isArray(s.detected.candidates)){
@@ -783,8 +788,11 @@ wizard.onsubmit=async e=>{
     const message=adminPasswordError(pwd.value);
     fieldError(pwd,message);
     if(message){
-      show(3);renderPasswordRules();pwd.focus();
-      result.textContent='Yönetici parolası geçerli değil. 4. adımdaki kırmızı maddeleri tamamlayın.';
+      const optAdm=document.getElementById('optionalAdminDetails');
+      if(optAdm)optAdm.open=true;
+      if(pwdRules)pwdRules.classList.remove('hidden');
+      renderPasswordRules();pwd.focus();
+      result.textContent='Yönetici parolası geçerli değil. Yönetici bölümündeki kırmızı maddeleri tamamlayın veya alanı boş bırakın.';
       result.className='error';
       return;
     }

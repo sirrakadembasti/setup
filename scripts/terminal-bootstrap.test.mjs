@@ -405,3 +405,57 @@ test("terminal panel in installed state marks all steps complete and prevents ac
   assert.match(transcript, /Sıfırdan kurulum tekrar yapılamaz/);
   assert.match(transcript, /İşlem iptal edildi/);
 });
+
+test("terminal panel shows subproject module status and option 6 auto-creates .env from .env.example and starts target app", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "xfactor-direct-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const appPort = await freePort();
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    JSON.stringify({
+      name: "xfactor-e2e",
+      scripts: { start: "node app.js" },
+      dependencies: { express: "^4.0.0" },
+    }),
+  );
+  fs.writeFileSync(path.join(root, ".env.example"), `PORT=${appPort}\nCUSTOM_API_KEY=demo-123\n`);
+  fs.writeFileSync(
+    path.join(root, "app.js"),
+    `const http = require("node:http");
+const port = Number(process.env.PORT || ${appPort});
+const srv = http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok: true, key: process.env.CUSTOM_API_KEY || "" }));
+});
+srv.listen(port, "127.0.0.1");`,
+  );
+  fs.mkdirSync(path.join(root, "backend", "node_modules", "express"), { recursive: true });
+  fs.writeFileSync(path.join(root, "backend", "package.json"), JSON.stringify({ name: "@xfactor/backend", dependencies: { express: "^4.0.0" } }));
+  fs.writeFileSync(path.join(root, "backend", ".env.example"), "BACKEND_SECRET=sec-99\n");
+  fs.mkdirSync(path.join(root, "node_modules", "express"), { recursive: true });
+
+  let transcript = "";
+  const output = new Writable({ write(chunk, enc, cb) { transcript += chunk; cb(); } });
+  const setup = createTerminalBootstrap({ root, noOpen: true, log: (s) => { transcript += `${s}\n`; } });
+  t.after(() => setup.cancel(true));
+
+  const st = setup.status();
+  assert.ok(st.repositoryName.startsWith("xfactor-direct-"));
+  assert.ok(Array.isArray(st.modules) && st.modules.length >= 2);
+
+  await runTerminalBootstrap({
+    root,
+    input: Readable.from(["6\n"]),
+    output,
+    noOpen: true,
+    waitForAppExit: false,
+  });
+
+  assert.match(transcript, /HEDEF PROJE ALT MODÜLLERİ VE BİLEŞEN DURUMU:/);
+  assert.match(transcript, /6\) Uygulamayı Doğrudan Başlat/);
+  assert.equal(fs.existsSync(path.join(root, ".env")), true);
+  assert.match(fs.readFileSync(path.join(root, ".env"), "utf8"), /CUSTOM_API_KEY=demo-123/);
+  assert.equal(fs.existsSync(path.join(root, "backend", ".env")), true);
+  assert.match(fs.readFileSync(path.join(root, "backend", ".env"), "utf8"), /BACKEND_SECRET=sec-99/);
+  assert.equal(fs.existsSync(path.join(root, "data", "installation.lock")), true);
+});

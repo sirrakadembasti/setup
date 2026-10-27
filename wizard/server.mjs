@@ -826,14 +826,17 @@ export function createSetupServer(token, options = {}) {
             memoryGb: Math.round(os.totalmem() / 1024 ** 3),
             addresses: networks,
             projectName: detection.projectName || null,
+            repositoryName: path.basename(projectRoot),
             kind: detection.kind,
             scenario: detection.scenario,
             defaultPort,
+            routes: detection.routes || null,
             envVariables: envExample.variables || [],
             seedScript: detectedSeed,
             toolchain: toolchain.details,
             candidateRoot: detection.candidateRoot || null,
             subprojects: detection.subprojects || null,
+            subprojectList: detection.subprojectList || null,
             candidates: detection.candidates || null,
             hasAmbiguity: Boolean(detection.hasAmbiguity),
           },
@@ -899,7 +902,7 @@ export function createSetupServer(token, options = {}) {
         }
         try {
           const rawBody = await readJson(req);
-          const payload = setupPayloadSchema.parse(rawBody, { allowOptionalAdmin: !detection.scenario.requiresAdmin });
+          const payload = setupPayloadSchema.parse(rawBody, { allowOptionalAdmin: true });
           applyJob.status = "running";
           applyJob.message = "Kurulum uygulanıyor; adımlar ekranda canlı izleniyor…";
           applyJob.summary = [];

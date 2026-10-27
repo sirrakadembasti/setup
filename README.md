@@ -52,22 +52,23 @@ node /path/to/setup/bin/setup.mjs init --root /hedef/proje --copy-tools --refres
 - **Hibrit ve Çok Parçalı Yapılar:** Kök dizindeki `package.json` ile birlikte `backend/`, `frontend/`, `execution/`, `llm-yonetimi/`, `srv/`, `ui/` gibi alt projeler tespit edilir. (`tools/setup`, `e2e`, `docs`, `scripts`, `tests` gibi araç klasörleri otomatik hariç tutulur.)
 - **Ortam Şablonları:** Kök ve alt dizinlerdeki `.env.example` dosyaları tek bir yapılandırma havuzunda birleştirilir.
 
-### Adım 2 — Terminal Kontrol Paneli ve Paket Kurulumu (`terminal-bootstrap.mjs` & `run-steps.mjs`)
-Terminal ekranında kurulum adımlarının anlık ilerleme durumu (`[✓]` Tamamlandı, `[→]` Sıradaki Adım, `[ ]` Bekliyor) ve sıralı işlem menüsü (`1–5` ve `0`) yapılandırılmış bir panel olarak gösterilir:
-- **Adım İlerlemesi ve Öneri Kutusu:** Hangi adımların tamamlandığı (`[✓] 3. Bağımlılık kurulumu — Tamamlandı (Tekrar kurulum gerekmez)`) ve hangi adımın sırada olduğu (`[→] 4. Web kurulum sihirbazı (5050) — Sıradaki Adım (Seçenek 2)`) açıkça işaretlenir.
-- **Sıralı İşlem Menüsü (`1–5, 0`):** Tüm seçenekler (`1) Paketleri Kur / Onar`, `2) Kurulum Sihirbazına Geç`, `3) Yeniden Yapılandır`, `4) Yeniden Denetle`, `5) Yedekle ve Temiz Kuruluma Geç`, `0) Çıkış`) numara atlamadan sıralı biçimde ve o anki durum rozetleriyle (`[✓ Tamamlandı]`, `[→ Sıradaki Adım]`, `[Pasif]`) listelenir.
+### Adım 2 — Terminal Kontrol Paneli, Modül Özeti ve Doğrudan Başlatma (`terminal-bootstrap.mjs` & `run-steps.mjs`)
+Terminal ekranında kurulum adımlarının anlık ilerleme durumu (`[✓]` Tamamlandı, `[→]` Sıradaki Adım, `[ ]` Bekliyor), hedef projenin alt modül bileşenleri ve sıralı işlem menüsü (`1–6` ve `0`) yapılandırılmış bir panel olarak gösterilir:
+- **Hedef Proje ve Alt Modül Bileşen Durumu (`modules`):** Başlıkta hedef projenin gerçek klasör ve paket adı (`Hedef Proje: xfactor-main (xfactor-e2e)`) gösterilir. Çok parçalı projelerde (`backend`, `frontend`, `execution`, `llm-yonetimi` vb.) her bir alt modülün paket ve `.env` hazırlık durumu (`[✓] backend (@xfactor/backend) — Paketler: hazır | .env: şablondan üretilecek`) ayrı ayrı raporlanır.
+- **Adım İlerlemesi ve Öneri Kutusu:** Hangi adımların tamamlandığı (`[✓] 3. Bağımlılık kurulumu — Tamamlandı (Tekrar kurulum gerekmez)`) ve hangi adımın sırada olduğu (`[→] 4. Web kurulum sihirbazı (5050) — Sıradaki Adım (Seçenek 2 veya 6)`) açıkça işaretlenir.
+- **Sıralı İşlem Menüsü (`1–6, 0`):** Tüm seçenekler (`1) Paketleri Kur / Onar`, `2) Kurulum Sihirbazına Geç`, `3) Yeniden Yapılandır`, `4) Yeniden Denetle`, `5) Yedekle ve Temiz Kuruluma Geç`, `6) Uygulamayı Doğrudan Başlat`, `0) Çıkış`) numara atlamadan sıralı biçimde ve o anki durum rozetleriyle listelenir.
+- **Terminalden Doğrudan Uygulama Başlatma (`6) Uygulamayı Doğrudan Başlat`):** Paketler kurulduktan sonra Web Sihirbazına girmeye gerek kalmadan **`6`** seçildiğinde; hedef projede veya alt modüllerinde `.env` yoksa `.env.example` varsayılanlarından otomatik `.env` ve `data/installation.lock` oluşturulur, ardından hedef uygulama başlatılıp tarayıcıda açılır.
 - **Tekrar Kurulum Koruması ve Hata Yakalama:**
   - Paketler zaten kurulmuş ve doğrulanmışsa (`Paketler: hazır`), kullanıcı yanlışlıkla tekrar **`1`** seçtiğinde sistem paketlerin zaten kurulu olduğunu bildirir ve açık onay (`[e/H]`) almadan tekrar kurulum yapmaz.
   - Uygulama zaten kuruluysa (`Uygulama zaten kurulu` / `installation.lock` mevcut), **`2`** seçildiğinde sıfırdan kurulum engellenir ve mevcut verileri kaybetmeden **`3) Yeniden Yapılandır`** moduna geçiş önerilir.
 - **Otomatik Bun & Shim Köprüsü (`bin/shims/`):** Bilgisayarda `npm`, `pnpm` veya `yarn` kurulu değilse işlemler otomatik olarak **Bun** üzerinden yürütülür. `postinstall` içindeki `npm --prefix ../alt-paket ci` gibi komutlar ve `package-lock.json` + `overrides` içeren projeler çevrimdışı Bun önbelleğiyle (`~/.bun/install/cache`) uyumlu şekilde kurulur.
 
-### Adım 3 — Web Kurulum Sihirbazı (`127.0.0.1:5050` — `wizard/server.mjs`)
-Terminalde **`2) Kurulum Sihirbazına Geç`** seçildiğinde tarayıcıda 5 adımlı kurulum arayüzü açılır:
-1. **Dağıtım Modu:** Yerel (`localhost`) veya Alan Adı / Reverse Proxy seçimi.
-2. **Sunucu ve Portlar:** Backend API portu ve (Full-Stack projelerde) Frontend portunun belirlenmesi.
-3. **Veritabanı:** SQLite, PostgreSQL, MySQL veya özel bağlantı dizesi seçimi (**Canlı Bağlantı Sınaması** düğmesi ile anlık kontrol).
-4. **Yönetici ve E-posta:** İlk yönetici (Admin) hesabı ve isteğe bağlı SMTP ayarları.
-5. **Uygulama (`Apply`):** `.env` dosyası kök ve alt projelere güvenli izinlerle yazılır; varsa derleme (`build`), veritabanı göçü (`migrate`) ve tohumlama (`seed`) çalıştırılır; `data/installation.lock` oluşturulur. (Hata olursa tüm değişiklikler otomatik geri alınır.)
+### Adım 3 — Hedef Proje Odaklı Tek Sayfa Web Yapılandırma ve Başlatma Ekranı (`127.0.0.1:5050` — `wizard/ui.html.mjs`)
+Terminalde **`2) Kurulum Sihirbazına Geç`** seçildiğinde tarayıcıda, sıfırdan yabancı bir uygulama kuruyormuş hissi veren eski 5 adımlı sihirbaz yerine **hedef GitHub reposuna hizmet eden Tek Sayfa (4 Kartlı) Yapılandırma ve Başlatma Ekranı** açılır:
+1. **1. Hedef Proje ve Sistem Hazırlık Özeti:** Hedef projenin gerçek klasör adı (`repositoryName`), mimari senaryosu, algılanan alt modül rozetleri (`backend`, `frontend`, `execution`, `llm-yonetimi` vb.) ve çalışma zamanı (`Node.js`, `Veri dizini`, `Araç zinciri`) hazırlık durumu gösterilir. Ham geliştirici JSON çıktısı daraltılmış `<details>` çekmecesinde tutulur.
+2. **2. Hedef Proje Portları ve `.env.example` Değişkenleri:** Hedef uygulamanın çalışacağı Backend/Uygulama Portu, (Full-Stack projelerde) Frontend (UI) Portu ve hedef projedeki `.env.example` değişkenleri varsayılan değerleriyle doğrudan düzenlenebilir olarak sunulur. Gelişmiş Reverse Proxy / Alt Alan Adı ayarları isteğe bağlı `<details>` çekmecesindedir.
+3. **3. Veritabanı ve Veri Hazırlığı:** Varsayılan olarak yerel SQLite (`Ek kurulum gerekmez`) seçilidir; PostgreSQL, MySQL veya Özel Bağlantı Dizesi seçildiğinde **Canlı Bağlantı Sınaması** (`🔍 Veritabanı Bağlantısını Sına`) yapılabilir. Gereksiz saklama politikası (365/180/90 gün) alanları kaldırılmış; İlk Yönetici (Seed) ve SMTP E-posta ayarları isteğe bağlı `<details>` çekmecesine alınmıştır.
+4. **4. Tek Tıkla Kaydet, Hazırla ve Hedef Uygulamayı Başlat:** Sayfa açılır açılmaz aktif olan **`🚀 Ayarları Kaydet ve Hedef Uygulamayı Başlat`** düğmesiyle `.env` dosyaları kök ve alt projelere yazılır, varsa `build` / `migrate` / `seed` adımları canlı konsolda (`#applyConsole`) çalıştırılır ve hedef uygulama başlatılarak tarayıcıda açılır.
 
 ### Adım 4 — Doğrulanmış Uygulama Başlatma (`app-process.mjs`)
 Kurulum tamamlandığında uygulama otomatik olarak başlatılır:
@@ -99,7 +100,7 @@ Kurulum tamamlandığında uygulama otomatik olarak başlatılır:
 | ├─ `server.mjs` & `core.mjs` | Yerel HTTP sihirbaz sunucusu, gömülü Express/Fastify/Next.js middleware çekirdeği ve sağlık kontrolü (`/api/app-health`). |
 | ├─ `shared.mjs` & `config.mjs` | `.env` üretimi, `scrypt` parola özetleme, `build` / `migrate` / `seed` adımları ve atomik geri alma (rollback) mantığı. |
 | ├─ `app-process.mjs` | Tekil sunucu, çift süreç (Backend + Frontend) ve masaüstü uygulama süreçlerini başlatır ve izler. |
-| └─ `ui.html.mjs` | 5 adımlı Türkçe web sihirbazı arayüzü. |
+| └─ `ui.html.mjs` | Hedef proje odaklı tek sayfa (4 kartlı) Türkçe web yapılandırma ve başlatma arayüzü. |
 | **`docs/`** | **Dokümantasyon ve Değişiklik Günlüğü** |
 | ├─ [`docs/ENTEGRASYON.md`](docs/ENTEGRASYON.md) | 5 mimari senaryo için detaylı entegrasyon kılavuzu, kod şablonları ve CLI/API referansı. |
 | └─ [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Sürüm geçmişi ve yapılan tüm geliştirmelerin detaylı kaydı. |

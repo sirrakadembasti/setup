@@ -28,19 +28,22 @@ Detaylı kod şablonlarına geçmeden önce `setup` aracının nasıl çalışt�
    • Dağınık .env.example dosyalarının tek havuzda toplanması
        │
        ▼
-2. TERMİNAL KONTROL PANELİ VE PAKET KURULUMU (scripts/terminal-bootstrap.mjs & run-steps.mjs)
+2. TERMİNAL KONTROL PANELİ, MODÜL ÖZETİ VE PAKET KURULUMU (scripts/terminal-bootstrap.mjs & run-steps.mjs)
+   • Hedef projenin gerçek klasör adı (repositoryName) ve alt modül bileşen durumu (modules: backend, frontend vb.)
    • Adım bazlı canlı ilerleme işaretleri ([✓] Tamamlandı, [→] Sıradaki Adım, [ ] Bekliyor)
-   • Numara atlamayan sıralı işlem menüsü (1, 2, 3, 4, 5 ve 0) ve aktif/pasif durum rozetleri
+   • Numara atlamayan sıralı işlem menüsü (1, 2, 3, 4, 5, 6 ve 0) ve aktif/pasif durum rozetleri
    • Kurulu paketlerin veya kurulu uygulamanın yanlışlıkla tekrar kurulmasını önleyen onay koruması
    • [1] seçildiğinde kök ve alt projelerin sırayla (--prefix <dizin> install) kurulması
+   • [6] seçildiğinde Web Sihirbazına girmeden .env.example varsayılanlarıyla otomatik .env üretip hedef uygulamayı doğrudan başlatma
    • npm/pnpm/yarn yoksa bin/shims/ üzerinden otomatik Bun çevirisi ve çevrimdışı bun.lock uyumu
        │
        ▼
-3. WEB KURULUM SİHİRBAZI - PORT 5050 (wizard/server.mjs & wizard/shared.mjs)
-   • [2] seçildiğinde tarayıcıda 5 adımlı sihirbazın açılması
-   • Dağıtım modu, Backend/Frontend portları, Veritabanı (canlı testli) ve Admin hesabı seçimi
-   • .env dosyasının kök ve alt projelere yazılması, build + migration + seed çalıştırılması
-   • Hata olursa atomik geri alma (rollback); başarılıysa data/installation.lock kaydı
+3. HEDEF PROJE ODAKLI TEK SAYFA WEB EKRANI - PORT 5050 (wizard/server.mjs & wizard/ui.html.mjs)
+   • [2] seçildiğinde tarayıcıda 4 kartlı Tek Sayfa "Proje Yapılandırma ve Başlatma" ekranının açılması
+   • 1. Kart: Hedef proje ve sistem hazırlık özeti + algılanan alt modül rozetleri (ham JSON <details> altında)
+   • 2. Kart: Uygulama/Backend ve Frontend portları + .env.example değişkenleri (Reverse Proxy ayarları <details> altında)
+   • 3. Kart: Veritabanı seçimi (varsayılan yerel SQLite + canlı bağlantı testi; İlk Yönetici ve SMTP <details> altında isteğe bağlı)
+   • 4. Kart: Tek tıkla "🚀 Ayarları Kaydet ve Hedef Uygulamayı Başlat", canlı konsol (#applyConsole) ve atomik geri alma (rollback)
        │
        ▼
 4. DOĞRULANMIŞ UYGULAMA BAŞLATMA (wizard/app-process.mjs)
