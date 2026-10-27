@@ -4,7 +4,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { detectProject, loadSetupConfig } from "./detect-project.mjs";
+import { CANDIDATE_IGNORED_DIRS, detectProject, loadSetupConfig } from "./detect-project.mjs";
 
 export const SUPPORTED_NODE_MAJORS = Object.freeze([18, 20, 22, 24]);
 export const CLEAN_INSTALL_CONFIRMATION = "SETUP VERİLERİNİ SİL";
@@ -257,8 +257,20 @@ export function checkDependencies(projectRoot, options = {}) {
     }
   }
   const knownCandidateDirs = ["server", "client", "backend", "frontend", "srv", "ui", "api", "web", ...configuredStepDirs];
-  const uniqueSubDirs = Array.from(new Set(knownCandidateDirs));
-  const subEntries = uniqueSubDirs.filter((d) => fs.existsSync(path.join(root, d, "package.json")));
+  const baseSubEntries = Array.from(new Set(knownCandidateDirs)).filter((d) => d !== "." && fs.existsSync(path.join(root, d, "package.json")));
+  if (baseSubEntries.length > 0) {
+    try {
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+        if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
+        const lower = entry.name.toLowerCase();
+        if (CANDIDATE_IGNORED_DIRS.has(lower) || lower.startsWith(".")) continue;
+        if (!baseSubEntries.includes(entry.name) && hasPackageDependencies(path.join(root, entry.name))) {
+          baseSubEntries.push(entry.name);
+        }
+      }
+    } catch {}
+  }
+  const subEntries = baseSubEntries;
   const hasSubprojects = subEntries.length > 0;
   const serverEntry = fs.existsSync(path.join(root, "server", "package.json"));
   const clientEntry = fs.existsSync(path.join(root, "client", "package.json"));

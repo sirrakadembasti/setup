@@ -320,3 +320,30 @@ test("desktop shutdown terminates leaf application behind command wrapper", { ti
   }
   assert.equal(alive, false);
 });
+
+test("terminal bootstrap detects pre-installed packages on startup and runs all subproject install steps", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-hybrid-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "root-e2e", devDependencies: { "@playwright/test": "^1.0.0" } }));
+  for (const sub of ["backend", "frontend", "execution", "llm-yonetimi"]) {
+    fs.mkdirSync(path.join(root, sub), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, sub, "package.json"),
+      JSON.stringify({
+        name: sub,
+        dependencies: sub === "frontend" ? { react: "^18.0.0" } : { express: "^4.0.0" },
+      }),
+    );
+  }
+  const setup1 = createTerminalBootstrap({ root, log() {} });
+  assert.equal(setup1.status().packagesReady, false);
+
+  // Paketler diskte kurulduğunda yeni bir terminal oturumu açıldığında packagesReady doğrudan true başlamalı
+  fs.mkdirSync(path.join(root, "node_modules", "@playwright"), { recursive: true });
+  for (const sub of ["backend", "frontend", "execution", "llm-yonetimi"]) {
+    fs.mkdirSync(path.join(root, sub, "node_modules", "pkg"), { recursive: true });
+  }
+  const setup2 = createTerminalBootstrap({ root, log() {} });
+  assert.equal(setup2.status().packagesReady, true);
+  assert.equal(setup2.status().installation.evidence.dependenciesInstalled, true);
+});

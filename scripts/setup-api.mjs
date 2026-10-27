@@ -142,12 +142,27 @@ export function initProject(root = process.cwd(), options = {}) {
     args: installArgs,
     requireWorkspaces: detection.workspaces.isWorkspace,
   };
-  if (detection.subprojects && !existingPkg) {
+  const subList = Array.isArray(detection.subprojectList) && detection.subprojectList.length > 0
+    ? detection.subprojectList
+    : (detection.subprojects ? Object.values(detection.subprojects) : []);
+  if (subList.length > 0 && !detection.workspaces.isWorkspace) {
     const steps = [];
-    for (const [role, sub] of Object.entries(detection.subprojects)) {
+    const rootHasDeps = Boolean(
+      existingPkg &&
+      ((existingPkg.dependencies && Object.keys(existingPkg.dependencies).length > 0) ||
+        (existingPkg.devDependencies && Object.keys(existingPkg.devDependencies).length > 0))
+    );
+    if (rootHasDeps) {
+      steps.push({
+        label: `${existingPkg.name || "Kök proje"} bağımlılıklarını kur (${pm} install)`,
+        command: pm,
+        args: ["install"],
+      });
+    }
+    for (const sub of subList) {
       if (sub?.dir) {
         steps.push({
-          label: `${sub.name || role} bağımlılıklarını kur (${pm} install)`,
+          label: `${sub.name || sub.dir} bağımlılıklarını kur (${pm} install)`,
           command: pm,
           args: ["--prefix", sub.dir, "install"],
         });

@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { checkToolchain, resolveStepCommand } from "./polyglot.mjs";
 import { createProcessRunner, resolveCommandInvocation, PACKAGE_MANAGERS } from "./process-runner.mjs";
+import { prepareBunLockFromNpmLock } from "../bin/shims/npm-shim.mjs";
 
 export async function runSteps(root, steps, log = console.log, options = {}) {
   root = path.resolve(root);
@@ -45,7 +46,11 @@ export async function runSteps(root, steps, log = console.log, options = {}) {
       if (!toolchain.ok) throw Object.assign(new Error(toolchain.message), { exitCode: 127 });
       log(title);
       const command = resolveStepCommand(cwd, current);
-      await execute(resolveCommandInvocation(command, args), {
+      const call = resolveCommandInvocation(command, args);
+      if ((call.command === "bun" || (Array.isArray(call.args) && call.args.includes("bun"))) && (args.includes("install") || args.includes("i") || args.includes("ci"))) {
+        prepareBunLockFromNpmLock(cwd);
+      }
+      await execute(call, {
         cwd, ...(current.timeoutMs !== undefined ? { timeout: Number(current.timeoutMs) } : {}),
         ...(current.env ? { env: { ...process.env, ...current.env } } : {}),
         ...(options.prependPaths ? { prependPaths: options.prependPaths } : {}),

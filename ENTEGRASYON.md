@@ -21,7 +21,7 @@
 - **Çalışma Zamanı (Runtime) Paket Yöneticisi Fallback ve Shims Mimarisi:**
   - Proje ister `pnpm-workspace.yaml` monorepo, ister `yarn`, ister `npm` olsun; hedef bilgisayarda ilgili paket yöneticisi yüklü değilse ve `bun` mevcutsa sistem çalışma zamanında otomatik `bun`'a geçer.
   - Arayüzde sahte gösterim (`pnpm 1.3.14 ✓` gibi) yapılmaz; gerçekte çalışan araç ve sürüm (`bun 1.3.14 ✓`) ile kurulum adımı (`bun install`) gösterilir.
-  - `bin/shims/` katmanı sayesinde `package.json` içindeki `pnpm --filter ...` gibi monorepo alt script çağrıları da alt süreç PATH'i üzerinden şeffaf şekilde Bun'a yönlendirilir ve `'pnpm is not recognized'` hatası oluşmaz.
+  - `bin/shims/` katmanı sayesinde `package.json` içindeki `pnpm --filter ...` veya `postinstall` içindeki `npm --prefix ../alt-paket ci --ignore-scripts` gibi alt script çağrıları da alt süreç PATH'i üzerinden şeffaf şekilde uygun çalışma dizini (`cwd`) ile Bun'a yönlendirilir. Ayrıca `package-lock.json` ve `overrides` içeren projelerde `prepareBunLockFromNpmLock` ön hazırlığı ile çevrimdışı Bun önbelleğinden (`~/.bun/install/cache`) kesintisiz kurulum yapılır.
 
 ## Güvenlik Notları (Gömülü Kullanım)
 
@@ -1008,12 +1008,12 @@ setup/
    - Doğrulama hatalarında hatalı form alanları kırmızı çerçeveyle ve açıklama mesajıyla işaretlenir.
    - Ağ kopmalarında veya sunucu yeniden başlatıldığında arayüzün tepesinde yeniden bağlanma çubuğu belirir; çift tıklamaları önlemek için aksiyon düğmeleri anında kilitlenir (`disabled = true`).
 
-10. **Standart Dışı & Dağınık Repolar İçin Derin Tarama ve Çift Süreç Orkestrasyonu:**
-    - Kök dizinde proje dosyası yokken maksimum 3 derinlik seviyesine kadar alt klasörler taranır (`findProjectCandidates`).
-    - Kök dizinde `package.json` bulunmayan çok parçalı yapılarda (`subprojects`), başlatıcı motoru (`setup-bootstrap.mjs`) ve `initProject` alt projeleri (`backend/`, `frontend/`, `srv/`, `ui/`) otomatik tespit edip `--prefix <alt-dizin> install` adımlarıyla kurar; Kök `ENOENT` hatası önlenir.
-    - Bağımlılık denetleyicisi (`checkDependencies`), `setup.config.json` içerisindeki adımları ve dinamik alt klasörlerdeki `node_modules` dizinlerini doğru şekilde doğrular.
-    - Dağınık `.env.example` dosyaları havuzda birleştirilir (`findScatteredEnvExamples`) ve alt projelere (`srv/.env`, `ui/.env`) dağıtılır.
-    - Çok parçalı Fullstack yapılarda Backend ana porta, Frontend ikincil porta (`devPort`) bağlanır (`createDualProcessController`), `API_URL` ortam değişkenleri otomatik enjekte edilir ve süreçlerden biri çöktüğünde diğeri kademeli olarak sonlandırılır.
+10. **Standart Dışı, Dağınık ve Hibrit Çok Parçalı Repolar İçin Derin Tarama ve Çift Süreç Orkestrasyonu:**
+    - Kök dizinde proje dosyası yokken maksimum 3 derinlik seviyesine kadar alt klasörler taranır (`findProjectCandidates`). `--copy-tools` ile oluşturulan `tools/setup` ile `e2e/`, `docs/`, `scripts/`, `test/`, `tests/` klasörleri aday taramasından hariç tutulur (`CANDIDATE_IGNORED_DIRS`).
+    - Kök dizinde `package.json` bulunmayan veya kök dizinde E2E/orkestrasyon amaçlı `package.json` bulunan hibrit çok parçalı yapılarda (`detectDirectSubprojects`), `initProject` ve `terminal-bootstrap.mjs` hem kök dizini hem de tüm alt paketleri (`backend/`, `frontend/`, `execution/`, `llm-yonetimi/`, `srv/`, `ui/`) tespit edip sıralı `--prefix <alt-dizin> install` adımlarıyla kurar.
+    - Bağımlılık denetleyicisi (`checkDependencies`), `setup.config.json` içerisindeki adımları ve tüm alt proje klasörlerindeki `node_modules` dizinlerini doğrular; terminal başlatıcısı açılışta `packagesReady` durumunu `inspectInstallationState(root).dependencies.ready` üzerinden başlatarak kurulu paketleri `Paketler: hazır` (`Bulunanlar: Paketler`) olarak gösterir.
+    - Dağınık `.env.example` dosyaları havuzda birleştirilir (`findScatteredEnvExamples`) ve alt projelere (`backend/.env`, `frontend/.env`, `srv/.env`, `ui/.env`) dağıtılır. `localhost` modunda `.env.example` içerisindeki `NODE_ENV=development` korunur ve `frontendPort` originleri `ALLOWED_ORIGINS` listesine otomatik eklenir.
+    - Çok parçalı Fullstack yapılarda Backend ana porta, Frontend ikincil porta (`devPort`) bağlanır (`createDualProcessController`), `API_URL` ortam değişkenleri otomatik enjekte edilir; tekil orkestrasyon komutlarında (`npm run dev`) API portu `/` üzerinde 404 dönerken `devPort` 200 döndüğünde UI adresi otomatik doğrulanır.
     - Çoklu aday belirsizliğinde Web Sihirbazında interaktif kartlar (`chooseCandidate`, `POST /api/select-candidate`) ve CLI'da `--candidate` bayrağı ile anında hedef değiştirilebilir.
 
 ### Sürüm Yönetimi (`scripts/version.mjs`)

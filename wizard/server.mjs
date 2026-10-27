@@ -356,12 +356,20 @@ export function createSetupServer(token, options = {}) {
     const sub = dualController?.getSubprocesses();
     const invocation = activeInvocation || options.startAppInvocation || resolveAppStartInvocation(projectRoot, setupConfig);
     const paired = invocation?.type === "dual" || invocation?.type === "dual-static";
-    const hasSeparateUi = paired;
-    const uiPort = hasSeparateUi ? (applyJob.frontendPort || detection.routes.devPort || appPort + 1) : appPort;
+    const configuredDevPort = applyJob.frontendPort || detection.routes.devPort;
+    let uiPort = paired ? (configuredDevPort || appPort + 1) : appPort;
     const loginPath = detection.scenario.isStaticOnly ? "" : (detection.routes.loginPath || "");
-    const localUrl = buildLoginUrl(`http://127.0.0.1:${uiPort}`, loginPath);
+    let localUrl = buildLoginUrl(`http://127.0.0.1:${uiPort}`, loginPath);
     const apiReachable = await probe(`http://127.0.0.1:${appPort}/`, { allowNotFound: true });
     let uiReachable = await probe(localUrl);
+    if (!uiReachable && !paired && configuredDevPort && configuredDevPort !== appPort) {
+      const devUrl = buildLoginUrl(`http://127.0.0.1:${configuredDevPort}`, loginPath);
+      if (await probe(devUrl)) {
+        uiReachable = true;
+        uiPort = configuredDevPort;
+        localUrl = devUrl;
+      }
+    }
     // Some proxies preserve APP_BASE_PATH; others strip it before forwarding.
     if (!uiReachable && mode !== "localhost" && applyJob.loginUrl) {
       const configured = new URL(applyJob.loginUrl);

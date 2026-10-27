@@ -12,7 +12,7 @@ import {
   resolveDesktopDataDir, resolveEffectivePackageManager, stopPortProcess, validateRuntime,
 } from "./setup-bootstrap-lib.mjs";
 import { resolveLanguageProfile } from "./polyglot.mjs";
-import { createProcessRunner, resolveCommandInvocation as invocation } from "./process-runner.mjs";
+import { createProcessRunner, PACKAGE_MANAGERS, resolveCommandInvocation as invocation } from "./process-runner.mjs";
 import { runSteps } from "./run-steps.mjs";
 import { resolveProjectTarget, resolveWizardPort } from "./cli-options.mjs";
 
@@ -40,7 +40,7 @@ export function createTerminalBootstrap(options = {}) {
     dataDir = options.dataDir || resolveDesktopDataDir({ detection, setupConfig: config });
     pm = resolveEffectivePackageManager(config.packageManager || detection.packageManager);
     runtimeCache = null;
-    packagesReady = !detection.scenario.requiresDependencies || config.install?.command === null;
+    packagesReady = !detection.scenario.requiresDependencies || config.install?.command === null || inspectInstallationState(root, { dataDir }).dependencies.ready;
   }
   refreshDetection();
 
@@ -119,8 +119,21 @@ export function createTerminalBootstrap(options = {}) {
   function installSteps() {
     if (!detection.scenario.requiresDependencies || config.install?.command === null) return [];
     if (config.install?.steps?.length) return config.install.steps;
+    const subList = Array.isArray(detection.subprojectList) && detection.subprojectList.length > 0
+      ? detection.subprojectList
+      : (detection.subprojects ? Object.values(detection.subprojects) : []);
+    if (subList.length > 0 && !detection.workspaces?.isWorkspace && (!config.install?.command || PACKAGE_MANAGERS.has(config.install.command))) {
+      const steps = [];
+      let rootPkg;
+      try { rootPkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")); } catch {}
+      const rootHasDeps = Boolean(rootPkg && (Object.keys(rootPkg.dependencies || {}).length > 0 || Object.keys(rootPkg.devDependencies || {}).length > 0));
+      if (rootHasDeps) steps.push({ command: pm, args: ["install"], label: `${rootPkg.name || "root"} (${pm} install)` });
+      for (const s of subList) {
+        if (s?.dir) steps.push({ command: pm, args: ["install"], cwd: s.dir, label: s.name || s.dir });
+      }
+      if (steps.length > 0) return steps;
+    }
     if (config.install?.command) return [{ command: config.install.command, args: config.install.args || ["install"] }];
-    if (detection.subprojects) return Object.values(detection.subprojects).filter((s) => s?.dir).map((s) => ({ command: pm, args: ["install"], cwd: s.dir, label: s.name || s.dir }));
     const profile = resolveLanguageProfile(root, detection.kind, detection.ports.app);
     if (profile) {
       const steps = [...profile.steps];

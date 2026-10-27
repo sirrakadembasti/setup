@@ -446,3 +446,215 @@ test("Çok Parçalı Repo: Kök dizinde package.json yokken initProject subproje
   assert.equal(depsAfter.ready, true);
 });
 
+
+test("Hibrit Çok Parçalı Repo (xfactor mimarisi): Kök package.json + backend/frontend/execution/llm-yonetimi alt paketlerini tam algılar ve kurar", (t) => {
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+
+  // Kök package.json (sadece e2e ve dev orkestrasyonu)
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({
+      name: "xfactor-e2e",
+      private: true,
+      scripts: { dev: "node scripts/dev.mjs" },
+      devDependencies: { "@playwright/test": "^1.46.0" },
+    }),
+    "utf8",
+  );
+
+  // backend, frontend, execution, llm-yonetimi ve tools/setup (yoksayılmalı)
+  fs.mkdirSync(path.join(dir, "backend"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "backend", "package.json"),
+    JSON.stringify({
+      name: "xfactor-backend",
+      scripts: { start: "node server.js", dev: "node --watch server.js" },
+      dependencies: { express: "^4.19.2" },
+    }),
+    "utf8",
+  );
+  fs.writeFileSync(path.join(dir, "backend", "server.js"), "import express from 'express';\n", "utf8");
+
+  fs.mkdirSync(path.join(dir, "frontend"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "frontend", "package.json"),
+    JSON.stringify({
+      name: "app-builder-dashboard",
+      scripts: { dev: "vite", build: "vite build" },
+      dependencies: { react: "^18.3.1" },
+      devDependencies: { vite: "^6.4.3" },
+    }),
+    "utf8",
+  );
+
+  fs.mkdirSync(path.join(dir, "execution"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "execution", "package.json"),
+    JSON.stringify({
+      name: "xfactor-execution",
+      dependencies: { "playwright-core": "1.62.1" },
+    }),
+    "utf8",
+  );
+  fs.writeFileSync(path.join(dir, "execution", "server.js"), "import http from 'node:http';\n", "utf8");
+
+  fs.mkdirSync(path.join(dir, "llm-yonetimi"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "llm-yonetimi", "package.json"),
+    JSON.stringify({
+      name: "@xfactor/llm-yonetimi",
+      scripts: { start: "node examples/server.js" },
+      dependencies: { express: "^4.19.2" },
+    }),
+    "utf8",
+  );
+
+  // tools/setup kopyası aday veya alt proje olarak algılanmamalı
+  fs.mkdirSync(path.join(dir, "tools", "setup"), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "tools", "setup", "package.json"),
+    JSON.stringify({ name: "setup", version: "1.0.0" }),
+    "utf8",
+  );
+
+  const d = detectProject(dir);
+  assert.equal(d.hasAmbiguity, undefined);
+  assert.equal(d.kind, "node-fullstack");
+  assert.equal(d.scenario.id, "scenario-3-fullstack");
+  assert.equal(d.subprojects?.backend?.dir, "backend");
+  assert.equal(d.subprojects?.frontend?.dir, "frontend");
+
+  const initRes = initProject(dir, { createLaunchers: false });
+  assert.equal(initRes.created, true);
+
+  // setup.config.json yazıldıktan sonra da detectProject aynı sonucu vermeli
+  const dAfterInit = detectProject(dir);
+  assert.equal(dAfterInit.kind, "node-fullstack");
+  assert.equal(dAfterInit.scenario.id, "scenario-3-fullstack");
+  assert.equal(dAfterInit.subprojects?.backend?.dir, "backend");
+  assert.equal(dAfterInit.subprojects?.frontend?.dir, "frontend");
+
+  const cfg = JSON.parse(fs.readFileSync(path.join(dir, "setup.config.json"), "utf8"));
+  assert.ok(Array.isArray(cfg.install?.steps), "install.steps tanımlanmalı");
+  const stepTargets = cfg.install.steps.map((s) => {
+    const idx = Array.isArray(s.args) ? s.args.indexOf("--prefix") : -1;
+    return idx !== -1 ? s.args[idx + 1] : (s.cwd || ".");
+  });
+  assert.ok(stepTargets.includes("."), "Kök dizin kurulum adımı olmalı");
+  assert.ok(stepTargets.includes("backend"), "backend kurulum adımı olmalı");
+  assert.ok(stepTargets.includes("frontend"), "frontend kurulum adımı olmalı");
+  assert.ok(stepTargets.includes("execution"), "execution kurulum adımı olmalı");
+  assert.ok(stepTargets.includes("llm-yonetimi"), "llm-yonetimi kurulum adımı olmalı");
+  assert.ok(!stepTargets.some((t) => t.includes("tools")), "tools/setup kurulum adımı olmamalı");
+
+  // Sadece kök node_modules varken checkDependencies false dönmeli
+  fs.mkdirSync(path.join(dir, "node_modules", "@playwright"), { recursive: true });
+  assert.equal(checkDependencies(dir).ready, false);
+
+  // Tüm alt dizinlerin node_modules klasörleri oluşunca checkDependencies true dönmeli
+  for (const sub of ["backend", "frontend", "execution", "llm-yonetimi"]) {
+    fs.mkdirSync(path.join(dir, sub, "node_modules", "pkg"), { recursive: true });
+  }
+  assert.equal(checkDependencies(dir).ready, true);
+});
+
+test("npm-shim: translateNpmArgs --prefix ve ci argümanlarını Bun için doğru çevirir", async () => {
+  const { translateNpmArgs } = await import("../bin/shims/npm-shim.mjs");
+  const base = path.resolve("D:/xfactor-main/backend");
+  const res = translateNpmArgs(["--prefix", "../llm-yonetimi", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], base);
+  assert.equal(res.cwd, path.resolve(base, "../llm-yonetimi"));
+  assert.deepEqual(res.args, ["install", "--ignore-scripts"]);
+});
+
+test("buildServerEnv: localhost modunda .env.example NODE_ENV=development değerini korur ve frontendPort originlerini ALLOWED_ORIGINS'e ekler", async () => {
+  const { buildServerEnv, setupPayloadSchema } = await import("../wizard/config.mjs");
+  const payload = setupPayloadSchema.parse({
+    deployment: {
+      mode: "localhost",
+      publicUrl: "http://127.0.0.1:8000",
+      basePath: "/",
+      allowedOrigins: ["http://127.0.0.1:8000"],
+      trustProxyHops: 0,
+      retention: { enabled: false, actionLogDays: 180, readNotificationDays: 90, emailLogDays: 60, passwordResetDays: 30 },
+    },
+    server: { host: "127.0.0.1", port: 8000, frontendPort: 5173 },
+    admin: { name: "Admin User", email: "admin@example.com", password: "Guclu_Parola_2026!" },
+    email: { enabled: false },
+    buildClient: false,
+    overwriteExistingEnv: false,
+  });
+  const envText = buildServerEnv(
+    payload,
+    "secret-123",
+    "file:./data/app.db",
+    [{ key: "NODE_ENV", defaultValue: "development" }],
+    { isStaticOnly: false, isDesktop: false, requiresDatabase: true, usesLocalDatabase: false, usesNodeEnv: true },
+  );
+  assert.match(envText, /NODE_ENV=development/);
+  assert.match(envText, /ALLOWED_ORIGINS="[^"]*http:\/\/127\.0\.0\.1:5173[^"]*"/);
+});
+
+test("applicationHealth: tekil orkestrasyon komutu API portunda 404, devPort üzerinde 200 döndüğünde devPort UI adresini doğrular", async (t) => {
+  const http = await import("node:http");
+  const net = await import("node:net");
+  const { dir, cleanup } = mkTemp();
+  t.after(cleanup);
+
+  const getFreePort = async () => {
+    const s = net.createServer();
+    await new Promise((r) => s.listen(0, "127.0.0.1", r));
+    const p = s.address().port;
+    await new Promise((r) => s.close(r));
+    return p;
+  };
+  const apiPort = await getFreePort();
+  const uiDevPort = await getFreePort();
+
+  // API sunucusu: / üzerinde 404 döner (yalnızca /api/* sunar)
+  const apiSrv = http.createServer((req, res) => {
+    res.writeHead(404);
+    res.end("Not Found");
+  });
+  await new Promise((r) => apiSrv.listen(apiPort, "127.0.0.1", r));
+  t.after(() => new Promise((r) => apiSrv.close(r)));
+
+  // UI dev sunucusu: uiDevPort üzerinde 200 döner
+  const uiSrv = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end("<html><body>XFactor UI</body></html>");
+  });
+  await new Promise((r) => uiSrv.listen(uiDevPort, "127.0.0.1", r));
+  t.after(() => new Promise((r) => uiSrv.close(r)));
+
+  fs.writeFileSync(
+    path.join(dir, "package.json"),
+    JSON.stringify({ name: "orchestrated-app", scripts: { dev: "node scripts/dev.mjs" } }),
+    "utf8",
+  );
+  fs.writeFileSync(
+    path.join(dir, "setup.config.json"),
+    JSON.stringify({ ports: { app: apiPort, dev: uiDevPort } }),
+    "utf8",
+  );
+  fs.mkdirSync(path.join(dir, "data"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "data", "installation.lock"), "{}", "utf8");
+  fs.writeFileSync(path.join(dir, ".env"), `PORT=${apiPort}\n`, "utf8");
+
+  const token = "orchestrated-test-token-1234567890";
+  const server = createSetupServer(token, { projectRoot: dir, launchers: false });
+  t.after(() => new Promise((r) => server.close(r)));
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const wizPort = server.address().port;
+
+  const res = await fetch(`http://127.0.0.1:${wizPort}/api/app-health`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.apiReachable, true);
+  assert.equal(body.uiReachable, true);
+  assert.equal(body.reachable, true);
+  assert.equal(body.uiPort, uiDevPort);
+  assert.equal(body.loginUrl, `http://127.0.0.1:${uiDevPort}`);
+});

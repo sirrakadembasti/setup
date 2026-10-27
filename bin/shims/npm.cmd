@@ -9,7 +9,7 @@ for /f "delims=" %%I in ('where npm 2^>nul') do (
 )
 where bun >nul 2>&1
 if not errorlevel 1 (
-  bun %*
+  bun "%SELF_DIR%npm-shim.mjs" %*
   exit /b !errorlevel!
 )
 echo [HATA] Sistemde ne npm ne de bun calistirilabilir programi bulunamadi. >&2

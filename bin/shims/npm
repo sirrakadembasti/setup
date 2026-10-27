@@ -14,7 +14,7 @@ IFS="$OLD_IFS"
 if [ -n "$REAL_NPM" ]; then
   exec "$REAL_NPM" "$@"
 elif command -v bun >/dev/null 2>&1; then
-  exec bun "$@"
+  exec bun "$THIS_DIR/npm-shim.mjs" "$@"
 else
   echo "[HATA] Sistemde ne npm ne de bun programı bulunamadı." >&2
   exit 1

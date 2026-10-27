@@ -443,15 +443,29 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
     writtenKeys.add(key);
   };
 
+  const customEnv = payload.customEnv && typeof payload.customEnv === "object" ? payload.customEnv : {};
+  const declaredNodeEnv = Array.isArray(extraEnvVars)
+    ? extraEnvVars.find((item) => item && item.key === "NODE_ENV")?.defaultValue
+    : null;
+  const effectiveNodeEnv =
+    customEnv.NODE_ENV ||
+    (deployment.mode === "localhost" && declaredNodeEnv ? declaredNodeEnv : "production");
+
   if (needsDatabase) put("DATABASE_URL", envValue(effectiveDatabaseUrl));
   if (needsServerCore) {
     if (needsSessionSecret) put("SESSION_SECRET", envValue(sessionSecret));
-    if (needsNodeEnv) put("NODE_ENV", "production");
+    if (needsNodeEnv) put("NODE_ENV", effectiveNodeEnv);
     put("HOST", envValue(payload.server.host));
     put("PORT", String(payload.server.port));
     put("FRONTEND_URL", envValue(deployment.publicUrl));
     put("APP_BASE_PATH", envValue(basePath));
-    put("ALLOWED_ORIGINS", envValue(deployment.allowedOrigins.join(",")));
+    const origins = [...deployment.allowedOrigins];
+    if (deployment.mode === "localhost" && payload.server?.frontendPort && payload.server.frontendPort !== payload.server.port) {
+      for (const extraOrigin of [`http://127.0.0.1:${payload.server.frontendPort}`, `http://localhost:${payload.server.frontendPort}`]) {
+        if (!origins.includes(extraOrigin)) origins.push(extraOrigin);
+      }
+    }
+    put("ALLOWED_ORIGINS", envValue(origins.join(",")));
     if (deployment.trustProxyHops > 0 || declared.has("TRUST_PROXY_HOPS")) {
       put("TRUST_PROXY_HOPS", String(deployment.trustProxyHops));
     }
@@ -512,8 +526,6 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
       lines.push("# E-posta (SMTP) gönderimi kurulum sırasında etkinleştirilmedi.");
     }
   }
-
-  const customEnv = payload.customEnv && typeof payload.customEnv === "object" ? payload.customEnv : {};
 
   if (Array.isArray(extraEnvVars)) {
     for (const item of extraEnvVars) {

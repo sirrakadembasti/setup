@@ -183,6 +183,7 @@ export function findScatteredEnvExamples(root, maxDepth = 3) {
     "node_modules", ".git", ".hg", ".svn", "dist", "build", "out", ".next", ".nuxt", ".output",
     "coverage", ".turbo", ".cache", ".vercel", "vendor", "data", "uploads", "backups",
     "bin", "obj", "target", ".venv", "venv", ".idea", ".vs", "graphify-out", "__pycache__",
+  "tools", "e2e", "docs", "scripts", "test", "tests", "__tests__", "__mocks__", "__fixtures__", "fixtures",
   ]);
 
   function scan(dir, depth) {
@@ -773,6 +774,7 @@ export const CANDIDATE_IGNORED_DIRS = new Set([
   "node_modules", ".git", ".hg", ".svn", "dist", "build", "out", ".next", ".nuxt", ".output",
   "coverage", ".turbo", ".cache", ".vercel", "vendor", "data", "uploads", "backups",
   "bin", "obj", "target", ".venv", "venv", ".idea", ".vs", "graphify-out", "__pycache__",
+  "tools", "e2e", "docs", "scripts", "test", "tests", "__tests__", "__mocks__", "__fixtures__", "fixtures",
 ]);
 
 export function isDotnetDesktopProject(root) {
@@ -1053,6 +1055,60 @@ export function findProjectCandidates(root, maxDepth = 3) {
   return candidates;
 }
 
+const CANONICAL_BACKEND_DIRS = new Set(["backend", "server", "srv", "api"]);
+const CANONICAL_FRONTEND_DIRS = new Set(["frontend", "client", "ui", "web"]);
+
+function detectDirectSubprojects(root) {
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  const subCandidates = [];
+  for (const entry of entries) {
+    if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
+    const name = entry.name.toLowerCase();
+    if (CANDIDATE_IGNORED_DIRS.has(name) || name.startsWith(".")) continue;
+    const subDir = path.join(root, entry.name);
+    if (!hasValidPackageJson(subDir)) continue;
+    const classified = classifyCandidate(subDir, entry.name);
+    if (classified) subCandidates.push(classified);
+  }
+  if (subCandidates.length < 2) return null;
+
+  const canonicalBackends = subCandidates.filter((c) => CANONICAL_BACKEND_DIRS.has(c.dir.toLowerCase()));
+  const canonicalFrontends = subCandidates.filter((c) => CANONICAL_FRONTEND_DIRS.has(c.dir.toLowerCase()));
+  const roleBackends = subCandidates.filter((c) => c.role === "backend");
+  const roleFrontends = subCandidates.filter((c) => c.role === "frontend");
+
+  const backendCandidate =
+    canonicalBackends[0] ||
+    (roleBackends.length === 1 ? roleBackends[0] : null);
+  const frontendCandidate =
+    canonicalFrontends[0] ||
+    (roleFrontends.length === 1 ? roleFrontends[0] : null);
+
+  if (!backendCandidate || !frontendCandidate || backendCandidate.dir === frontendCandidate.dir) {
+    return null;
+  }
+
+  const extraSubprojects = subCandidates.filter(
+    (c) => c.dir !== backendCandidate.dir && c.dir !== frontendCandidate.dir,
+  );
+  const subprojectList = [...extraSubprojects, backendCandidate, frontendCandidate];
+
+  return {
+    subprojects: {
+      backend: backendCandidate,
+      frontend: frontendCandidate,
+    },
+    subprojectList,
+    candidates: subCandidates,
+  };
+}
+
+
 export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
   if (
     kind === "electron-desktop" ||
@@ -1186,6 +1242,8 @@ export function detectProject(root = process.cwd(), options = {}) {
     readJsonSafe(path.join(resolved, "package.json")),
     readJsonSafe(path.join(resolved, "server", "package.json")),
     readJsonSafe(path.join(resolved, "client", "package.json")),
+    readJsonSafe(path.join(resolved, "backend", "package.json")),
+    readJsonSafe(path.join(resolved, "frontend", "package.json")),
   ];
   if (Array.isArray(workspaces.packageDirs)) {
     for (const relDir of workspaces.packageDirs) {
@@ -1238,13 +1296,55 @@ export function detectProject(root = process.cwd(), options = {}) {
   const hasDirectRootProject =
     validPkg ||
     workspaces.isWorkspace ||
-    setupConfig !== null ||
     hasRootServerEntry ||
+    setupConfig !== null ||
     exists(resolved, "go.mod") ||
     exists(resolved, "Cargo.toml") ||
     exists(resolved, "CMakeLists.txt") ||
     exists(resolved, "project.godot") ||
     exists(resolved, "ProjectSettings", "ProjectVersion.txt");
+
+  if (!options?._internal && !workspaces.isWorkspace) {
+    const composite = detectDirectSubprojects(resolved);
+    if (composite) {
+      kind = "node-fullstack";
+      const scenario = detectScenarioProfile(kind, { ...stack, nodeServer: true, client: true }, workspaces);
+      const projectName =
+        workspaces.name ||
+        setupConfig?.name ||
+        `${composite.subprojects.backend.name}-${composite.subprojects.frontend.name}`;
+      const pm = workspaces.declaredPackageManager
+        ? workspaces.packageManager
+        : (composite.subprojects.backend.pkg?.packageManager
+          ? detectPackageManager(composite.subprojects.backend.fullPath, composite.subprojects.backend.pkg)
+          : workspaces.packageManager);
+      return {
+        root: resolved,
+        projectName,
+        kind,
+        scenario,
+        packageManager: pm,
+        hasPackageJson: validPkg,
+        packageJsonExists: exists(resolved, "package.json"),
+        workspaces,
+        stack: { ...stack, nodeServer: true, client: true },
+        dependencyUsage,
+        install,
+        runtime,
+        setupConfig,
+        routes: detectAppRoutes(resolved, scenario, setupConfig),
+        ports: {
+          bootstrap: Number(process.env.SETUP_BOOTSTRAP_PORT) || Number(cfgPorts.bootstrap) || DEFAULT_PORTS.bootstrap,
+          wizard: Number(process.env.SETUP_WIZARD_PORT) || Number(cfgPorts.wizard) || DEFAULT_PORTS.wizard,
+          app: Number(process.env.SETUP_APP_PORT) || Number(cfgPorts.app) || detectEnvExamplePort(runtime) || detectSourcePort(resolved, stack) || DEFAULT_PORTS.app,
+        },
+        subprojects: composite.subprojects,
+        subprojectList: composite.subprojectList,
+        candidates: composite.candidates,
+        confidence: 0.85,
+      };
+    }
+  }
 
   // Kök dizinde doğrudan tanımlı proje bulunamadıysa veya dizinse alt klasörleri derinlemesine tara
   if (!options?._internal && (!hasDirectRootProject || kind === "directory" || kind === "unknown")) {
@@ -1402,9 +1502,10 @@ export function buildInstallPlan(detection) {
   }
 
   if (detection.subprojects) {
-    const backendDir = detection.subprojects.backend?.dir;
-    const frontendDir = detection.subprojects.frontend?.dir;
-    const parts = [backendDir, frontendDir].filter(Boolean).join(" + ");
+    const subDirs = Array.isArray(detection.subprojectList) && detection.subprojectList.length > 0
+      ? detection.subprojectList.map((s) => s?.dir).filter(Boolean)
+      : [detection.subprojects.backend?.dir, detection.subprojects.frontend?.dir].filter(Boolean);
+    const parts = subDirs.join(" + ");
     steps.push({
       id: "dependencies",
       label: `Bağımlılık kurulumu (${parts || buildInstallCommandLabel(detection)})`,
