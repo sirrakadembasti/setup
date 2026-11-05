@@ -38,6 +38,8 @@ npx github:sirrakadembasti/setup init --copy-tools
 node /path/to/setup/bin/setup.mjs init --root /hedef/proje --copy-tools --refresh-launchers
 ```
 
+> **Sürüm sabitleme:** `init`, başlatıcılardaki `npx/bunx github:sirrakadembasti/setup` çağrısını, kurulum çekirdeğinin uzakta bulunan commit'ine (`#<sha>`) sabitler; böylece `main` dalındaki sonradan yapılan değişiklikler müşteri makinelerinde habersiz çalışmaz. Farklı bir sürüm için `SETUP_LAUNCHER_REF=<etiket|sha>`, sabitlemeyi kapatmak için `SETUP_LAUNCHER_REF=none` kullanın. Hedef repodaki `setup.config.json` içindeki `install`/`start`/`seed` komutları da çalıştırılır; güvenmediğiniz repolarda kurulumu çalıştırmadan önce bu dosyayı inceleyin.
+
 ---
 
 ## 🔄 Uygulama Nasıl Çalışır? (4 Adımda İşleyiş)

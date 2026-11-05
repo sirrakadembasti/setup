@@ -4,6 +4,8 @@ Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallar
 
 ## [Yayınlanmamış]
 
+- **Güvenlik ve dayanıklılık düzeltmeleri:** başarısız yeniden yapılandırma artık mevcut kurulum kilidini silmiyor; yeniden yapılandırma `.env` değerlerini, özel anahtarları ve oturum sırrını koruyor; `.env.example` yer tutucu sırları rastgele üretiliyor; alt proje `.env` dosyaları yedekleniyor; statik sunucu bozuk URL'de çökmüyor; terminal günlükleri `.env` sırlarını maskeliyor; `/api/select-candidate` etkin kökü seçilen alt projeye taşıyor ve depo dışı yolu reddediyor; başlatıcılar `npx/bunx` çağrısını sabit commit'e bağlıyor (`SETUP_LAUNCHER_REF`).
+
 - **Hedef Proje Odaklı (Target-Project-Centric) Tek Sayfa Web Yapılandırma Ekranı ve Terminalden Doğrudan Başlatma (`wizard/ui.html.mjs`, `wizard/server.mjs`, `wizard/core.mjs`, `scripts/terminal-bootstrap.mjs`):**
   - **Tek Sayfa (4 Kartlı) Web Yapılandırma ve Başlatma Arayüzü (`wizard/ui.html.mjs`):** `setup` aracının sıfırdan yabancı bir SaaS uygulaması kuruyormuş gibi algılanmasına yol açan 5 adımlı sihirbaz akışı kaldırılarak doğrudan hedef GitHub reposuna hizmet eden 4 kartlı tek sayfa düzene geçildi:
     1. **1. Hedef Proje ve Sistem Hazırlık Özeti:** Hedef projenin gerçek klasör adı (`repositoryName`), mimari senaryosu, algılanan alt modül rozetleri (`backend`, `frontend`, `execution`, `llm-yonetimi` vb.) ve çalışma zamanı (`Node.js`, `Veri dizini`, `Araç zinciri`) hazırlık durumu gösterilir; ham geliştirici JSON çıktısı daraltılmış `<details>` çekmecesine alındı.

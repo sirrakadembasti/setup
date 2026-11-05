@@ -301,7 +301,10 @@ test("Windows remote fallback preserves percent arguments and propagates the man
     env: { ...process.env, PATH: runtimePath, Path: runtimePath, SETUP_PARITY_LAUNCHER: path.join(root, "kurulum.bat"), SETUP_PARITY_DATA: data, SETUP_PARITY_SEGMENT: "WRONG", SETUP_PROJECT_ROOT: root, SETUP_NO_PAUSE: "1" },
   });
   assert.equal(result.status, 7, result.stdout + result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), ["--yes", "github:sirrakadembasti/setup", "--data-dir", data]);
+  const [yes, spec, ...rest] = JSON.parse(result.stdout);
+  assert.equal(yes, "--yes");
+  assert.match(spec, /^github:sirrakadembasti\/setup(#[0-9A-Za-z._-]+)?$/, "başlatıcı sabit sürüme bağlı olabilir");
+  assert.deepEqual(rest, ["--data-dir", data]);
 });
 
 test("Bun step execution uses the selected runtime for node commands", (t) => {

@@ -4,6 +4,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildInstallPlan, detectPackageManager, detectProject, detectScenarioProfile, DEFAULT_PORTS, loadSetupConfig, parseEnvExample } from "./detect-project.mjs";
 import { resolveLanguageProfile } from "./polyglot.mjs";
@@ -45,6 +46,29 @@ export async function inspect(root = process.cwd()) {
   return { version: getVersion(), detection, plan };
 }
 
+const REMOTE_SPEC = "github:sirrakadembasti/setup";
+
+/**
+ * Başlatıcıların `npx/bunx github:…` ile çekeceği sürümü sabitler (tedarik zinciri riski: değişken `main` yerine
+ * sabit commit). Öncelik: SETUP_LAUNCHER_REF ortam değişkeni ("none" = sabitleme yok), sonra uzakta da bulunan
+ * yerel HEAD commit'i. Belirlenemezse null döner ve başlatıcı eskisi gibi sabitlenmemiş kalır.
+ */
+export function resolveLauncherRef(env = process.env) {
+  const override = String(env.SETUP_LAUNCHER_REF || "").trim();
+  if (override) return override.toLowerCase() === "none" ? null : override;
+  try {
+    const git = (args) => spawnSync("git", ["-C", setupRoot, ...args], { encoding: "utf8", windowsHide: true });
+    const head = git(["rev-parse", "HEAD"]);
+    if (head.status !== 0) return null;
+    const sha = head.stdout.trim();
+    if (!/^[0-9a-f]{40}$/.test(sha)) return null;
+    const remote = git(["branch", "-r", "--contains", sha]);
+    return remote.status === 0 && remote.stdout.trim() ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Hedef projeye çift tıklanabilir kurulum.bat / kurulum.sh başlatıcılarını yazar.
  * Mevcut dosyaların üzerine yalnız overwrite=true ise yazılır.
@@ -59,6 +83,8 @@ function writeLaunchers(resolved, overwrite, backup = false) {
     const marker = extension === "bat" ? 'set "LAUNCHER_MODE=package"' : "LAUNCHER_MODE=package";
     if (!source.includes(marker)) throw new Error(`Başlatıcı şablonu geçersiz: ${fileName}`);
     let content = source.replace(marker, extension === "bat" ? 'set "LAUNCHER_MODE=project"' : "LAUNCHER_MODE=project");
+    const ref = resolveLauncherRef();
+    if (ref) content = content.split(`${REMOTE_SPEC} `).join(`${REMOTE_SPEC}#${ref} `).split(`${REMOTE_SPEC}"`).join(`${REMOTE_SPEC}#${ref}"`);
     content = extension === "bat" ? content.replace(/\r?\n/g, "\r\n") : content.replace(/\r\n/g, "\n");
     const exists = fs.existsSync(destination);
     if (exists && !overwrite) continue;

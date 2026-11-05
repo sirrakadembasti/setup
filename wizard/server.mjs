@@ -7,7 +7,7 @@ import http from "node:http";
 import { fileURLToPath } from "node:url";
 import { getProjectRoot } from "../utils/project-paths.mjs";
 import { probeApplicationUrl } from "./app-readiness.mjs";
-import { resolveWizardPort } from "../scripts/cli-options.mjs";
+import { resolveProjectTarget, resolveWizardPort } from "../scripts/cli-options.mjs";
 import { buildDeploymentArtifacts, parseDeploymentConfig, saveDeploymentConfig } from "../utils/deployment-config.mjs";
 import { findListeningProcess, getSetupPaths, readConfiguredPort } from "../scripts/setup-bootstrap-lib.mjs";
 import { buildLoginUrl, detectPackageManager, detectProject, loadSetupConfig, parseEnvExample } from "../scripts/detect-project.mjs";
@@ -217,12 +217,16 @@ function sendJson(res, status, payload) {
 
 export function createSetupServer(token, options = {}) {
   if (!token || token.length < 24) throw new Error("SETUP_TOKEN en az 24 karakter olmalıdır.");
-  const projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
-  const setupConfig = loadSetupConfig(projectRoot);
+  // Aday seçimi sırasında etkin proje kökü değişir (depo kökü → seçilen alt proje).
+  const repositoryRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
+  let projectRoot = options.projectRoot ? path.resolve(options.projectRoot) : getProjectRoot();
+  let setupConfig = loadSetupConfig(projectRoot);
   let detection = detectProject(projectRoot, { candidate: options.candidate });
 
   // Masaüstü senaryosunda açık bir veri dizini yoksa kullanıcı veri dizini (AppData vb.) kullanılır.
-  const dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: options.dataDir });
+  let dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: options.dataDir });
+
+  const selectedCandidatePath = () => (projectRoot === repositoryRoot ? null : path.relative(repositoryRoot, projectRoot).split(path.sep).join("/"));
 
   let serverRoot;
   let dataRoot;
@@ -850,7 +854,7 @@ export function createSetupServer(token, options = {}) {
             envVariables: envExample.variables || [],
             seedScript: detectedSeed,
             toolchain: toolchain.details,
-            candidateRoot: detection.candidateRoot || null,
+            candidateRoot: detection.candidateRoot || selectedCandidatePath(),
             subprojects: detection.subprojects || null,
             subprojectList: detection.subprojectList || null,
             candidates: detection.candidates || null,
@@ -875,7 +879,12 @@ export function createSetupServer(token, options = {}) {
           if (!chosenCandidate) {
             return sendJson(res, 400, { message: "Geçerli bir candidate yolu belirtilmelidir." });
           }
-          detection = detectProject(projectRoot, { candidate: chosenCandidate });
+          // Aday depo dizini içinde olmalı; etkin kök seçilen alt projeye taşınır (terminal akışıyla aynı davranış).
+          const target = resolveProjectTarget(repositoryRoot, chosenCandidate);
+          projectRoot = target.root;
+          detection = target.detection;
+          setupConfig = loadSetupConfig(projectRoot);
+          dataDir = resolveDesktopDataDir({ detection, setupConfig, explicit: options.dataDir });
           const newPaths = getSetupPaths(projectRoot, { dataDir });
           serverRoot = newPaths.serverRoot;
           dataRoot = newPaths.dataRoot;
@@ -888,7 +897,7 @@ export function createSetupServer(token, options = {}) {
             message: `Aday alt proje seçildi: ${detection.projectName} (${chosenCandidate})`,
             detected: {
               projectName: detection.projectName,
-              candidateRoot: detection.candidateRoot,
+              candidateRoot: detection.candidateRoot || selectedCandidatePath(),
               kind: detection.kind,
               scenario: detection.scenario,
             },
