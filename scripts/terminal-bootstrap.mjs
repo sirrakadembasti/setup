@@ -19,6 +19,7 @@ import { createDualProcessController, parseDotEnvFile, resolveAppStartInvocation
 import { probeApplicationUrl } from "../wizard/app-readiness.mjs";
 import { createStaticAppServer } from "../wizard/server.mjs";
 import { materializeEnvTemplate } from "../wizard/config.mjs";
+import { redactSecrets } from "../wizard/shared.mjs";
 
 const setupRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const evidenceLabels = {
@@ -165,11 +166,11 @@ export function createTerminalBootstrap(options = {}) {
     }
   }
 
-  function run(call, { timeout, cwd = root, wizard = false, reconfigure = false, ipc = false, env = {} } = {}) {
+  function run(call, { timeout, cwd = root, wizard = false, reconfigure = false, ipc = false, env = {}, secrets = [] } = {}) {
     const port = wizard ? status().wizardPort : null;
     let buffer = "", opened = false;
     return runner.run(call, {
-      cwd, timeout, ipc, prependPaths: [path.join(setupRoot, "bin/shims")],
+      cwd, timeout, ipc, secrets, prependPaths: [path.join(setupRoot, "bin/shims")],
       onMessage(message) {
         if (message?.type === "setup:application") {
           application = { state: message.state, message: message.message };
@@ -321,7 +322,7 @@ export function createTerminalBootstrap(options = {}) {
     return { envPath: paths.env, lockPath: paths.lock, createdEnv };
   }
 
-  async function startApp({ waitForExit = true, startTimeoutMs = 15000 } = {}) {
+  async function startApp({ waitForExit = true, startTimeoutMs = Number(process.env.SETUP_APP_START_TIMEOUT_MS) || 60000 } = {}) {
     const current = status();
     if (!current.runtime.nodeSupported || !current.runtime.packageManagerSupported) {
       throw new Error("Desteklenmeyen çalışma ortamı. Node.js >=18 ve geçerli bir paket yöneticisi gerekir.");
@@ -331,6 +332,7 @@ export function createTerminalBootstrap(options = {}) {
     }
     const { envPath } = ensureDefaultEnvironment();
     const envVars = parseDotEnvFile(envPath);
+    const appSecrets = secretValues(envVars);
     const appPort = Number(envVars.PORT) || readConfiguredPort(root, { dataDir }) || detection.ports?.app || 5000;
     const frontendPort = Number(envVars.FRONTEND_PORT) || detection.ports?.frontend || (appPort === 5000 ? 5001 : appPort + 1);
     const inv = resolveAppStartInvocation(root, config);
@@ -349,7 +351,7 @@ export function createTerminalBootstrap(options = {}) {
         envVars,
         prependPaths: [path.join(setupRoot, "bin/shims")],
         appendLog(text) {
-          if (text && text.trim()) log(text.trimEnd());
+          if (text && text.trim()) log(redactSecrets(text.trimEnd(), appSecrets));
         },
       });
       await activeDualController.start();
@@ -372,7 +374,7 @@ export function createTerminalBootstrap(options = {}) {
         log(`[setup] Hedef uygulama hazır ve çalışıyor: ${targetUrl} (API: ${backendUrl})`);
         if (!options.noOpen) openBrowser(targetUrl);
       } else {
-        log(`[setup] Hedef uygulama süreçleri başlatıldı (${targetUrl}).`);
+        log(`[setup] Hedef uygulama süreçleri başlatıldı ancak ${Math.round(startTimeoutMs / 1000)} sn içinde HTTP yanıtı doğrulanamadı (${targetUrl}). Hazır olunca tarayıcıdan açabilirsiniz.`);
       }
       if (!waitForExit) return { ok: true, url: targetUrl, backendPort: appPort, frontendPort, mode: "dual" };
       while (activeDualController && activeDualController.alive()) {
@@ -417,6 +419,7 @@ export function createTerminalBootstrap(options = {}) {
       cwd: finalInv.cwd || root,
       timeout: 0,
       env: { ...envVars, PORT: String(appPort) },
+      secrets: appSecrets,
     });
 
     if (!waitForExit) {
@@ -461,6 +464,13 @@ export function createTerminalBootstrap(options = {}) {
   }
 
   return { hasDirectStartLock, status, selectCandidate, refresh, prepare, install, reset, ensureDefaultEnvironment, startApp, startWizard, cancel: cancelAll };
+}
+
+function secretValues(vars) {
+  return Object.entries(vars || {})
+    .filter(([key, value]) => /password|secret|token|key|database_url/i.test(key) && String(value).length >= 3)
+    .map(([, value]) => String(value))
+    .sort((a, b) => b.length - a.length);
 }
 
 function openBrowser(url) {

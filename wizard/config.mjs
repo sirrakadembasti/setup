@@ -126,6 +126,8 @@ export function parseSetupPayload(raw, options = {}) {
     : undefined;
   if (frontendPort !== undefined && (!Number.isInteger(frontendPort) || frontendPort < 1024 || frontendPort > 65535)) {
     issues.push({ code: "invalid_port", message: "Frontend portu 1024-65535 aralığında olmalıdır.", path: ["server", "frontendPort"] });
+  } else if (frontendPort !== undefined && frontendPort === port) {
+    issues.push({ code: "invalid_port", message: "Frontend portu, backend/uygulama portundan farklı olmalıdır.", path: ["server", "frontendPort"] });
   }
 
   const rawAdminName = String(raw.admin?.name ?? "").trim();

@@ -113,7 +113,7 @@
   • Nasıl Yapılır?
   Hedef projeye npm install github:sirrakadembasti/setup eklenir ve Express içine middleware olarak bağlanır:
     import express from "express";
-    import { mountSetupGuard } from "setup/wizard";
+    import { mountSetupGuard } from "setup/core";
 
     const app = express();
 

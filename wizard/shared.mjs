@@ -1022,16 +1022,20 @@ export async function executeSetupApply({
           seedLabel = seedScript;
         }
       }
+      let adminSeeded = false;
       if (seedInv) {
         try {
           await runCommand(seedInv.command, seedInv.args, seedInv.cwd || projectRoot, runtimeEnv, appendLog);
+          adminSeeded = true;
           summary.push(`Veritabanı tohumlama (${seedLabel}) uygulandı.`);
         } catch (seedErr) {
           summary.push(`Veritabanı tohumlama atlandı veya başarısız oldu (${seedLabel}): ${seedErr.message}`);
         }
       }
       markStep("admin", "done", payload.admin.email);
-      summary.push("İlk yönetici hesabı oluşturuldu.");
+      summary.push(adminSeeded
+        ? "İlk yönetici hesabı seed betiğiyle oluşturuldu."
+        : "Yönetici bilgileri .env ve admin.json dosyalarına yazıldı; seed betiği çalışmadığı için hesap veritabanında OLUŞTURULMADI.");
     } else {
       markStep("admin", "skipped", "Bu senaryoda yönetici hesabı atlandı.");
     }

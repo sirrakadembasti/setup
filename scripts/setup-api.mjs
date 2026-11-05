@@ -97,7 +97,12 @@ export function initProject(root = process.cwd(), options = {}) {
       const src = path.join(setupRoot, item);
       const dst = path.join(targetToolsDir, item);
       if (fs.existsSync(src)) {
-        fs.cpSync(src, dst, { recursive: true, force: true });
+        // İç geliştirme planları ve not dosyaları müşteri reposuna kopyalanmaz.
+        fs.cpSync(src, dst, {
+          recursive: true,
+          force: true,
+          filter: (source) => !/[\\/]docs[\\/](superpowers|bilgi-notu\.md)(?:[\\/]|$)/.test(source),
+        });
       }
     }
     toolsCopied = !copyingItself;
