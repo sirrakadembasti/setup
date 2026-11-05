@@ -93,7 +93,7 @@ Uygulamanızın mimarisini, hangi seçeneğin ne işe yaradığını, hedef proj
     cd <hedef-proje>
 
     # Setup çekirdeğini kopyalayarak entegre edin:
-    node D:\dnm\setup-main\setup-main\bin\setup.mjs init --copy-tools
+    node <setup-yolu>/bin/setup.mjs init --copy-tools
 
   • Sonuç: Projenin içine tools/setup/, kurulum.bat, kurulum.sh ve setup.config.json gelir. Son kullanıcı kurulum.bat'a bastığında dış dünyadan bağımsız
   çalışır.
@@ -103,7 +103,7 @@ Uygulamanızın mimarisini, hangi seçeneğin ne işe yaradığını, hedef proj
   • Senaryo: Kod reposunu temiz tutmak istediğiniz, kullanıcıların GitHub'a doğrudan erişebildiği açık kaynak projeler.
   • Nasıl Yapılır?
     cd <hedef-proje>
-    node D:\dnm\setup-main\setup-main\bin\setup.mjs init
+    node <setup-yolu>/bin/setup.mjs init
 
   • Sonuç: Projeye hiçbir kod kopyalanmaz; yalnızca kurulum.bat, kurulum.sh ve setup.config.json eklenir. kurulum.bat çalıştığında paketi GitHub'dan
   anlık olarak çeker.
