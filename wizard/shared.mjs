@@ -9,7 +9,7 @@ import { parseDeploymentConfig, buildDeploymentArtifacts, saveDeploymentConfig }
 import { getSetupPaths, isCommandAvailable } from "../scripts/setup-bootstrap-lib.mjs";
 import { buildLoginUrl, detectPackageManager, parseEnvExample } from "../scripts/detect-project.mjs";
 import { resolvePolyglotMigration } from "../scripts/polyglot.mjs";
-import { buildDatabaseUrl, buildServerEnv, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
+import { buildDatabaseUrl, buildServerEnv, CORE_ENV_KEYS, hashAdminPassword, publicAppUrl, setupPayloadSchema, toDeploymentConfig, ValidationError } from "./config.mjs";
 import { normalizeProcessEnv, parseDotEnvFile, pmRunInvocation, readJsonFileSafe, resolveEffectivePackageManager } from "./app-process.mjs";
 
 export { normalizeProcessEnv };
@@ -746,17 +746,33 @@ export async function executeSetupApply({
   };
 
   const passwordHash = payload.admin && payload.admin.password ? (payload.admin.passwordHash || hashAdminPassword(payload.admin.password)) : (payload.admin?.passwordHash || "");
-  const envExample = parseEnvExample(projectRoot);
-  const envText = buildServerEnv(
+  // Yeniden yapılandırmada mevcut .env sıfırlanmaz: örnek dosyadaki değerlerin yerine mevcut değerler,
+  // oturum sırrı ve sihirbazın bilmediği özel anahtarlar korunur.
+  const lockExistedBefore = fs.existsSync(lockPath);
+  const existingEnv = fs.existsSync(envPath) ? parseDotEnvFile(envPath) : {};
+  const rawEnvExample = parseEnvExample(projectRoot);
+  const envExample = {
+    ...rawEnvExample,
+    variables: (rawEnvExample.variables || []).map((v) =>
+      existingEnv[v.key] !== undefined && existingEnv[v.key] !== "" ? { ...v, defaultValue: existingEnv[v.key] } : v),
+  };
+  let envText = buildServerEnv(
     { ...payload, admin: { ...payload.admin, passwordHash } },
-    undefined,
+    existingEnv.SESSION_SECRET || undefined,
     effectiveDatabaseUrl,
     envExample.variables,
     detection.scenario,
   );
+  const writtenEnvKeys = new Set([...envText.matchAll(/^([A-Za-z_][A-Za-z0-9_]*)=/gm)].map((m) => m[1]));
+  const preservedEnv = Object.entries(existingEnv).filter(([key]) => !writtenEnvKeys.has(key) && !CORE_ENV_KEYS.has(key));
+  if (preservedEnv.length > 0) {
+    const preservedLines = preservedEnv.map(([k, v]) => `${k}=${JSON.stringify(String(v))}`).join("\n");
+    envText = `${envText.trimEnd()}\n# Önceki .env dosyasından korunan değerler\n${preservedLines}\n`;
+  }
   const temporaryEnv = `${envPath}.setup-${process.pid}`;
   let createdBackupFile = null;
   const extraEnvDirs = [];
+  const subEnvBackups = new Map(); // hedef alt .env -> yedek dosyası (yoksa null: biz oluşturduk)
   const summary = [];
   const appUrl = publicAppUrl(payload);
   applyJob.publicUrl = appUrl;
@@ -799,6 +815,18 @@ export async function executeSetupApply({
         if (fs.existsSync(subDir)) {
           const targetSubEnv = path.join(subDir, ".env");
           if (path.resolve(targetSubEnv) !== path.resolve(envPath)) {
+            if (fs.existsSync(targetSubEnv)) {
+              const backupRoot = path.join(serverRoot, "backups");
+              fs.mkdirSync(backupRoot, { recursive: true });
+              const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+              const rel = path.relative(projectRoot, targetSubEnv).replace(/[\\/:]+/g, "_");
+              const subBackup = path.join(backupRoot, `${rel}-${stamp}.bak`);
+              fs.copyFileSync(targetSubEnv, subBackup);
+              subEnvBackups.set(targetSubEnv, subBackup);
+              summary.push(`${path.relative(projectRoot, targetSubEnv)} yedeklendi.`);
+            } else {
+              subEnvBackups.set(targetSubEnv, null);
+            }
             fs.copyFileSync(envPath, targetSubEnv);
             try { fs.chmodSync(targetSubEnv, 0o600); } catch {}
           }
@@ -1051,38 +1079,21 @@ export async function executeSetupApply({
     if (createdBackupFile && fs.existsSync(createdBackupFile)) {
       try {
         fs.copyFileSync(createdBackupFile, envPath);
-        for (const subDir of extraEnvDirs) {
-          if (fs.existsSync(subDir)) {
-            const targetSubEnv = path.join(subDir, ".env");
-            if (path.resolve(targetSubEnv) !== path.resolve(envPath)) {
-              fs.copyFileSync(createdBackupFile, targetSubEnv);
-            }
-          }
-        }
         summary.push("Kurulum hatası nedeniyle önceki .env yedeği geri yüklendi.");
       } catch {}
-    } else {
-      if (fs.existsSync(envPath)) {
-        try { fs.unlinkSync(envPath); } catch {}
-      }
-      for (const subDir of extraEnvDirs) {
-        if (fs.existsSync(subDir)) {
-          const targetSubEnv = path.join(subDir, ".env");
-          if (fs.existsSync(targetSubEnv)) {
-            try { fs.unlinkSync(targetSubEnv); } catch {}
-          }
-        }
-      }
+    } else if (fs.existsSync(envPath)) {
+      try { fs.unlinkSync(envPath); } catch {}
     }
-    if (fs.existsSync(lockPath)) {
+    // Alt proje .env dosyaları: önceden varsa kendi yedeğinden geri yüklenir, yalnızca biz oluşturduysak silinir.
+    for (const [target, backup] of subEnvBackups) {
       try {
-        const lockContent = JSON.parse(fs.readFileSync(lockPath, "utf8"));
-        if (!lockContent.installedAt || applyJob.status !== "success") {
-          fs.unlinkSync(lockPath);
-        }
-      } catch {
-        try { fs.unlinkSync(lockPath); } catch {}
-      }
+        if (backup && fs.existsSync(backup)) fs.copyFileSync(backup, target);
+        else if (!backup && fs.existsSync(target)) fs.unlinkSync(target);
+      } catch {}
+    }
+    // Önceden kurulu bir sistemin kilidine (yeniden yapılandırma) dokunulmaz; yalnızca bu işlemde yazılan kilit silinir.
+    if (!lockExistedBefore && fs.existsSync(lockPath)) {
+      try { fs.unlinkSync(lockPath); } catch {}
     }
     applyJob.status = "error";
     applyJob.message = err.message || "Kurulum adımları başarısız oldu.";

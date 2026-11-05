@@ -539,7 +539,7 @@ export function buildServerEnv(payload, sessionSecret = createSessionSecret(), d
       }
       const effectiveValue = Object.prototype.hasOwnProperty.call(customEnv, key)
         ? customEnv[key]
-        : (defaultValue ?? "");
+        : (generateIfPlaceholderSecret(key, defaultValue ?? "") ?? (defaultValue ?? ""));
       lines.push(`${key}=${envValue(effectiveValue)}`);
       writtenKeys.add(key);
     }
@@ -568,4 +568,53 @@ export function toDeploymentConfig(payload) {
 export function publicAppUrl(payload) {
   const basePath = normalizeBasePath(payload.deployment.basePath);
   return `${payload.deployment.publicUrl}${basePath === "/" ? "" : basePath}`;
+}
+
+// --- Gizli değer üretimi -----------------------------------------------------------------
+// `.env.example` içindeki "change-me" gibi yer tutucuların ya da boş bırakılmış uygulama-içi
+// sırların (JWT/oturum/çerez vb.) olduğu gibi canlı `.env`'e taşınması güvenlik açığıdır.
+const THIRD_PARTY_SECRET = /(CLIENT|OAUTH|STRIPE|GITHUB|GITLAB|GOOGLE|FACEBOOK|AWS|AZURE|API|WEBHOOK|RECAPTCHA|TWILIO|SENDGRID|SLACK)_?SECRET/i;
+const INTERNAL_SECRET_KEY = /(^|_)(SECRET|SALT|ENCRYPTION_?KEY|SIGNING_?KEY)$/i;
+const PLACEHOLDER_VALUE = /^(change[-_ ]?me.*|replace[-_ ]?me.*|your[-_ a-z0-9]*|secret|super[-_]?secret.*|x{3,}|todo|example.*|<.*>|\.{3,}|placeholder|dummy|default|test)$/i;
+const WEAK_PASSWORD_VALUE = /^(admin\w*|password\w*|123456\w*|changeme|change-me|root|secret|qwerty\w*)$/i;
+
+/** Uygulama-içi (üçüncü taraf olmayan) bir sır anahtarı mı? */
+export function isInternalSecretKey(key) {
+  const k = String(key || "");
+  if (/^(NEXT_PUBLIC_|VITE_|PUBLIC_|REACT_APP_)/i.test(k)) return false;
+  return INTERNAL_SECRET_KEY.test(k) && !THIRD_PARTY_SECRET.test(k);
+}
+
+/** Değer boş ya da yer tutucuysa ve anahtar uygulama-içi sırsa yeni rastgele bir sır döndürür, değilse null. */
+export function generateIfPlaceholderSecret(key, value, cache = null) {
+  if (!isInternalSecretKey(key)) return null;
+  const v = String(value ?? "").trim();
+  if (v !== "" && !PLACEHOLDER_VALUE.test(v)) return null;
+  if (cache?.has(key)) return cache.get(key);
+  const secret = randomBytes(32).toString("hex");
+  cache?.set(key, secret);
+  return secret;
+}
+
+/**
+ * `.env.example` metnini canlı `.env` metnine çevirir: yer tutucu sırlar rastgele üretilir,
+ * zayıf varsayılan parolalar ise `weak` listesinde bildirilir (kullanıcının bilmediği parola üretilmez).
+ */
+export function materializeEnvTemplate(text, cache = new Map()) {
+  const generated = [];
+  const weak = [];
+  const out = String(text).split(/\r?\n/).map((line) => {
+    const m = line.match(/^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*)$/);
+    if (!m) return line;
+    const [, prefix, key, eq, rawValue] = m;
+    const value = rawValue.trim().replace(/^(["'])(.*)\1$/, "$2");
+    const secret = generateIfPlaceholderSecret(key, value, cache);
+    if (secret) {
+      generated.push(key);
+      return `${prefix}${key}${eq}${JSON.stringify(secret)}`;
+    }
+    if (/(^|_)PASS(WORD)?$/i.test(key) && value && WEAK_PASSWORD_VALUE.test(value)) weak.push(key);
+    return line;
+  });
+  return { text: out.join("\n"), generated, weak };
 }

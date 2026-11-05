@@ -18,6 +18,7 @@ import { resolveProjectTarget, resolveWizardPort } from "./cli-options.mjs";
 import { createDualProcessController, parseDotEnvFile, resolveAppStartInvocation, withApplicationPort } from "../wizard/app-process.mjs";
 import { probeApplicationUrl } from "../wizard/app-readiness.mjs";
 import { createStaticAppServer } from "../wizard/server.mjs";
+import { materializeEnvTemplate } from "../wizard/config.mjs";
 
 const setupRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const evidenceLabels = {
@@ -242,6 +243,14 @@ export function createTerminalBootstrap(options = {}) {
     const paths = getSetupPaths(root, { dataDir });
     fs.mkdirSync(paths.dataRoot, { recursive: true });
     let createdEnv = false;
+    const secretCache = new Map(); // aynı sır anahtarı kök ve alt modüllerde aynı değeri alır
+    const weakKeys = new Set();
+    const writeMaterialized = (target, templateText) => {
+      const { text, generated, weak } = materializeEnvTemplate(templateText, secretCache);
+      weak.forEach((k) => weakKeys.add(k));
+      fs.writeFileSync(target, text, "utf8");
+      if (generated.length) log(`[setup] ${path.relative(root, target) || ".env"}: yer tutucu sırlar rastgele üretildi (${generated.join(", ")}).`);
+    };
     if (!fs.existsSync(paths.env) && !fs.existsSync(paths.rootEnv)) {
       let templateContent = null;
       for (const candidateDir of [root, paths.serverRoot]) {
@@ -258,7 +267,7 @@ export function createTerminalBootstrap(options = {}) {
       if (templateContent !== null) {
         const hasPortLine = /^\s*(?:export\s+)?PORT\s*=/m.test(templateContent);
         const content = hasPortLine ? templateContent : `${templateContent.trimEnd()}\nPORT=${defaultPort}\n`;
-        fs.writeFileSync(paths.env, content, "utf8");
+        writeMaterialized(paths.env, content);
       } else {
         const exampleItems = parseEnvExample(root);
         const lines = [];
@@ -268,7 +277,7 @@ export function createTerminalBootstrap(options = {}) {
           lines.push(`${item.key}=${item.value ?? ""}`);
         }
         if (!hasPort) lines.unshift(`PORT=${defaultPort}`);
-        fs.writeFileSync(paths.env, `${lines.join("\n")}\n`, "utf8");
+        writeMaterialized(paths.env, `${lines.join("\n")}\n`);
       }
       if (paths.rootEnv !== paths.env && fs.existsSync(path.join(root, "package.json")) && !fs.existsSync(paths.rootEnv)) {
         fs.copyFileSync(paths.env, paths.rootEnv);
@@ -286,7 +295,7 @@ export function createTerminalBootstrap(options = {}) {
         for (const tpl of [".env.example", ".env.sample", ".env.template"]) {
           const tplPath = path.join(subDir, tpl);
           if (fs.existsSync(tplPath)) {
-            fs.copyFileSync(tplPath, subEnvPath);
+            writeMaterialized(subEnvPath, fs.readFileSync(tplPath, "utf8"));
             copiedFromSubTpl = true;
             log(`[setup] Alt modül .env dosyası şablondan oluşturuldu: ${sub.dir}/.env`);
             break;
@@ -297,6 +306,9 @@ export function createTerminalBootstrap(options = {}) {
           log(`[setup] Alt modül .env dosyası hazırlandı: ${sub.dir}/.env`);
         }
       }
+    }
+    if (weakKeys.size > 0) {
+      log(`[UYARI] Şablondaki zayıf varsayılan parola(lar) .env'e taşındı: ${[...weakKeys].join(", ")}. Üretimde kullanmadan önce mutlaka değiştirin (Seçenek 3 ile yeniden yapılandırabilirsiniz).`);
     }
     if (!fs.existsSync(paths.lock)) {
       fs.writeFileSync(
@@ -441,7 +453,14 @@ export function createTerminalBootstrap(options = {}) {
     await run(call, { wizard: true, reconfigure, ipc: !useEmbedded });
   }
 
-  return { status, selectCandidate, refresh, prepare, install, reset, ensureDefaultEnvironment, startApp, startWizard, cancel: cancelAll };
+  function hasDirectStartLock() {
+    try {
+      const lock = JSON.parse(fs.readFileSync(getSetupPaths(root, { dataDir }).lock, "utf8"));
+      return lock?.mode === "direct-terminal-start";
+    } catch { return false; }
+  }
+
+  return { hasDirectStartLock, status, selectCandidate, refresh, prepare, install, reset, ensureDefaultEnvironment, startApp, startWizard, cancel: cancelAll };
 }
 
 function openBrowser(url) {
@@ -654,6 +673,10 @@ export async function runTerminalBootstrap(options = {}) {
           log("[BAŞARILI] Paket kurulumu tamamlandı. Sıradaki adım: 2) Kurulum Sihirbazına Geç veya 6) Uygulamayı Doğrudan Başlat");
         } else if (action === "2" || action === "3") {
           let useReconfigure = action === "3" || Boolean(options.reconfigure);
+          if (action === "2" && s.installation.state === "installed" && !useReconfigure && setup.hasDirectStartLock()) {
+            log("[BİLGİ] Uygulama yalnızca varsayılan .env ile (Seçenek 6) hazırlanmıştı; web yapılandırması yeniden yapılandırma modunda açılıyor. Mevcut .env yedeklenir, özel değerler korunur.");
+            useReconfigure = true;
+          }
           if (action === "2" && s.installation.state === "installed" && !useReconfigure) {
             log("[UYARI] Bu uygulama zaten kurulu (Kurulum kilidi mevcut). Sıfırdan kurulum tekrar yapılamaz.");
             const switchToReconf = await ask("Mevcut verileri koruyarak Yeniden Yapılandır (3. adım) moduna geçmek ister misiniz? [e/H]: ");

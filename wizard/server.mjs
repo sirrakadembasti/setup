@@ -106,8 +106,24 @@ export function createStaticAppServer(staticDir) {
       res.statusCode = 405;
       return res.end("Method Not Allowed");
     }
-    const reqUrl = new URL(req.url || "/", "http://127.0.0.1");
-    let relPath = decodeURIComponent(reqUrl.pathname || "/").replace(/^\/+/, "");
+    let reqUrl;
+    try {
+      reqUrl = new URL(req.url || "/", "http://127.0.0.1");
+    } catch {
+      res.statusCode = 400;
+      return res.end("Bad Request");
+    }
+    let relPath;
+    try {
+      relPath = decodeURIComponent(reqUrl.pathname || "/").replace(/^\/+/, "");
+    } catch {
+      res.statusCode = 400;
+      return res.end("Bad Request");
+    }
+    if (relPath.includes(String.fromCharCode(0))) {
+      res.statusCode = 400;
+      return res.end("Bad Request");
+    }
     if (!relPath || relPath.endsWith("/")) {
       relPath = path.join(relPath, "index.html");
     }
