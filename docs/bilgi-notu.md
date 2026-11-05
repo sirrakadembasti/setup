@@ -1,4 +1,6 @@
- Uygulamanızın mimarisini, hangi seçeneğin ne işe yaradığını, hedef projelerde ne bıraktığını ve hangi senaryoda hangi komutu kullanmanız gerektiğini
+# Mimari Bilgi Notu: Kullanım Modları, CLI Referansı ve Entegrasyon Yöntemleri
+
+Uygulamanızın mimarisini, hangi seçeneğin ne işe yaradığını, hedef projelerde ne bıraktığını ve hangi senaryoda hangi komutu kullanmanız gerektiğini
   gösteren tam rehber ve referans tabloları aşağıdadır.
   ──────
   ### 1. Büyük Resim: Bu Sistem Nasıl Çalışır?
@@ -88,7 +90,7 @@
   • Senaryo: Kurumsal şirket bilgisayarları, banka/kamu ağları, SSL sertifika engeli olan ortamlar veya internetsiz sunucular.
   • Nasıl Yapılır?
     # Hedef projenin içine gidin:
-    cd D:\dnm\hedef-proje
+    cd <hedef-proje>
 
     # Setup çekirdeğini kopyalayarak entegre edin:
     node D:\dnm\setup-main\setup-main\bin\setup.mjs init --copy-tools
@@ -100,7 +102,7 @@
 
   • Senaryo: Kod reposunu temiz tutmak istediğiniz, kullanıcıların GitHub'a doğrudan erişebildiği açık kaynak projeler.
   • Nasıl Yapılır?
-    cd D:\dnm\hedef-proje
+    cd <hedef-proje>
     node D:\dnm\setup-main\setup-main\bin\setup.mjs init
 
   • Sonuç: Projeye hiçbir kod kopyalanmaz; yalnızca kurulum.bat, kurulum.sh ve setup.config.json eklenir. kurulum.bat çalıştığında paketi GitHub'dan

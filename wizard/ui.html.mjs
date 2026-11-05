@@ -139,13 +139,6 @@ details.opt-box>summary{cursor:pointer;font-weight:650;font-size:14px;color:#1e2
       <span id="testDbResult" style="font-size:12px"></span>
     </div>
   </div>
-  <div class="hidden" aria-hidden="true">
-    <input name="retention" type="checkbox">
-    <input name="actionDays" id="actionDays" type="number" min="30" value="365">
-    <input name="notificationDays" id="notificationDays" type="number" min="7" value="180">
-    <input name="emailDays" id="emailDays" type="number" min="7" value="90">
-    <input name="passwordDays" id="passwordDays" type="number" min="7" value="90">
-  </div>
   <details class="opt-box" id="optionalAdminDetails">
     <summary>👤 İsteğe Bağlı: Başlangıç Yöneticisi (Seed / Admin) ve SMTP E-posta Ayarları (Boş bırakılabilir)</summary>
     <div style="margin-top:12px">
@@ -849,7 +842,7 @@ wizard.onsubmit=async e=>{
       url:String(f.get('dbUrl')||'').trim(),
     };
   }
-  const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy')),retention:{enabled:f.has('retention'),actionLogDays:Number(f.get('actionDays')),readNotificationDays:Number(f.get('notificationDays')),emailLogDays:Number(f.get('emailDays')),passwordResetDays:Number(f.get('passwordDays'))}},server:{host:f.get('host'),port:Number(f.get('port')),...(f.get('frontendPort')?{frontendPort:Number(f.get('frontendPort'))}:{})},admin:isOptionalEmptyAdmin?{name:'',email:'',password:''}:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:emailPayload,database:dbPayload,customEnv,buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
+  const payload={deployment:{mode:f.get('mode'),publicUrl:f.get('publicUrl'),basePath:f.get('basePath'),allowedOrigins:String(f.get('origins')).split(',').map(x=>x.trim()).filter(Boolean),trustProxyHops:Number(f.get('proxy'))},server:{host:f.get('host'),port:Number(f.get('port')),...(f.get('frontendPort')?{frontendPort:Number(f.get('frontendPort'))}:{})},admin:isOptionalEmptyAdmin?{name:'',email:'',password:''}:{name:f.get('adminName'),email:f.get('adminEmail'),password:f.get('adminPassword')},email:emailPayload,database:dbPayload,customEnv,buildClient:f.has('buildClient'),overwriteExistingEnv:f.has('overwrite')};
   try{
     const start=await fetchJson(API+'/apply',{method:'POST',headers:{'content-type':'application/json','x-setup-csrf':window.__SETUP__.csrfToken},body:JSON.stringify(payload)});
     const startData=start.data||{};

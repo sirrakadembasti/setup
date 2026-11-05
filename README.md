@@ -105,7 +105,8 @@ Kurulum tamamlandığında uygulama otomatik olarak başlatılır:
 | └─ `ui.html.mjs` | Hedef proje odaklı tek sayfa (4 kartlı) Türkçe web yapılandırma ve başlatma arayüzü. |
 | **`docs/`** | **Dokümantasyon ve Değişiklik Günlüğü** |
 | ├─ [`docs/ENTEGRASYON.md`](docs/ENTEGRASYON.md) | 5 mimari senaryo için detaylı entegrasyon kılavuzu, kod şablonları ve CLI/API referansı. |
-| └─ [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Sürüm geçmişi ve yapılan tüm geliştirmelerin detaylı kaydı. |
+| ├─ [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Sürüm geçmişi ve yapılan tüm geliştirmelerin detaylı kaydı. |
+| └─ [`docs/bilgi-notu.md`](docs/bilgi-notu.md) | CLI seçenekleri tablosu, 3 entegrasyon yöntemi ve karar akışı özeti. |
 
 ---
 
