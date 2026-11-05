@@ -173,8 +173,10 @@ export async function testDatabaseConnection(dbConfig = {}, projectRoot = proces
     const resolvedPath = path.isAbsolute(dbFile) ? dbFile : path.resolve(projectRoot, dbFile);
     const dir = path.dirname(resolvedPath);
     try {
-      fs.mkdirSync(dir, { recursive: true });
-      fs.accessSync(dir, fs.constants.W_OK);
+      // Sınama yan etki bırakmaz: dizin oluşturulmaz, var olan en yakın üst dizinin yazılabilirliği denetlenir.
+      let probeDir = dir;
+      while (!fs.existsSync(probeDir) && path.dirname(probeDir) !== probeDir) probeDir = path.dirname(probeDir);
+      fs.accessSync(probeDir, fs.constants.W_OK);
       return {
         ok: true,
         reachable: true,

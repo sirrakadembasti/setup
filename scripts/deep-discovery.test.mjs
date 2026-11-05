@@ -388,7 +388,7 @@ test("API: POST /api/select-candidate belirsiz repolarda adayı dinamik olarak d
   const port = address.port;
   const authHeaders = {
     "Authorization": `Bearer ${token}`,
-    "Origin": "http://127.0.0.1",
+    "Origin": `http://127.0.0.1:${port}`,
     "Content-Type": "application/json",
   };
 

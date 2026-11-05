@@ -753,7 +753,7 @@ export function createSetupServer(token, options = {}) {
           return sendJson(res, 429, { message: "İstek sınırı aşıldı." });
         }
         const validCsrf = equalSecret(String(req.headers["x-setup-csrf"] || ""), csrfToken) || equalSecret(bearerToken, token);
-        if (!sameOrigin(req, undefined, allowedOrigins) || !validCsrf) {
+        if (!sameOrigin(req, req.socket?.localPort, allowedOrigins) || !validCsrf) {
           return sendJson(res, 403, { message: "Kurulum isteği güvenlik doğrulamasından geçmedi." });
         }
       }
