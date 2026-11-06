@@ -69,7 +69,7 @@ Terminal ekranında kurulum adımlarının anlık ilerleme durumu (`[✓]` Tamam
 Terminalde **`2) Kurulum Sihirbazına Geç`** seçildiğinde tarayıcıda, sıfırdan yabancı bir uygulama kuruyormuş hissi veren eski 5 adımlı sihirbaz yerine **hedef GitHub reposuna hizmet eden Tek Sayfa (4 Kartlı) Yapılandırma ve Başlatma Ekranı** açılır:
 1. **1. Hedef Proje ve Sistem Hazırlık Özeti:** Hedef projenin gerçek klasör adı (`repositoryName`), mimari senaryosu, algılanan alt modül rozetleri (`backend`, `frontend`, `execution`, `llm-yonetimi` vb.) ve çalışma zamanı (`Node.js`, `Veri dizini`, `Araç zinciri`) hazırlık durumu gösterilir. Ham geliştirici JSON çıktısı daraltılmış `<details>` çekmecesinde tutulur.
 2. **2. Hedef Proje Portları ve `.env.example` Değişkenleri:** Hedef uygulamanın çalışacağı Backend/Uygulama Portu, (Full-Stack projelerde) Frontend (UI) Portu ve hedef projedeki `.env.example` değişkenleri varsayılan değerleriyle doğrudan düzenlenebilir olarak sunulur. Gelişmiş Reverse Proxy / Alt Alan Adı ayarları isteğe bağlı `<details>` çekmecesindedir.
-3. **3. Veritabanı ve Veri Hazırlığı:** Varsayılan olarak yerel SQLite (`Ek kurulum gerekmez`) seçilidir; PostgreSQL, MySQL veya Özel Bağlantı Dizesi seçildiğinde **Canlı Bağlantı Sınaması** (`🔍 Veritabanı Bağlantısını Sına`) yapılabilir. Gereksiz saklama politikası (365/180/90 gün) alanları kaldırılmış; İlk Yönetici (Seed) ve SMTP E-posta ayarları isteğe bağlı `<details>` çekmecesine alınmıştır.
+3. **3. Veritabanı ve Veri Hazırlığı:** Varsayılan olarak yerel SQLite (`Ek kurulum gerekmez`) seçilidir; PostgreSQL, MySQL veya Özel Bağlantı Dizesi seçildiğinde **Canlı Bağlantı Sınaması** (`🔍 Veritabanı Sunucusuna Erişimi Sına`) yapılabilir. Gereksiz saklama politikası (365/180/90 gün) alanları kaldırılmış; İlk Yönetici (Seed) ve SMTP E-posta ayarları isteğe bağlı `<details>` çekmecesine alınmıştır.
 4. **4. Tek Tıkla Kaydet, Hazırla ve Hedef Uygulamayı Başlat:** Sayfa açılır açılmaz aktif olan **`🚀 Ayarları Kaydet ve Hedef Uygulamayı Başlat`** düğmesiyle `.env` dosyaları kök ve alt projelere yazılır, varsa `build` / `migrate` / `seed` adımları canlı konsolda (`#applyConsole`) çalıştırılır ve hedef uygulama başlatılarak tarayıcıda açılır.
 
 ### Adım 4 — Doğrulanmış Uygulama Başlatma (`app-process.mjs`)
@@ -135,12 +135,12 @@ Kurulum tamamlandığında uygulama otomatik olarak başlatılır:
 - **Çevrimdışı `bun.lock` Ön Hazırlığı:** `package-lock.json` ve `overrides` içeren projelerde yerel Bun önbelleğini (`~/.bun/install/cache`) kullanarak ağ engeline takılmadan kurulum yapar.
 
 ### 3. Web Sihirbazı ve Çift Süreç Orkestrasyonu
-- **Canlı Ön Kontroller:** Veritabanı (TCP) ve SMTP bağlantılarını kurulumdan önce tek tıkla test eder.
+- **Ön Erişim Kontrolleri:** Veritabanı sunucusunun TCP portuna erişimi ve SMTP sunucusunun karşılama (`220`) yanıtı kurulumdan önce tek tıkla denetlenir. Kullanıcı adı/parola doğrulaması yapılmaz; bu yüzden başarılı sonuç kimlik bilgilerinin doğru olduğunu garanti etmez.
 - **Çift Süreç (Backend + Frontend) Yönetimi:** Geliştirme veya çift sunucu modunda Backend ve Frontend süreçlerini birlikte başlatır, `API_URL` ve `ALLOWED_ORIGINS` köprülerini kurar; süreçlerden biri çökerse diğerini temizce kapatır.
 - **Yeniden Yapılandırma (`--reconfigure`) ve Yedekli Temiz Kurulum:** Mevcut verileri silmeden ayarları güncelleme veya SHA-256 doğrulanmış yedek (`backups/`) alarak sıfırlama imkanı sunar.
 
 ### 4. Güvenlik ve Hata Dayanıklılığı
-- **Atomik Rollback:** Derleme, migration veya seed adımlarından biri başarısız olursa yarım `.env` ve kilit dosyalarını temizleyip önceki kararlı yedeği geri yükler.
+- **Dosya Düzeyinde Rollback:** Derleme veya migration adımı başarısız olursa yarım `.env` ve kilit dosyaları temizlenir, önceki `.env` (ve alt proje `.env`) yedeği geri yüklenir; mevcut kurulum kilidine dokunulmaz. **Veritabanı geri alınmaz:** başarıyla uygulanmış migration'lar kalır. Seed hatası kurulumu durdurmaz, özette uyarı olarak raporlanır.
 - **Gizli Bilgi Koruması:** SPA projelerinde gizli anahtarları (`SESSION_SECRET`, `DATABASE_URL`, `ADMIN_PASSWORD_HASH`) tarayıcıya sızdırmaz; terminal ve web günlüklerinde parolaları `******` ile maskeler.
 - **Kapsamlı Test Paketi:** 215+ birim ve entegrasyon testi (`npm test`) ile tüm senaryolar doğrulanmıştır.
 

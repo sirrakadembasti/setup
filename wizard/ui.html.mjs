@@ -135,7 +135,7 @@ details.opt-box>summary{cursor:pointer;font-weight:650;font-size:14px;color:#1e2
       <input name="dbUrl" id="dbUrl" placeholder="postgresql://user:password@localhost:5432/app_db">
     </div>
     <div class="full" style="display:flex;align-items:center;gap:12px;margin-top:6px">
-      <button type="button" class="secondary" id="btnTestDb" style="padding:8px 14px;font-size:13px">🔍 Veritabanı Bağlantısını Sına</button>
+      <button type="button" class="secondary" id="btnTestDb" style="padding:8px 14px;font-size:13px">🔍 Veritabanı Sunucusuna Erişimi Sına</button>
       <span id="testDbResult" style="font-size:12px"></span>
     </div>
   </div>

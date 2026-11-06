@@ -1053,7 +1053,7 @@ setup/
 4. **Çok Dilli Araç Zinciri Ön Doğrulaması:**
    - Proje C++ (CMake), Rust (Cargo), Python veya Go gerektiriyorsa ve sistemde derleyici yoksa paket kurma adımı başlamadan önce resmi indirme kılavuzu sunulur.
 5. **Atomik Geri Alma (Rollback on Failure):**
-   - Kurulum uygulanırken (`executeSetupApply`) derleme, veritabanı migration veya seed betiklerinden biri çökerse üretilen geçici `.env.setup-<pid>` silinir, önceki kararlı `.env` yedeği (`backups/.env-*.bak`) otomatik olarak geri yüklenir ve bozuk `installation.lock` bırakılmaz.
+   - Kurulum uygulanırken (`executeSetupApply`) derleme veya veritabanı migration adımı çökerse üretilen geçici `.env.setup-<pid>` silinir, önceki kararlı `.env` ve alt proje `.env` yedekleri (`backups/`) otomatik olarak geri yüklenir; bu işlemde yazılan yarım `installation.lock` silinir, önceden var olan kuruluma ait kilide dokunulmaz. Veritabanı geri alınmaz (uygulanmış migration'lar kalır); seed hatası kurulumu durdurmaz, özette uyarı olarak raporlanır.
 6. **Canlı Ağ Sınamalarında Türkçe Hata Kodları (`formatNetworkErrorMessage`):**
    - Veritabanı ve SMTP bağlantı testlerinde `ECONNREFUSED`, `ETIMEDOUT`, `ENOTFOUND` (DNS) ve `EHOSTUNREACH` sistem hata kodları anlaşılır Türkçe yönlendirmelere dönüştürülür.
 7. **Genel İstisna Zırhı ve Güvenlik Filtreleri:**
