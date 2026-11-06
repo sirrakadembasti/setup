@@ -8,6 +8,11 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildInstallPlan, detectPackageManager, detectProject, detectScenarioProfile, DEFAULT_PORTS, loadSetupConfig, parseEnvExample } from "./detect-project.mjs";
 import { resolveLanguageProfile } from "./polyglot.mjs";
+import { ECOSYSTEM_KINDS } from "./ecosystems.mjs";
+
+// Bu türlerde komutlar platforma/makineye bağlıdır (mvnw.cmd, MSBuild yolu, flutter -d windows …); setup.config.json'a
+// yazılırsa repo başka işletim sisteminde bozulur. Bu yüzden her çalıştırmada dinamik üretilir.
+const DYNAMIC_PROFILE_KINDS = new Set([...Object.keys(ECOSYSTEM_KINDS), "dotnet-server", "dotnet-desktop"]);
 import { getVersion, parseSemver } from "./version.mjs";
 
 const scriptRoot = path.dirname(fileURLToPath(import.meta.url));
@@ -206,7 +211,14 @@ export function initProject(root = process.cwd(), options = {}) {
   let start = null;
 
   const languageProfile = resolveLanguageProfile(resolved, detection.kind, detection.ports.app);
-  if (languageProfile) {
+  if (languageProfile && DYNAMIC_PROFILE_KINDS.has(detection.kind)) {
+    install = { auto: true, requireWorkspaces: false };
+    start = null;
+  } else if (languageProfile && languageProfile.steps.length === 0) {
+    // Bu platformda çalıştırılamayan proje (ör. Windows'a özgü masaüstü): kurulum adımı yazılmaz, neden başlatmada bildirilir.
+    install = { command: null, args: [], requireWorkspaces: false };
+    start = null;
+  } else if (languageProfile) {
     const [primary] = languageProfile.steps.filter((step) => !step.skipIfExists);
     const hasNodeDeps = existingPkg && (
       (existingPkg.dependencies && Object.keys(existingPkg.dependencies).length > 0) ||

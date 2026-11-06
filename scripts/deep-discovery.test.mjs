@@ -148,8 +148,14 @@ test("Eski Masaüstü Uygulaması: C# WinForms / WPF (.csproj) masaüstü senary
   assert.equal(d.scenario.id, "scenario-5-desktop");
 
   const inv = resolveAppStartInvocation(dir);
-  assert.equal(inv.command, "dotnet");
-  assert.ok(inv.args.includes("run"));
+  if (process.platform === "win32") {
+    assert.equal(inv.command, "dotnet");
+    assert.ok(inv.args.includes("run"));
+  } else {
+    // WinForms yalnızca Windows'ta çalışır: Linux/macOS'ta başlatma engellenir ve neden bildirilir.
+    assert.equal(inv.command, null);
+    assert.match(inv.blocked, /yalnızca Windows/);
+  }
 });
 
 test("Eski Masaüstü Uygulaması: Python Tkinter / PyQt GUI masaüstü senaryosu olarak algılanır", (t) => {

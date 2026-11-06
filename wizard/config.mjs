@@ -576,7 +576,7 @@ export function publicAppUrl(payload) {
 // `.env.example` içindeki "change-me" gibi yer tutucuların ya da boş bırakılmış uygulama-içi
 // sırların (JWT/oturum/çerez vb.) olduğu gibi canlı `.env`'e taşınması güvenlik açığıdır.
 const THIRD_PARTY_SECRET = /(CLIENT|OAUTH|STRIPE|GITHUB|GITLAB|GOOGLE|FACEBOOK|AWS|AZURE|API|WEBHOOK|RECAPTCHA|TWILIO|SENDGRID|SLACK)_?SECRET/i;
-const INTERNAL_SECRET_KEY = /(^|_)(SECRET|SALT|ENCRYPTION_?KEY|SIGNING_?KEY)$/i;
+const INTERNAL_SECRET_KEY = /(^|_)(SECRET|SALT|ENCRYPTION_?KEY|SIGNING_?KEY)$|^(SECRET_KEY(_BASE)?|APP_KEY)$/i;
 const PLACEHOLDER_VALUE = /^(change[-_ ]?me.*|replace[-_ ]?me.*|your[-_ a-z0-9]*|secret|super[-_]?secret.*|x{3,}|todo|example.*|<.*>|\.{3,}|placeholder|dummy|default|test)$/i;
 const WEAK_PASSWORD_VALUE = /^(admin\w*|password\w*|123456\w*|changeme|change-me|root|secret|qwerty\w*)$/i;
 
@@ -593,7 +593,8 @@ export function generateIfPlaceholderSecret(key, value, cache = null) {
   const v = String(value ?? "").trim();
   if (v !== "" && !PLACEHOLDER_VALUE.test(v)) return null;
   if (cache?.has(key)) return cache.get(key);
-  const secret = randomBytes(32).toString("hex");
+  // Laravel APP_KEY biçimi: base64:<32 bayt>
+  const secret = key === "APP_KEY" ? `base64:${randomBytes(32).toString("base64")}` : randomBytes(32).toString("hex");
   cache?.set(key, secret);
   return secret;
 }

@@ -85,8 +85,10 @@ npx github:sirrakadembasti/setup init --copy-tools --refresh-launchers
 | 1 | Node.js sunucu | Express, Fastify, Koa, Hono |
 | 2 | SPA / statik web | React, Vue, Vite, saf HTML/JS |
 | 3 | Full-stack / monorepo / çok parçalı | Next.js, Nuxt, SvelteKit, Astro, `backend/` + `frontend/`, workspaces |
-| 4 | Çok dilli sunucu | Python (FastAPI, Django, Flask), Go, C# .NET, Rust, C/C++ |
-| 5 | Masaüstü ve oyun | Electron, Tauri, WinForms/WPF, PyQt, Unity, Unreal, Godot |
+| 4 | Çok dilli sunucu | Python (FastAPI, Django, Flask), Go, Rust, C/C++, **.NET** (ASP.NET Core MVC/Razor/Blazor/Web API, klasik ASP.NET MVC/Web Forms), **Java** (Spring Boot, Quarkus, Micronaut), **PHP** (Laravel, Symfony), **Ruby** (Rails, Sinatra, Rack), Docker Compose |
+| 5 | Masaüstü ve oyun | Electron, Tauri, **.NET** (WinForms, WPF, WinUI, MAUI, Avalonia, Uno, konsol, Worker, klasik .NET Framework; C#/VB.NET/F#), Python (Tkinter, Qt, wx, Kivy, pygame), **Java** (JavaFX, Swing, Compose), Qt/C++, **Flutter**, **Swift**, Go (Wails, Fyne), Rust (egui, iced), Lazarus/Delphi, Unity, Unreal, Godot |
+
+Her projenin hangi işletim sisteminde çalışabileceği algılanır; örneğin WinForms/WPF yalnızca Windows'ta, MAUI Windows ve macOS'ta, Avalonia ve ASP.NET Core her yerde çalışır. Çalıştırılamayan bir platformda araç nedenini söyler (ve ne yapılacağını önerir), sessizce başarısız olmaz.
 
 Birden fazla bağımsız uygulama içeren repolarda hedef, menüden, web ekranından ya da `--candidate <dizin>` ile seçilir.
 

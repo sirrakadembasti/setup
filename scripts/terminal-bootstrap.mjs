@@ -37,9 +37,19 @@ export function createTerminalBootstrap(options = {}) {
   let application = { state: "idle" };
   let activeDualController = null;
   let activeStaticServer = null;
+  let activeStop = null; // ör. `docker compose down`: ön plandaki süreç öldürülünce kapsayıcılar durmaz
+  let startInfoCache = null;
   const runner = createProcessRunner({ log });
   function cancelAll(force = false, signal = "SIGINT") {
     runner.cancel(force, signal);
+    if (activeStop) {
+      const stop = activeStop;
+      activeStop = null;
+      try {
+        const call = invocation(stop.command, stop.args || []);
+        spawnSync(call.command, call.args, { cwd: root, stdio: "ignore", windowsHide: true, timeout: 60000 });
+      } catch {}
+    }
     if (activeDualController) {
       void activeDualController.stop();
       activeDualController = null;
@@ -58,6 +68,7 @@ export function createTerminalBootstrap(options = {}) {
     dataDir = options.dataDir || resolveDesktopDataDir({ detection, setupConfig: config });
     pm = resolveEffectivePackageManager(config.packageManager || detection.packageManager);
     runtimeCache = null;
+    startInfoCache = null;
     packagesReady = !detection.scenario.requiresDependencies || config.install?.command === null || inspectInstallationState(root, { dataDir }).dependencies.ready;
   }
   refreshDetection();
@@ -113,6 +124,24 @@ export function createTerminalBootstrap(options = {}) {
     return mods;
   }
 
+  /** Başlatma komutunun (tahminin) kullanıcıya görünür özeti: hangi komut, nereden bulundu. */
+  function describeStart() {
+    if (startInfoCache) return startInfoCache;
+    let info = null;
+    try {
+      const inv = resolveAppStartInvocation(root, config);
+      if (inv?.blocked) info = { blocked: inv.blocked, note: inv.note || null };
+      else if (inv?.type === "static") info = { command: `statik sunucu (${path.relative(root, inv.staticDir) || "."})`, note: "Derlenmiş statik site" };
+      else if (inv?.type === "dual" || inv?.type === "dual-static") info = { command: "backend + frontend (iki süreç)", note: inv.type === "dual" ? "Çift süreç" : "Backend + derlenmiş frontend" };
+      else if (inv?.command) {
+        const shown = [path.basename(inv.command), ...(inv.args || [])].join(" ").replace(/^cmd(?:\.exe)? \/d \/s \/c /i, "");
+        info = { command: shown.length > 110 ? `${shown.slice(0, 107)}...` : shown, note: inv.note || (config.start?.command ? "setup.config.json start" : null) };
+      }
+    } catch {}
+    startInfoCache = info || {};
+    return startInfoCache;
+  }
+
   function status() {
     const wizardPort = resolveWizardPort({ port: options.port, config });
     const hasNode = ["package.json", "server/package.json", "client/package.json"].some((f) => fs.existsSync(path.join(root, f))) || Boolean(detection.subprojects);
@@ -127,6 +156,8 @@ export function createTerminalBootstrap(options = {}) {
       project: detection.projectName, repositoryName: path.basename(root), directory: root, repositoryRoot, kind: detection.kind,
       scenario: detection.scenario, candidates: detection.candidates || [], hasAmbiguity: Boolean(detection.hasAmbiguity),
       modules: buildModuleStatuses(),
+      ecosystem: detection.ecosystem || null,
+      start: describeStart(),
       plan: buildInstallPlan({ ...detection, ports: { ...detection.ports, wizard: wizardPort }, packageManager: pm }), platform: `${process.platform}/${process.arch}`,
       hostname: os.hostname(), runtime, installation: inspectInstallationState(root, { dataDir }), packagesReady,
       wizardPort,
@@ -221,6 +252,8 @@ export function createTerminalBootstrap(options = {}) {
   async function install() {
     packagesReady = false;
     prepare();
+    const profile = resolveLanguageProfile(root, detection.kind, detection.ports.app);
+    if (profile?.blocked) throw new Error(profile.blocked);
     const steps = installSteps();
     if (!steps.length) { packagesReady = true; log("[setup] Paket kurulumu gerekmiyor."); return; }
     const result = await runSteps(root, steps, log, { run });
@@ -312,6 +345,7 @@ export function createTerminalBootstrap(options = {}) {
       log(`[UYARI] Şablondaki zayıf varsayılan parola(lar) .env'e taşındı: ${[...weakKeys].join(", ")}. Üretimde kullanmadan önce mutlaka değiştirin (Seçenek 3 ile yeniden yapılandırabilirsiniz).`);
     }
     if (!fs.existsSync(paths.lock)) {
+      fs.mkdirSync(path.dirname(paths.lock), { recursive: true });
       fs.writeFileSync(
         paths.lock,
         JSON.stringify({ installedAt: new Date().toISOString(), mode: "direct-terminal-start", project: detection.projectName }, null, 2),
@@ -333,12 +367,15 @@ export function createTerminalBootstrap(options = {}) {
     const { envPath } = ensureDefaultEnvironment();
     const envVars = parseDotEnvFile(envPath);
     const appSecrets = secretValues(envVars);
-    const appPort = Number(envVars.PORT) || readConfiguredPort(root, { dataDir }) || detection.ports?.app || 5000;
-    const frontendPort = Number(envVars.FRONTEND_PORT) || detection.ports?.frontend || (appPort === 5000 ? 5001 : appPort + 1);
     const inv = resolveAppStartInvocation(root, config);
     if (!inv) {
-      throw new Error("Hedef uygulama için başlatma komutu bulunamadı (package.json scripts.start/dev veya setup.config.json start).");
+      throw new Error("Hedef uygulama için başlatma komutu bulunamadı (package.json scripts.start/dev, setup.config.json start veya desteklenen bir proje yapısı).");
     }
+    if (inv.blocked) throw new Error(inv.blocked);
+    const appPort = inv.port || Number(envVars.PORT) || readConfiguredPort(root, { dataDir }) || detection.ports?.app || 5000;
+    const frontendPort = Number(envVars.FRONTEND_PORT) || detection.ports?.frontend || (appPort === 5000 ? 5001 : appPort + 1);
+    if (inv.note) log(`[setup] Başlatma: ${inv.note}`);
+    activeStop = inv.stop || null;
 
     if (inv.type === "dual") {
       log(`[setup] Çok parçalı hedef uygulama başlatılıyor (Backend: ${appPort}, Frontend: ${frontendPort})...`);
@@ -417,7 +454,10 @@ export function createTerminalBootstrap(options = {}) {
     const targetUrl = `http://127.0.0.1:${browserPort}`;
     log(`[setup] Hedef uygulama başlatılıyor (${targetUrl})...`);
     let browserOpened = false;
+    const desktopApp = Boolean(detection.scenario?.isDesktop);
+    if (desktopApp) log("[setup] Masaüstü/yerel uygulama: HTTP yerine süreç yaşam döngüsü izlenir (pencere açılmasını bekleyin).");
     const probeLoop = (async () => {
+      if (desktopApp) return false;
       const deadline = Date.now() + startTimeoutMs;
       while (Date.now() < deadline && runner.running) {
         if (await probeApplicationUrl(targetUrl, { timeout: 600, allowNotFound: true })) {
@@ -434,7 +474,7 @@ export function createTerminalBootstrap(options = {}) {
     const runPromise = run(finalInv, {
       cwd: finalInv.cwd || root,
       timeout: 0,
-      env: { ...envVars, PORT: String(appPort) },
+      env: { ...envVars, PORT: String(appPort), SERVER_PORT: String(appPort), ...(finalInv.env || {}) },
       secrets: appSecrets,
     });
 
@@ -566,6 +606,12 @@ export function formatTerminalPanel(s) {
     `Node.js: ${s.runtime.nodeVersion} (${s.runtime.nodeSupported ? "uygun" : "uyumsuz"}) | ${s.runtime.packageManager}: ${s.runtime.packageManagerVersion || "gerekmiyor/bulunamadı"} (${s.runtime.packageManagerSupported ? "uygun" : "eksik/uyumsuz"})`,
     `Durum: ${stateLabel} | Paketler: ${pkgLabel}`,
     `Bulunanlar: ${foundList}`,
+    ...(s.ecosystem?.label ? [`Algılanan: ${s.ecosystem.label}`] : []),
+    ...(s.start?.blocked
+      ? [`[UYARI] Başlatılamıyor: ${s.start.blocked}`]
+      : s.start?.command
+        ? [`Başlatma komutu: ${s.start.command}${s.start.note ? `  (${s.start.note})` : ""}`]
+        : []),
   ];
 
   if (Array.isArray(s.modules) && s.modules.length > 0) {

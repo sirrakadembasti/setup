@@ -8,6 +8,10 @@ Ayrıntılı geçmiş için `git log` kullanın; burada kullanıcıya görünen 
 
 ### Yeni özellikler
 
+- **Geniş dil/ekosistem desteği (`scripts/ecosystems.mjs`):** .NET'in tüm türleri (ASP.NET Core MVC, Razor Pages, Blazor, Web API, minimal API, Worker, konsol, WinForms, WPF, WinUI, MAUI, Avalonia, Uno, Xamarin; klasik .NET Framework MVC/Web Forms/WCF/WinForms/WPF; C#, VB.NET, F#), Java (Maven/Gradle; Spring Boot, Quarkus, Micronaut, JavaFX, Swing, Compose), PHP, Ruby, Flutter, Swift, Go/Rust masaüstü, Lazarus/Delphi, Qt (qmake) ve Docker Compose.
+- **Platform bilinci:** her tür için Windows/Linux/macOS davranışı ayrı belirlenir; çalıştırılamayan platformda neden ve öneri gösterilir.
+- **Görünür başlatma komutu:** terminal paneli algılanan ekosistemi ve çalıştırılacak komutu (kaynağıyla) gösterir; kurulum adımlarının süreleri yazılır.
+- Makineye özgü komutlar (`mvnw.cmd`, MSBuild yolu, `flutter -d windows` …) `setup.config.json`'a yazılmaz; her çalıştırmada platforma göre üretilir.
 - **Terminal kontrol paneli ve menü (`1–6`, `0`):** adım ilerlemesi, alt modül durumu, tekrar kurulum koruması. `6) Uygulamayı Doğrudan Başlat` sihirbazı atlayarak `.env.example` varsayılanlarıyla uygulamayı açar.
 - **Tek sayfa web ekranı (4 kart):** eski 5 adımlı sihirbazın yerine hedef projeye odaklı özet, port/`.env`, veritabanı ve "kaydet ve başlat" ekranı.
 - **Çok parçalı repolar:** kök `package.json` olmasa da (ya da yalnızca orkestrasyon amaçlıysa) `backend/`, `frontend/`, `srv/`, `ui/` gibi alt projeler algılanır, sırayla kurulur ve ayrı `.env` alır. Çift port (backend + frontend) ve çift süreç yönetimi desteklenir.
@@ -20,6 +24,9 @@ Ayrıntılı geçmiş için `git log` kullanın; burada kullanıcıya görünen 
 
 ### Düzeltmeler
 
+- Masaüstü uygulamalarında (kullanıcı veri dizini kullanılan türler) menü `6` kilit dosyası yolu uyuşmazlığı yüzünden çöküyordu; kilit artık harici veri dizinini izler.
+- `.env.example` olmayan projelerde menü `6` çöküyordu; Vite benzeri frontend'in kaynak `index.html` dosyası derlenmiş çıktı sanılıp frontend hiç başlatılmıyordu; CMake yokken ham hata veriliyordu.
+- Bağımlılığı olmayan Node projesi hiç "kurulu" sayılmıyordu; `python3-venv` eksikliği anlaşılır yönlendirmeyle bildirilir.
 - Başarısız yeniden yapılandırma artık mevcut kurulum kilidini silmiyor.
 - Yeniden yapılandırma mevcut `.env` değerlerini, oturum sırrını ve özel anahtarları koruyor; alt proje `.env` dosyaları yedekleniyor ve hatada geri yükleniyor.
 - `.env.example` içindeki yer tutucu sırlar (`change-me`, boş `JWT_SECRET` vb.) rastgele üretiliyor; zayıf varsayılan parolalar uyarıyla bildiriliyor.

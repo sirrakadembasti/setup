@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { detectEcosystem, ECOSYSTEM_DESKTOP_KINDS, ECOSYSTEM_SERVER_KINDS, PYTHON_GUI_PATTERN } from "./ecosystems.mjs";
 
 const DEFAULT_PORTS = Object.freeze({ bootstrap: 5049, wizard: 5050, app: 5000 });
 
@@ -598,7 +599,7 @@ function detectStack(root, usage, workspaces = {}) {
       exists(root, "app.py") ||
       exists(root, "main.py"),
     go: exists(root, "go.mod") || exists(root, "main.go"),
-    dotnet: hasFileWithSuffix(root, [".csproj", ".sln"]),
+    dotnet: hasFileWithSuffix(root, [".csproj", ".vbproj", ".fsproj", ".sln", ".slnx"]),
     rust: exists(root, "Cargo.toml") && !exists(root, "src-tauri", "tauri.conf.json") && !exists(root, "tauri.conf.json"),
     cpp: exists(root, "CMakeLists.txt") || exists(root, "Makefile") || exists(root, "meson.build"),
     unity: exists(root, "ProjectSettings", "ProjectVersion.txt") || (exists(root, "Assets") && exists(root, "Packages", "manifest.json")),
@@ -824,7 +825,7 @@ export function isPythonDesktopProject(root) {
         } else if (ent.isFile() && ent.name.toLowerCase().endsWith(".py")) {
           try {
             const content = fs.readFileSync(path.join(dir, ent.name), "utf8");
-            if (/\b(?:import\s+tkinter|from\s+tkinter|import\s+PyQt[56]|from\s+PyQt[56]|import\s+PySide[26]|from\s+PySide[26]|import\s+wx|from\s+wx)\b/.test(content)) {
+            if (PYTHON_GUI_PATTERN.test(content)) {
               hasGuiImport = true;
             }
             if (/\b(?:FastAPI|Starlette|Flask|django)\b/.test(content)) {
@@ -841,6 +842,11 @@ export function isPythonDesktopProject(root) {
 }
 
 export function isCppDesktopProject(root) {
+  try {
+    for (const ent of fs.readdirSync(root, { withFileTypes: true })) {
+      if (ent.isFile() && /\.pro$/i.test(ent.name) && /^\s*QT\s*\+?=.*(widgets|gui|quick|qml)/im.test(fs.readFileSync(path.join(root, ent.name), "utf8"))) return true;
+    }
+  } catch {}
   const cmake = path.join(root, "CMakeLists.txt");
   if (fs.existsSync(cmake)) {
     try {
@@ -905,44 +911,11 @@ export function classifyCandidate(candidateDir, relDir) {
     return { dir: relDir, fullPath: candidateDir, name, role, kind, markers, pkg };
   }
 
-  // 2. .NET (.csproj / .sln)
-  let csprojFiles = [];
-  try {
-    for (const ent of fs.readdirSync(candidateDir, { withFileTypes: true })) {
-      if (ent.isFile() && ent.name.toLowerCase().endsWith(".csproj")) {
-        csprojFiles.push(path.join(candidateDir, ent.name));
-      }
-    }
-  } catch {}
-
-  if (csprojFiles.length > 0 || hasFileWithSuffix(candidateDir, [".sln"])) {
-    markers.push("dotnet");
-    let isDesktop = false;
-    let isWeb = false;
-    for (const c of csprojFiles) {
-      try {
-        const text = fs.readFileSync(c, "utf8");
-        if (
-          /<UseWindowsForms>true<\/UseWindowsForms>/i.test(text) ||
-          /<UseWPF>true<\/UseWPF>/i.test(text) ||
-          /<OutputType>WinExe<\/OutputType>/i.test(text) ||
-          /net[0-9.]+-windows/i.test(text)
-        ) {
-          isDesktop = true;
-        }
-        if (/Microsoft\.NET\.Sdk\.Web/i.test(text)) {
-          isWeb = true;
-        }
-      } catch {}
-    }
-    if (isDesktop && !isWeb) {
-      role = "desktop";
-      kind = "dotnet-desktop";
-    } else {
-      role = "backend";
-      kind = "dotnet-server";
-    }
-    return { dir: relDir, fullPath: candidateDir, name, role, kind, markers };
+  // 2. Ek ekosistemler: .NET (Framework/Core/MVC/WinForms/WPF/MAUI…), Java, PHP, Ruby, Flutter, Swift, Docker …
+  const eco = detectEcosystem(candidateDir);
+  if (eco && !(eco.id === "docker" && ["requirements.txt", "pyproject.toml", "go.mod", "Cargo.toml"].some((f) => fs.existsSync(path.join(candidateDir, f))))) {
+    markers.push(...eco.markers);
+    return { dir: relDir, fullPath: candidateDir, name, role: eco.role, kind: eco.kind, markers, ecosystem: eco.label };
   }
 
   // 3. Python
@@ -956,7 +929,7 @@ export function classifyCandidate(candidateDir, relDir) {
       for (const f of files) {
         if (f.isFile() && f.name.endsWith(".py")) {
           const content = fs.readFileSync(path.join(candidateDir, f.name), "utf8");
-          if (/\b(?:import\s+tkinter|from\s+tkinter|import\s+PyQt[56]|from\s+PyQt[56]|import\s+PySide[26]|from\s+PySide[26]|import\s+wx|from\s+wx)\b/.test(content)) {
+          if (PYTHON_GUI_PATTERN.test(content)) {
             isGui = true;
             break;
           }
@@ -1119,6 +1092,7 @@ export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
     kind === "unity-game" ||
     kind === "unreal-game" ||
     kind === "godot-game" ||
+    ECOSYSTEM_DESKTOP_KINDS.includes(kind) ||
     stack.electron ||
     stack.tauri ||
     stack.unity ||
@@ -1128,7 +1102,7 @@ export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
     return {
       id: "scenario-5-desktop",
       number: 5,
-      label: "Senaryo 5: Masaüstü ve Oyun Uygulaması (.NET Desktop / Python GUI / Electron / Tauri / C++ GUI / Unity / Unreal / Godot)",
+      label: "Senaryo 5: Masaüstü ve Oyun Uygulaması (.NET WinForms/WPF/MAUI/Avalonia / Python GUI / Electron / Tauri / Java / Flutter / Qt / Go / Rust GUI / Unity / Unreal / Godot)",
       summary: "Masaüstü veya yerel uygulama ortamı, yerel veri dizini ve süreç yaşam döngüsü.",
       requiresDependencies: true,
       requiresDatabase: Boolean(stack.prisma || stack.hasServerSubdir),
@@ -1140,7 +1114,7 @@ export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
     };
   }
   if (
-    ["python-server", "go-server", "dotnet-server", "rust-server", "cpp-server"].includes(kind) ||
+    ["python-server", "go-server", "dotnet-server", "rust-server", "cpp-server", ...ECOSYSTEM_SERVER_KINDS].includes(kind) ||
     stack.cpp ||
     stack.fastify ||
     stack.koa ||
@@ -1149,7 +1123,7 @@ export function detectScenarioProfile(kind, stack = {}, workspaces = {}) {
     return {
       id: "scenario-4-polyglot",
       number: 4,
-      label: "Senaryo 4: Çoklu Dil / Özel Sunucu Uygulaması (Python / Go / .NET / Rust / Fastify / Koa / Hono)",
+      label: "Senaryo 4: Çoklu Dil / Özel Sunucu Uygulaması (Python / Go / .NET / Java / PHP / Ruby / Rust / Docker / Fastify / Koa / Hono)",
       summary: "Dile özgü bağımlılık kurulumu, .env ve yönetici yapılandırması ve servis başlatma.",
       requiresDependencies: true,
       requiresDatabase: true,
@@ -1256,12 +1230,15 @@ export function detectProject(root = process.cwd(), options = {}) {
   const install = detectInstallEvidence(resolved);
   const runtime = detectRuntimeArtifacts(resolved);
 
+  const eco = detectEcosystem(resolved);
   let kind = "unknown";
   if (stack.electron) kind = "electron-desktop";
   else if (stack.tauri) kind = "tauri-desktop";
   else if (stack.unity) kind = "unity-game";
   else if (stack.unreal) kind = "unreal-game";
   else if (stack.godot) kind = "godot-game";
+  // Manifesti kesin ekosistemler (pom.xml, composer.json, Gemfile, pubspec.yaml …): Node sunucusu yoksa Node'dan önce gelir.
+  else if (eco?.high && !stack.nodeServer && !workspaces.isWorkspace) kind = eco.kind;
   else if (workspaces.isWorkspace && stack.nodeServer) kind = "workspace-fullstack";
   else if (workspaces.isWorkspace) kind = "workspace";
   else if (stack.hasServerSubdir && stack.client) kind = "node-fullstack";
@@ -1269,16 +1246,20 @@ export function detectProject(root = process.cwd(), options = {}) {
   else if (stack.nodeServer && stack.client) kind = "node-webapp";
   else if (stack.nodeServer) kind = "node-server";
   else if (stack.client && validPkg) kind = "node-client";
+  else if (eco?.early) kind = eco.kind;
   else if (isPythonDesktopProject(resolved)) kind = "python-desktop";
   else if (stack.python) kind = "python-server";
   else if (stack.go) kind = "go-server";
+  else if (eco?.id === "dotnet") kind = eco.kind;
   else if (isDotnetDesktopProject(resolved)) kind = "dotnet-desktop";
   else if (stack.dotnet) kind = "dotnet-server";
   else if (stack.rust) kind = "rust-server";
   else if (isCppDesktopProject(resolved)) kind = "cpp-desktop";
   else if (stack.cpp) kind = "cpp-server";
+  else if (eco && !eco.high && !eco.early && !["docker", "dotnet"].includes(eco.id)) kind = eco.kind;
   else if (validPkg) kind = "node-package";
   else if (stack.staticHtml) kind = "static-web";
+  else if (eco?.id === "docker") kind = eco.kind;
   else if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) kind = "directory";
 
   const cfgPorts = setupConfig?.ports || {};
@@ -1301,6 +1282,7 @@ export function detectProject(root = process.cwd(), options = {}) {
     exists(resolved, "go.mod") ||
     exists(resolved, "Cargo.toml") ||
     exists(resolved, "CMakeLists.txt") ||
+    Boolean(eco) ||
     exists(resolved, "project.godot") ||
     exists(resolved, "ProjectSettings", "ProjectVersion.txt");
 
@@ -1438,6 +1420,7 @@ export function detectProject(root = process.cwd(), options = {}) {
     packageJsonExists: exists(resolved, "package.json"),
     workspaces,
     stack,
+    ecosystem: eco ? { id: eco.id, kind: eco.kind, label: eco.label, markers: eco.markers } : null,
     dependencyUsage,
     install,
     runtime,
@@ -1485,6 +1468,7 @@ export function buildInstallPlan(detection) {
     detection.stack?.unreal ||
     detection.stack?.godot ||
     detection.stack?.staticHtml ||
+    Boolean(detection.ecosystem) ||
     Boolean(detection.setupConfig?.install?.command);
 
   if (!installable) {
@@ -1523,6 +1507,8 @@ export function buildInstallPlan(detection) {
       label: `Bağımlılık kurulumu (${buildInstallCommandLabel(detection)})`,
       required: true,
     });
+  } else if (detection.ecosystem && ["java-server", "java-desktop", "php-server", "ruby-server", "flutter-desktop", "swift-app", "docker-compose", "dotnet-server", "dotnet-desktop", "go-desktop", "rust-desktop", "lazarus-desktop", "delphi-desktop"].includes(detection.kind)) {
+    steps.push({ id: "dependencies", label: `Bağımlılık kurulumu ve derleme doğrulaması (${detection.ecosystem.label})`, required: true });
   } else if (detection.stack?.python || detection.kind === "python-desktop") {
     steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (Python venv + pip) + pip check", required: true });
   } else if (detection.stack?.go) {

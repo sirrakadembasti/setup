@@ -679,15 +679,16 @@ test("bin/kurulum.sh package.json olmayan hedef projeyi (çağrıldığı dizin)
   assert.equal(fs.existsSync(path.join(dir, "setup.config.json")), false, "check-only yapılandırma oluşturmamalı");
 });
 
-test("PHP desteği kaldırıldı: composer.json/artisan artık PHP olarak algılanmaz", (t) => {
+test("PHP desteği geri getirildi: composer.json/artisan PHP (Laravel) olarak algılanır", (t) => {
   const { dir, cleanup } = mkTemp();
   t.after(cleanup);
   writeFile(dir, "composer.json", "{}\n");
   writeFile(dir, "artisan", "#!/usr/bin/env php\n");
   const d = detectProject(dir);
-  assert.equal("php" in d.stack, false);
-  assert.notEqual(d.kind, "php-server");
-  assert.equal(buildInstallPlan(d).canInstall, false);
+  assert.equal(d.kind, "php-server");
+  assert.equal(d.scenario.number, 4);
+  assert.equal(buildInstallPlan(d).canInstall, true);
+  assert.match(d.ecosystem.label, /Laravel/);
 });
 
 test("Rust (Cargo.toml) Senaryo 4 olarak algılanır; init cargo fetch/check ve cargo run yazar; Tauri Rust sayılmaz", (t) => {
@@ -764,9 +765,9 @@ test("polyglot: Go cmd/ girişi, .NET çözüm dosyası + web projesi ve Rust ç
   assert.deepEqual(dn.steps[0].args, ["restore", "app.sln"]);
   assert.deepEqual(dn.start.args, ["run", "--project", "web/Web.csproj", "--urls", "http://127.0.0.1:5100"]);
 
-  const dnRoot = resolveLanguageProfile(makeTree(t, { "App.csproj": "<Project/>" }), "dotnet-server", 5100);
-  assert.deepEqual(dnRoot.steps[0].args, ["restore"]);
-  assert.deepEqual(dnRoot.start.args, ["run", "--urls", "http://127.0.0.1:5100"]);
+  const dnRoot = resolveLanguageProfile(makeTree(t, { "App.csproj": '<Project Sdk="Microsoft.NET.Sdk.Web"/>' }), "dotnet-server", 5100);
+  assert.deepEqual(dnRoot.steps[0].args, ["restore", "App.csproj"]);
+  assert.deepEqual(dnRoot.start.args, ["run", "--project", "App.csproj", "--urls", "http://127.0.0.1:5100"]);
 
   const rs = resolveLanguageProfile(
     makeTree(t, {

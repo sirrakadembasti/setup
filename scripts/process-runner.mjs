@@ -8,6 +8,9 @@ import { redactSecrets } from "../wizard/shared.mjs";
 export const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
 const shims = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../bin/shims");
 
+// Windows'ta .cmd/.bat olarak kurulan araçlar (npm, mvn, gradle, composer, bundle, flutter …) doğrudan spawn edilemez.
+const WINDOWS_CMD_TOOLS = /^(npm|npx|pnpm|yarn|bun|bunx|mvn|gradle|composer|bundle|bundler|gem|rails|flutter|dart|wails|lazbuild|nuget)$/i;
+
 export function resolveCommandInvocation(command, args = []) {
   if (command === "node") return { command: process.execPath, args };
   if (PACKAGE_MANAGERS.has(command)) {
@@ -15,7 +18,7 @@ export function resolveCommandInvocation(command, args = []) {
     const execPath = process.env.npm_execpath;
     if (execPath && new RegExp(`${command}(?:-cli)?(?:\\.c?js)?$`, "i").test(execPath)) return { command: process.execPath, args: [execPath, ...args] };
   }
-  if (process.platform === "win32" && /^(npm|npx|pnpm|yarn|bun|bunx)$/.test(command)) return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", command, ...args] };
+  if (process.platform === "win32" && (WINDOWS_CMD_TOOLS.test(command) || /\.(cmd|bat)$/i.test(command))) return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", command, ...args] };
   return { command, args };
 }
 

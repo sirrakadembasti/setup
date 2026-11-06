@@ -6,8 +6,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { analyzeDotnet, buildEcosystemProfile, dotnetProfile, ECOSYSTEM_KINDS, PYTHON_GUI_PATTERN } from "./ecosystems.mjs";
 
 export const LANGUAGE_KINDS = Object.freeze({
+  ...ECOSYSTEM_KINDS,
   "python-server": "python",
   "python-desktop": "python",
   "go-server": "go",
@@ -28,6 +30,23 @@ export const TOOLCHAIN_HINTS = Object.freeze({
   cargo: "Rust (cargo): https://rustup.rs",
   cmake: "CMake: https://cmake.org/download/ (ve GCC/Clang/MSVC C/C++ derleyicisi)",
   godot: "Godot Engine: https://godotengine.org/download",
+  java: "Java JDK 17+: https://adoptium.net",
+  mvn: "Apache Maven: https://maven.apache.org/download.cgi (projede mvnw varsa gerekmez)",
+  gradle: "Gradle: https://gradle.org/install/ (projede gradlew varsa gerekmez)",
+  php: "PHP 8+: https://www.php.net/downloads",
+  composer: "Composer: https://getcomposer.org/download/",
+  ruby: "Ruby: https://www.ruby-lang.org/en/downloads/",
+  bundle: "Bundler: gem install bundler (Ruby kurulu olmalı)",
+  flutter: "Flutter SDK: https://docs.flutter.dev/get-started/install",
+  swift: "Swift: https://www.swift.org/install/",
+  docker: "Docker: https://docs.docker.com/get-docker/",
+  msbuild: "MSBuild (Visual Studio Build Tools): https://visualstudio.microsoft.com/downloads/",
+  nuget: "NuGet: https://www.nuget.org/downloads",
+  mono: "Mono: https://www.mono-project.com/download/stable/",
+  wails: "Wails: https://wails.io/docs/gettingstarted/installation",
+  lazbuild: "Lazarus / Free Pascal: https://www.lazarus-ide.org/",
+  qmake: "Qt: https://www.qt.io/download",
+  make: "make (Linux: build-essential, macOS: Xcode Command Line Tools)",
 });
 
 const VENV_DIR = ".venv";
@@ -78,14 +97,28 @@ export function resolveStepCommand(root, step) {
   return step.command;
 }
 
+function toolNameOf(command) {
+  return path.basename(String(command || "")).replace(/\.(exe|cmd|bat)$/i, "").toLowerCase();
+}
+
 function toolchainFor(step) {
-  if (step.command === "python") return { command: "python", hint: TOOLCHAIN_HINTS.python };
-  if (step.command === "go") return { command: "go", hint: TOOLCHAIN_HINTS.go };
-  if (step.command === "dotnet") return { command: "dotnet", hint: TOOLCHAIN_HINTS.dotnet };
-  if (step.command === "cargo") return { command: "cargo", hint: TOOLCHAIN_HINTS.cargo };
-  if (step.command === "cmake") return { command: "cmake", hint: TOOLCHAIN_HINTS.cmake };
-  if (step.command === "godot") return { command: "godot", hint: TOOLCHAIN_HINTS.godot };
-  return null;
+  const command = String(step.command || "");
+  const name = toolNameOf(command);
+  if (!Object.hasOwn(TOOLCHAIN_HINTS, name)) return null;
+  // Mutlak yol (mvnw, MSBuild.exe, gradlew …) verilmişse dosya zaten projeden/araçtan gelir; PATH denetimi yapılmaz.
+  if (path.isAbsolute(command)) return null;
+  return { command: name, hint: TOOLCHAIN_HINTS[name] };
+}
+
+const TOOL_PROBE_ARGS = { go: ["version"], java: ["-version"], msbuild: ["-version"], mono: ["--version"] };
+
+/** Windows'ta npm/mvn/composer/flutter gibi .cmd/.bat araçları doğrudan spawn edilemez; cmd.exe üzerinden sınanır. */
+function probeCommand(command, args, cwd) {
+  const options = { encoding: "utf8", windowsHide: true, shell: false, cwd };
+  if (process.platform === "win32" && !path.isAbsolute(command) && !/\.exe$/i.test(command)) {
+    return spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", command, ...args], options);
+  }
+  return spawnSync(command, args, options);
 }
 
 /** Gerekli araç zinciri kurulu mu? Değilse okunur bir hata mesajı döndürür. */
@@ -94,8 +127,8 @@ export function checkToolchain(root, step) {
   if (!tool) return { ok: true };
   const command = tool.command === "python" ? resolveSystemPython() : tool.command;
   if (!command) return { ok: false, message: `${tool.command} bulunamadı. Kurulum: ${tool.hint}` };
-  const args = tool.command === "go" ? ["version"] : ["--version"];
-  const res = spawnSync(command, args, { encoding: "utf8", windowsHide: true, shell: false, cwd: root });
+  const args = TOOL_PROBE_ARGS[tool.command] || ["--version"];
+  const res = probeCommand(command, args, root);
   if (res.error || res.status !== 0) return { ok: false, message: `${tool.command} bulunamadı. Kurulum: ${tool.hint}` };
   // Debian/Ubuntu'da python3 kuruluyken `venv`/`ensurepip` modülü ayrı pakettir (python3-venv).
   if (tool.command === "python" && Array.isArray(step.args) && step.args.includes("venv")) {
@@ -128,7 +161,7 @@ export function findPythonApp(root) {
     const module = rel.replace(/\.py$/, "").replaceAll("/", ".");
     if (asgi) return { kind: "asgi", file: rel, module, variable: asgi[1] };
     if (flask) return { kind: "flask", file: rel, module, variable: flask[1] };
-    if (/\b(?:import\s+tkinter|from\s+tkinter|import\s+PyQt[56]|from\s+PyQt[56]|import\s+PySide[26]|from\s+PySide[26]|import\s+wx|from\s+wx)\b/.test(source)) {
+    if (PYTHON_GUI_PATTERN.test(source)) {
       return { kind: "gui", file: rel, module, variable: null };
     }
   }
@@ -141,7 +174,7 @@ export function findPythonApp(root) {
           if (ent.isFile() && ent.name.endsWith(".py")) {
             const rel = d ? `${d}/${ent.name}` : ent.name;
             const source = readText(path.join(root, rel));
-            if (/\b(?:import\s+tkinter|from\s+tkinter|import\s+PyQt[56]|from\s+PyQt[56]|import\s+PySide[26]|from\s+PySide[26]|import\s+wx|from\s+wx)\b/.test(source)) {
+            if (PYTHON_GUI_PATTERN.test(source)) {
               return { kind: "gui", file: rel, module: rel.replace(/\.py$/, "").replaceAll("/", "."), variable: null };
             }
           }
@@ -194,6 +227,15 @@ function pythonProfile(root, port) {
 // ---------------------------------------------------------------- Go
 
 function goProfile(root, port = 5000) {
+  if (exists(root, "wails.json")) {
+    return {
+      language: "go",
+      steps: [{ label: "Modülleri indir (go mod download)", command: "go", args: ["mod", "download"] }],
+      start: { command: "wails", args: ["dev"] },
+      note: "Go / Wails",
+      port,
+    };
+  }
   const steps = [
     { label: "Modülleri indir (go mod download)", command: "go", args: ["mod", "download"] },
     { label: "Derlemeyi doğrula (go build ./...)", command: "go", args: ["build", "./..."] },
@@ -211,54 +253,7 @@ function goProfile(root, port = 5000) {
   return { language: "go", steps, start: { command: "go", args: ["run", target] }, port };
 }
 
-// ---------------------------------------------------------------- .NET
-
-function findDotnetProject(root) {
-  const rootFiles = safeReaddir(root).filter((e) => e.isFile()).map((e) => e.name);
-  const rootCsproj = rootFiles.find((n) => /\.csproj$/i.test(n));
-  const rootSln = rootFiles.find((n) => /\.(sln|slnx)$/i.test(n));
-
-  if (rootCsproj) {
-    const content = readText(path.join(root, rootCsproj));
-    const isDesktop = /<UseWindowsForms>true<\/UseWindowsForms>|<UseWPF>true<\/UseWPF>|<OutputType>WinExe<\/OutputType>|net[0-9.]+-windows/i.test(content);
-    return {
-      restoreTarget: null,
-      runProject: null,
-      isDesktop,
-    };
-  }
-
-  const candidates = [];
-  const ignored = new Set(["node_modules", ".git", "bin", "obj", ".vs", "dist", "build"]);
-
-  function scan(dir, depth) {
-    if (depth > 3) return;
-    for (const ent of safeReaddir(dir)) {
-      if (ent.isDirectory() && !ignored.has(ent.name.toLowerCase())) {
-        scan(path.join(dir, ent.name), depth + 1);
-      } else if (ent.isFile() && /\.csproj$/i.test(ent.name)) {
-        const full = path.join(dir, ent.name);
-        const rel = path.relative(root, full).replaceAll(path.sep, "/");
-        const content = readText(full);
-        const isWeb = /Microsoft\.NET\.Sdk\.Web/.test(content);
-        const isDesktop = /<UseWindowsForms>true<\/UseWindowsForms>|<UseWPF>true<\/UseWPF>|<OutputType>WinExe<\/OutputType>|net[0-9.]+-windows/i.test(content);
-        candidates.push({ rel, isWeb, isDesktop });
-      }
-    }
-  }
-  scan(root, 0);
-
-  const chosenDesktop = candidates.find((c) => c.isDesktop);
-  const chosenWeb = candidates.find((c) => c.isWeb);
-  const chosen = chosenDesktop || chosenWeb || candidates[0];
-  const isDesktop = Boolean(chosenDesktop && !chosenWeb);
-
-  return {
-    restoreTarget: rootSln || chosen?.rel || null,
-    runProject: chosen?.rel || null,
-    isDesktop,
-  };
-}
+// ---------------------------------------------------------------- .NET (ayrıntılar ecosystems.mjs içinde)
 
 function safeReaddir(dir) {
   try {
@@ -268,18 +263,13 @@ function safeReaddir(dir) {
   }
 }
 
-function dotnetProfile(root, port) {
-  const { restoreTarget, runProject, isDesktop } = findDotnetProject(root);
-  const target = restoreTarget ? [restoreTarget] : [];
-  const steps = [
-    { label: "Paketleri geri yükle (dotnet restore)", command: "dotnet", args: ["restore", ...target] },
-    { label: "Derlemeyi doğrula (dotnet build)", command: "dotnet", args: ["build", "--no-restore", ...target] },
-  ];
-  const project = runProject ? ["--project", runProject] : [];
-  const startArgs = isDesktop
-    ? ["run", ...project]
-    : ["run", ...project, "--urls", `http://127.0.0.1:${port}`];
-  return { language: "dotnet", steps, start: { command: "dotnet", args: startArgs } };
+function findDotnetProject(root) {
+  const analysis = analyzeDotnet(root);
+  return {
+    restoreTarget: analysis?.solution || analysis?.primary?.rel || null,
+    runProject: analysis?.primary?.rel || null,
+    isDesktop: analysis ? analysis.primary.category !== "web" : false,
+  };
 }
 
 // ---------------------------------------------------------------- Rust
@@ -400,16 +390,54 @@ function gameProfile(root, port = 5000) {
   };
 }
 
-export function resolveLanguageProfile(root, kind, port = 5000) {
+// ---------------------------------------------------------------- Lazarus / Delphi (Pascal)
+
+function pascalProfile(root, language, options = {}) {
+  const platform = options.platform || process.platform;
+  const files = safeReaddir(root).filter((e) => e.isFile()).map((e) => e.name);
+  const exe = platform === "win32" ? ".exe" : "";
+  if (language === "lazarus") {
+    const project = files.find((n) => /\.lpi$/i.test(n));
+    if (!project) return null;
+    const base = project.replace(/\.lpi$/i, "");
+    const target = readText(path.join(root, project)).match(/<Target>\s*<Filename\s+Value="([^"]+)"/i)?.[1];
+    const binary = path.resolve(root, target ? `${target}${exe}` : `${base}${exe}`);
+    return {
+      language,
+      steps: [{ label: `Lazarus projesini derle (lazbuild ${project})`, command: "lazbuild", args: [project] }],
+      start: { command: binary, args: [] },
+      note: "Lazarus / Free Pascal",
+    };
+  }
+  const project = files.find((n) => /\.dproj$/i.test(n));
+  if (!project) return null;
+  if (platform !== "win32") {
+    return { language, steps: [], start: null, blocked: "Delphi (RAD Studio) projeleri yalnızca Windows'ta derlenir. Linux/macOS için Lazarus/Free Pascal'a taşıyın.", note: "Delphi" };
+  }
+  const base = project.replace(/\.dproj$/i, "");
+  return {
+    language,
+    steps: [{ label: `Delphi projesini derle (msbuild ${project})`, command: "msbuild", args: [project, "-p:Config=Debug", "-p:Platform=Win32", "-nologo", "-v:minimal"] }],
+    start: { command: path.join(root, "Win32", "Debug", `${base}.exe`), args: [] },
+    note: "Delphi",
+  };
+}
+
+/**
+ * Dil çekirdeği profili. `options.platform` testlerde işletim sistemini taklit etmek içindir.
+ * Dönen profil `blocked` içeriyorsa bu proje o platformda çalıştırılamaz (neden mesajda).
+ */
+export function resolveLanguageProfile(root, kind, port = 5000, options = {}) {
   const language = LANGUAGE_KINDS[kind];
   if (!language) return null;
   if (language === "python") return pythonProfile(root, port);
   if (language === "go") return goProfile(root, port);
-  if (language === "dotnet") return dotnetProfile(root, port);
+  if (language === "dotnet") return dotnetProfile(root, port, options);
   if (language === "rust") return rustProfile(root, port);
   if (language === "cpp") return cppProfile(root, port);
   if (language === "game") return gameProfile(root, port);
-  return null;
+  if (language === "lazarus" || language === "delphi") return pascalProfile(root, language, options);
+  return buildEcosystemProfile(root, kind, port, options);
 }
 
 /**
@@ -462,6 +490,23 @@ export function resolvePolyglotMigration(root, kind = null, setupConfig = null) 
         cwd: root,
       };
     }
+  }
+
+  if (exists(root, "config", "application.rb") && exists(root, "Gemfile")) {
+    return {
+      label: "Rails veritabanı hazırlığı (rails db:prepare)",
+      command: "bundle",
+      args: ["exec", "rails", "db:prepare"],
+      cwd: root,
+    };
+  }
+  if (exists(root, "artisan") && exists(root, "composer.json")) {
+    return {
+      label: "Laravel migration (php artisan migrate --force)",
+      command: "php",
+      args: ["artisan", "migrate", "--force"],
+      cwd: root,
+    };
   }
 
   if (language === "rust") {

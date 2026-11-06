@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { detectPackageManager, detectProject, loadSetupConfig, parseEnvContent } from "../scripts/detect-project.mjs";
 import { resolveLanguageProfile, resolveStepCommand } from "../scripts/polyglot.mjs";
+import { detectEcosystem } from "../scripts/ecosystems.mjs";
 import {
   clearCommandAvailabilityCache,
   isCommandAvailable,
@@ -156,11 +157,11 @@ export function scriptToInvocation(scriptStr, pm, scriptName, cwd) {
   return pmRunInvocation(pm, scriptName, cwd);
 }
 
-const WINDOWS_CMD_SHIMS = new Set(["npm", "npx", "pnpm", "yarn", "bun", "bunx"]);
+const WINDOWS_CMD_SHIMS = new Set(["npm", "npx", "pnpm", "yarn", "bun", "bunx", "mvn", "gradle", "composer", "bundle", "bundler", "gem", "rails", "flutter", "dart", "wails", "lazbuild", "nuget"]);
 
 /** Windows'ta npm/pnpm/yarn/bun/npx birer .cmd olduğundan doğrudan spawn edilemez (ENOENT). */
 export function wrapShimCommand(command, args = [], cwd) {
-  if (process.platform === "win32" && WINDOWS_CMD_SHIMS.has(String(command).toLowerCase())) {
+  if (process.platform === "win32" && (WINDOWS_CMD_SHIMS.has(String(command).toLowerCase()) || /\.(cmd|bat)$/i.test(String(command)))) {
     return { command: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", command, ...args], cwd };
   }
   return { command, args, cwd };
@@ -191,6 +192,30 @@ export function withApplicationPort(invocation, port) {
   return { ...invocation, args: [...invocation.args, ...separator, '--host', '127.0.0.1', '--port', String(port), '--strictPort'] };
 }
 
+/** Dil/ekosistem profilinden (Java, PHP, .NET, Flutter …) çalıştırılabilir başlatma çağrısı üretir. */
+function invocationFromProfile(profile, root) {
+  if (!profile) return null;
+  if (profile.blocked) {
+    return { blocked: profile.blocked, command: null, args: [], cwd: root, note: profile.note };
+  }
+  if (!profile.start?.command) return null;
+  if (profile.start.fallbackCommand && fs.existsSync(path.join(root, profile.start.fallbackCommand))) {
+    return { command: path.resolve(root, profile.start.fallbackCommand), args: [], cwd: root, note: profile.note };
+  }
+  let startCmd = resolveStepCommand(root, profile.start);
+  if (["pnpm", "yarn", "bun", "npm"].includes(String(startCmd).toLowerCase().trim())) {
+    startCmd = resolveEffectivePackageManager(startCmd);
+  }
+  const wrapped = wrapShimCommand(startCmd, Array.isArray(profile.start.args) ? profile.start.args : [], profile.start.cwd || root);
+  return {
+    ...wrapped,
+    ...(profile.start.env ? { env: profile.start.env } : {}),
+    ...(profile.start.stop ? { stop: profile.start.stop } : {}),
+    ...(profile.port ? { port: profile.port } : {}),
+    note: profile.note,
+  };
+}
+
 export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
   const root = path.resolve(projectRoot);
   const cfg = setupConfig ?? loadSetupConfig(root);
@@ -211,6 +236,17 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
       Array.isArray(cfg.start.args) ? cfg.start.args : [],
       root,
     );
+  }
+
+  // Java/PHP/Ruby/Flutter/Swift/.NET/Docker gibi manifesti kesin projelerde (Laravel/Rails'in package.json'ı dahil)
+  // package.json betikleri yerine ekosistemin kendi başlatma komutu kullanılır.
+  const eco = detectEcosystem(root);
+  if (eco && eco.id !== "docker") {
+    const det = detectProject(root);
+    if (det.kind === eco.kind) {
+      const invocation = invocationFromProfile(resolveLanguageProfile(root, det.kind, det.ports?.app || 5000), root);
+      if (invocation) return invocation;
+    }
   }
 
   const rootPkg = readJsonFileSafe(path.join(root, "package.json"));
@@ -333,25 +369,8 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
     if (bInv) return bInv;
   }
 
-  const langProfile = resolveLanguageProfile(root, detection.kind, detection.ports?.app || 5000);
-  if (langProfile?.start?.command) {
-    if (langProfile.start.fallbackCommand && fs.existsSync(path.join(root, langProfile.start.fallbackCommand))) {
-      return {
-        command: path.resolve(root, langProfile.start.fallbackCommand),
-        args: [],
-        cwd: root,
-      };
-    }
-    let startCmd = resolveStepCommand(root, langProfile.start);
-    if (["pnpm", "yarn", "bun", "npm"].includes(String(startCmd).toLowerCase().trim())) {
-      startCmd = resolveEffectivePackageManager(startCmd);
-    }
-    return wrapShimCommand(
-      startCmd,
-      Array.isArray(langProfile.start.args) ? langProfile.start.args : [],
-      langProfile.start.cwd || root,
-    );
-  }
+  const langInvocation = invocationFromProfile(resolveLanguageProfile(root, detection.kind, detection.ports?.app || 5000), root);
+  if (langInvocation) return langInvocation;
 
   for (const relStatic of ["dist", "build", "public", "."]) {
     const candidateDir = path.resolve(root, relStatic);

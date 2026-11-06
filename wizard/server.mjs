@@ -475,6 +475,9 @@ export function createSetupServer(token, options = {}) {
           reachable: false,
         });
       }
+      if (invocation.blocked) {
+        return reply(409, { message: invocation.blocked, reachable: false });
+      }
       if (invocation.type === "static") {
         if (!await listenStaticApplication(invocation.staticDir, appPort)) return reply(409, { message: "Kurulum süreci kapatılıyor.", reachable: false });
         const health = await applicationHealth();
@@ -567,7 +570,7 @@ export function createSetupServer(token, options = {}) {
         const prepend = [];
         if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
         if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
-        const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
+        const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort), SERVER_PORT: String(appPort), ...(invocation.backend?.env || {}) }, prepend);
 
         appChildStderr = "";
         appChild = spawn(invocation.backend.command, invocation.backend.args, {
@@ -594,7 +597,7 @@ export function createSetupServer(token, options = {}) {
         const prepend = [];
         if (fs.existsSync(shimsDir)) prepend.push(shimsDir);
         if (fs.existsSync(localShims) && !prepend.includes(localShims)) prepend.push(localShims);
-        const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort) }, prepend);
+        const childEnv = normalizeProcessEnv(process.env, { ...dotEnvVars, PORT: String(appPort), SERVER_PORT: String(appPort), ...(invocation.env || {}) }, prepend);
 
         appChildStderr = "";
         appChild = spawn(invocation.command, invocation.args, {

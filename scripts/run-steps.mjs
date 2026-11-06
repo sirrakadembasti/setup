@@ -50,11 +50,13 @@ export async function runSteps(root, steps, log = console.log, options = {}) {
       if ((call.command === "bun" || (Array.isArray(call.args) && call.args.includes("bun"))) && (args.includes("install") || args.includes("i") || args.includes("ci"))) {
         prepareBunLockFromNpmLock(cwd);
       }
+      const startedAt = Date.now();
       await execute(call, {
         cwd, ...(current.timeoutMs !== undefined ? { timeout: Number(current.timeoutMs) } : {}),
         ...(current.env ? { env: { ...process.env, ...current.env } } : {}),
         ...(options.prependPaths ? { prependPaths: options.prependPaths } : {}),
       });
+      log(`    ✓ tamamlandı (${((Date.now() - startedAt) / 1000).toFixed(1)} sn)`);
     }
     log("Tüm kurulum ve doğrulama adımları başarıyla tamamlandı.");
     return { ok: true, code: 0 };

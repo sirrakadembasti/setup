@@ -5,6 +5,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { CANDIDATE_IGNORED_DIRS, detectProject, loadSetupConfig } from "./detect-project.mjs";
+import { detectEcosystem, ecosystemReadiness } from "./ecosystems.mjs";
 
 export const SUPPORTED_NODE_MAJORS = Object.freeze([18, 20, 22, 24]);
 export const CLEAN_INSTALL_CONFIRMATION = "SETUP VERİLERİNİ SİL";
@@ -158,7 +159,9 @@ export function getSetupPaths(projectRoot, options = {}) {
     : isExternalOutsideRoot
       ? path.join(resolvedExternalData, ".env")
       : path.join(baseServiceDir, ".env");
-  const lock = customLock ? path.resolve(root, customLock) : path.join(dataRoot, "installation.lock");
+  // Harici veri dizini (masaüstü uygulamaları: kullanıcı veri klasörü) verilmişse kilit de orada durur;
+  // aksi halde setup.config.json'daki proje-göreli kilit yolu, var olmayan "data/" klasörüne yazmaya çalışırdı.
+  const lock = customLock && !resolvedExternalData ? path.resolve(root, customLock) : path.join(dataRoot, "installation.lock");
   const databaseUrl = hasServerSubdir ? "file:../data/app.db" : "file:./data/app.db";
 
   const values = {
@@ -326,7 +329,22 @@ export function checkDependencies(projectRoot, options = {}) {
     : true;
   const nodeReady = !hasAnyPackageJson ? true : rootPackages && subprojectsModules;
 
-  const ready = nodeReady && pythonReady && rustReady && goReady && cppReady;
+  // Java/PHP/Ruby/Flutter/Swift/.NET: kurulum/derleme çıktısı var mı? Manifesti kesin ekosistemler Node sunucusu yoksa uygulanır.
+  const eco = detectEcosystem(root);
+  const nodeServerish = (() => {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+      return ["express", "fastify", "koa", "hono", "@nestjs/core", "next", "nuxt"].some((name) => deps[name]);
+    } catch {
+      return false;
+    }
+  })();
+  const ecoApplies = Boolean(eco) && eco.id !== "docker" && (eco.high ? !nodeServerish : !rootHasDeps && !hasSubprojects);
+  const ecoState = ecoApplies ? ecosystemReadiness(root) : null;
+  const ecoReady = ecoState ? ecoState.ready : true;
+
+  const ready = nodeReady && pythonReady && rustReady && goReady && cppReady && ecoReady;
 
   return {
     ready,
@@ -339,6 +357,7 @@ export function checkDependencies(projectRoot, options = {}) {
     rust: hasRust ? { ready: rustReady } : null,
     go: hasGo ? { ready: goReady } : null,
     cpp: hasCpp ? { ready: cppReady } : null,
+    ecosystem: ecoState,
   };
 }
 
