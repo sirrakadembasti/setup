@@ -60,6 +60,7 @@ export async function runSteps(root, steps, log = console.log, options = {}) {
     return { ok: true, code: 0 };
   } catch (error) {
     log(`[HATA] ${error.message}`);
+    try { error.reported = true; } catch {}
     return { ok: false, code: error.exitCode || 1, step: current, error };
   } finally {
     for (const [signal, handle] of signals) process.removeListener(signal, handle);

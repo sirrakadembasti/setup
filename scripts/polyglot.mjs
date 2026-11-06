@@ -97,6 +97,13 @@ export function checkToolchain(root, step) {
   const args = tool.command === "go" ? ["version"] : ["--version"];
   const res = spawnSync(command, args, { encoding: "utf8", windowsHide: true, shell: false, cwd: root });
   if (res.error || res.status !== 0) return { ok: false, message: `${tool.command} bulunamadı. Kurulum: ${tool.hint}` };
+  // Debian/Ubuntu'da python3 kuruluyken `venv`/`ensurepip` modülü ayrı pakettir (python3-venv).
+  if (tool.command === "python" && Array.isArray(step.args) && step.args.includes("venv")) {
+    const venvProbe = spawnSync(command, ["-c", "import venv, ensurepip"], { encoding: "utf8", windowsHide: true, shell: false, cwd: root });
+    if (venvProbe.error || venvProbe.status !== 0) {
+      return { ok: false, message: "Python sanal ortam (venv/ensurepip) modülü eksik. Debian/Ubuntu için: sudo apt install python3-venv (ardından 1) Paketleri Kur / Onar seçeneğini yeniden deneyin)." };
+    }
+  }
   return { ok: true };
 }
 

@@ -229,6 +229,17 @@ function hasPackageDependencies(dir) {
   }
 }
 
+/** Bağımlılığı olmayan (dependencies/devDependencies/optionalDependencies/workspaces yok) paket: kurulacak bir şey yoktur. */
+function packageNeedsInstall(dir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+    return ["dependencies", "devDependencies", "optionalDependencies"].some((key) => Object.keys(pkg[key] || {}).length > 0)
+      || Boolean(pkg.workspaces);
+  } catch {
+    return true;
+  }
+}
+
 export function checkDependencies(projectRoot, options = {}) {
   const dataDir = resolveEffectiveDataDir(projectRoot, options);
   const paths = getSetupPaths(projectRoot, { ...options, dataDir });
@@ -308,7 +319,7 @@ export function checkDependencies(projectRoot, options = {}) {
     ? subEntries.every((d) => fs.existsSync(path.join(root, d, "node_modules")))
     : true;
   const rootPackages = hasRootPkg
-    ? (isPolyglot ? (rootHasDeps ? hasNonEmptyNodeModules(root) : true) : (rootHasDeps ? hasNonEmptyNodeModules(root) : (hasSubprojects ? (hasNonEmptyNodeModules(root) || subprojectsModules) : hasNonEmptyNodeModules(root))))
+    ? (isPolyglot ? (rootHasDeps ? hasNonEmptyNodeModules(root) : true) : (rootHasDeps ? hasNonEmptyNodeModules(root) : (hasSubprojects ? (hasNonEmptyNodeModules(root) || subprojectsModules) : (packageNeedsInstall(root) ? hasNonEmptyNodeModules(root) : true))))
     : true;
   const nodeReady = !hasAnyPackageJson ? true : rootPackages && subprojectsModules;
 

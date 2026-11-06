@@ -2212,19 +2212,23 @@ test("wizard/server: 512KB payload gövdesi desteği (>64KB büyük kurumsal ort
 });
 
 test("normalizeProcessEnv: PATH türevlerini tek bir kanonik anahtarda birleştirir, prepend yollarını korur ve yinelenenleri eler", () => {
+  const isWin = process.platform === "win32";
+  const d = path.delimiter;
+  // Yol örnekleri işletim sistemine göre seçilir (ayraç ve büyük/küçük harf davranışı platforma bağlıdır).
+  const p = isWin
+    ? { sys: "C:\\system32", win: "C:\\windows", other: "C:\\other", extra: "C:\\extra", shims: "C:\\tools\\shims", venv: "C:\\venv\\Scripts" }
+    : { sys: "/usr/sbin", win: "/usr/bin", other: "/opt/other", extra: "/opt/extra", shims: "/opt/tools/shims", venv: "/opt/venv/bin" };
   const base = {
-    PATH: "C:\\system32;C:\\windows",
-    Path: "C:\\windows;C:\\other",
+    PATH: `${p.sys}${d}${p.win}`,
+    Path: `${p.win}${d}${p.other}`,
     NODE_ENV: "production",
   };
   const extra = {
     PORT: "3000",
-    path: "C:\\extra",
+    path: p.extra,
   };
-  const prepend = ["C:\\tools\\shims", "C:\\venv\\Scripts"];
 
-  const res = normalizeProcessEnv(base, extra, prepend);
-  const isWin = process.platform === "win32";
+  const res = normalizeProcessEnv(base, extra, [p.shims, p.venv]);
   const canonical = isWin ? "Path" : "PATH";
 
   assert.equal(res.NODE_ENV, "production");
@@ -2236,11 +2240,11 @@ test("normalizeProcessEnv: PATH türevlerini tek bir kanonik anahtarda birleşti
     assert.equal(res.path, undefined, "Windows'ta path silinmeli, yalnız Path kalmalı");
   }
 
-  const parts = res[canonical].split(path.delimiter);
-  assert.equal(parts[0], "C:\\tools\\shims");
-  assert.equal(parts[1], "C:\\venv\\Scripts");
-  // Yinelenen C:\windows teke indirgenmelidir
-  const winCount = parts.filter((p) => p.toLowerCase() === "c:\\windows").length;
+  const parts = res[canonical].split(d);
+  assert.equal(parts[0], p.shims);
+  assert.equal(parts[1], p.venv);
+  // Yinelenen sistem yolu teke indirgenmelidir
+  const winCount = parts.filter((x) => x.toLowerCase() === p.win.toLowerCase()).length;
   assert.equal(winCount, 1, "Yinelenen yollar teke düşürülmeli");
 });
 

@@ -734,7 +734,7 @@ export async function runTerminalBootstrap(options = {}) {
           log(`[UYARI] Geçersiz seçim: '${action}'. Geçerli bir seçenek girin (1-6 veya 0).`);
         }
       } catch (err) {
-        log(`[HATA] ${err.message}`);
+        if (!err.reported) log(`[HATA] ${err.message}`);
       }
     }
   } finally {

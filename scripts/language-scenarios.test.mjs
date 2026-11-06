@@ -82,3 +82,13 @@ test("üretilen kurulum.sh sözdizimi geçerlidir (POSIX sh -n)", (t) => {
   const check = spawnSync("sh", ["-n", launcher], { encoding: "utf8", windowsHide: true });
   assert.equal(check.status, 0, check.stderr);
 });
+
+test("bağımlılığı olmayan Node projesi kurulu sayılır; workspaces olan kök ise node_modules bekler", async () => {
+  const { checkDependencies } = await import("./setup-bootstrap-lib.mjs");
+  const plain = tree({ "package.json": JSON.stringify({ name: "demo", scripts: { start: "node s.js" } }), "s.js": "" });
+  assert.equal(checkDependencies(plain).ready, true, "kurulacak bağımlılık yok");
+  const withDeps = tree({ "package.json": JSON.stringify({ name: "demo", dependencies: { express: "4" } }) });
+  assert.equal(checkDependencies(withDeps).ready, false);
+  const workspaces = tree({ "package.json": JSON.stringify({ name: "mono", workspaces: ["packages/*"] }) });
+  assert.equal(checkDependencies(workspaces).ready, false, "workspaces kökü kurulum gerektirir");
+});
