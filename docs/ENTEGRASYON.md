@@ -1,84 +1,53 @@
-# setup — 5 Mimari Senaryo Entegrasyon ve Uygulama Kılavuzu (v1.0)
+# setup — Entegrasyon Kılavuzu
 
-`setup` (`https://github.com/sirrakadembasti/setup.git`), herhangi bir GitHub reposundaki Node.js, SPA/statik web, Full-Stack/Monorepo, çok dilli (Python, Go, C# .NET, Rust, C/C++) veya masaüstü/oyun (Electron, Tauri, WinForms/WPF, PyQt, Unity/Unreal/Godot) uygulamasını terminal komutlarıyla uğraşmadan kurup çalıştırmak için tasarlanmış **sıfır bağımlılıklı** kurulum eklentisidir.
+`setup`, herhangi bir projeyi (Node.js, SPA, full-stack/monorepo, Python/Go/.NET/Rust/C++ veya masaüstü/oyun) algılayıp kurar ve çalıştırır. Bu kılavuz, aracı **kendi projenize nasıl ekleyeceğinizi** ve senaryo bazlı kod şablonlarını anlatır. Komutların kısa özeti için [bilgi-notu.md](bilgi-notu.md), genel tanıtım için [README](../README.md) dosyasına bakın.
 
 ---
 
-## 🧭 Uygulama Yapısı ve İşleyiş Özeti (Büyük Resim)
+## Büyük Resim
 
-Detaylı kod şablonlarına geçmeden önce `setup` aracının nasıl çalıştığını ve hangi bileşenlerden oluştuğunu aşağıdaki özet üzerinden inceleyebilirsiniz.
+### Üç kullanım modu
 
-### 1. Üç Farklı Kullanım Modu
-
-| Kullanım Modu | Ne Zaman Seçilir? | Nasıl Çalışır? |
+| Mod | Ne zaman? | Nasıl? |
 |---|---|---|
-| **A) Sıfır Kod Değişikliği (Başlatıcı / CLI Modu)** | Uygulama koduna dokunmadan dışarıdan kurulum istendiğinde **(Önerilen)** | `setup init --copy-tools` ile projeye `kurulum.bat`, `kurulum.sh` ve `setup.config.json` eklenir. Kullanıcı başlatıcıya çift tıklar. |
-| **B) Gömülü Middleware Modu (`mountSetupGuard`)** | Kurulum sihirbazının doğrudan uygulamanın kendi portunda (`/setup`) çalışması istendiğinde | Express, Fastify, Hono veya Next.js içine middleware olarak eklenir; `data/installation.lock` oluşana kadar istekleri `/setup` ekranına yönlendirir. |
-| **C) Masaüstü IPC / Sidecar Modu** | Electron veya Tauri masaüstü uygulamalarında | Kurulum ekranı masaüstü penceresinde açılır; veriler işletim sisteminin kullanıcı veri dizinine (`%APPDATA%` vb.) yazılır. |
+| **A) Başlatıcı / CLI (önerilen)** | Uygulama koduna dokunmak istemiyorsanız | `setup init` (çevrimdışı için `--copy-tools`) projeye `kurulum.bat`, `kurulum.sh` ve `setup.config.json` ekler. Kullanıcı başlatıcıyı çalıştırır. |
+| **B) Gömülü middleware** | Sihirbaz uygulamanın kendi portunda (`/setup`) açılsın istiyorsanız | `mountSetupGuard` ile Express/Fastify/Hono/Next.js içine eklenir; `data/installation.lock` oluşana kadar istekleri `/setup` ekranına yönlendirir. |
+| **C) Masaüstü IPC / sidecar** | Electron veya Tauri uygulamalarında | Kurulum ekranı uygulama penceresinde açılır; veriler işletim sisteminin kullanıcı veri dizinine yazılır. |
 
-### 2. Adım Adım Çalışma Akışı (Yaşam Döngüsü)
+### Çalışma akışı
 
 ```text
-[kurulum.bat / kurulum.sh]
-       │
-       ▼
-1. MİMARİ ALGILAMA (scripts/detect-project.mjs)
-   • Dil, çerçeve, paket yöneticisi (npm/pnpm/yarn/bun) ve Senaryo (1–5) tespiti
-   • Kök package.json + alt projelerin (backend/, frontend/, execution/, llm-yonetimi/ vb.) tespiti
-   • Dağınık .env.example dosyalarının tek havuzda toplanması
-       │
-       ▼
-2. TERMİNAL KONTROL PANELİ, MODÜL ÖZETİ VE PAKET KURULUMU (scripts/terminal-bootstrap.mjs & run-steps.mjs)
-   • Hedef projenin gerçek klasör adı (repositoryName) ve alt modül bileşen durumu (modules: backend, frontend vb.)
-   • Adım bazlı canlı ilerleme işaretleri ([✓] Tamamlandı, [→] Sıradaki Adım, [ ] Bekliyor)
-   • Numara atlamayan sıralı işlem menüsü (1, 2, 3, 4, 5, 6 ve 0) ve aktif/pasif durum rozetleri
-   • Kurulu paketlerin veya kurulu uygulamanın yanlışlıkla tekrar kurulmasını önleyen onay koruması
-   • [1] seçildiğinde kök ve alt projelerin sırayla (--prefix <dizin> install) kurulması
-   • [6] seçildiğinde Web Sihirbazına girmeden .env.example varsayılanlarıyla otomatik .env üretip hedef uygulamayı doğrudan başlatma
-   • npm/pnpm/yarn yoksa bin/shims/ üzerinden otomatik Bun çevirisi ve çevrimdışı bun.lock uyumu
-       │
-       ▼
-3. HEDEF PROJE ODAKLI TEK SAYFA WEB EKRANI - PORT 5050 (wizard/server.mjs & wizard/ui.html.mjs)
-   • [2] seçildiğinde tarayıcıda 4 kartlı Tek Sayfa "Proje Yapılandırma ve Başlatma" ekranının açılması
-   • 1. Kart: Hedef proje ve sistem hazırlık özeti + algılanan alt modül rozetleri (ham JSON <details> altında)
-   • 2. Kart: Uygulama/Backend ve Frontend portları + .env.example değişkenleri (Reverse Proxy ayarları <details> altında)
-   • 3. Kart: Veritabanı seçimi (varsayılan yerel SQLite + canlı bağlantı testi; İlk Yönetici ve SMTP <details> altında isteğe bağlı)
-   • 4. Kart: Tek tıkla "🚀 Ayarları Kaydet ve Hedef Uygulamayı Başlat", canlı konsol (#applyConsole) ve atomik geri alma (rollback)
-       │
-       ▼
-4. DOĞRULANMIŞ UYGULAMA BAŞLATMA (wizard/app-process.mjs)
-   • Uygulamanın (tek sunucu, statik sunucu veya Backend+Frontend çift süreç) başlatılması
-   • API ve UI (devPort / frontendPort) HTTP erişilebilirliğinin (/api/app-health) doğrulanması
-   • Tarayıcının otomatik olarak çalışan uygulamaya yönlendirilmesi
+kurulum.bat / kurulum.sh
+  1. ALGILA      scripts/detect-project.mjs   dil, çerçeve, paket yöneticisi, senaryo (1–5), alt projeler, .env.example
+  2. TERMİNAL    scripts/terminal-bootstrap.mjs   durum paneli + menü (1–6, 0): paket kurulumu, yeniden yapılandırma, temiz kurulum, doğrudan başlatma
+  3. WEB EKRANI  wizard/server.mjs (127.0.0.1:5050)   4 kartlı tek sayfa: özet, portlar/.env, veritabanı, kaydet ve başlat
+  4. BAŞLAT      wizard/app-process.mjs   uygulamayı başlatır, API ve arayüzün HTTP yanıtını doğrular, tarayıcıyı açar
 ```
 
+`npm`, `pnpm` veya `yarn` bulunamazsa ve Bun varsa, `bin/shims/` katmanı bu komutları (`pnpm --filter ...`, `npm --prefix <dizin> ci` dahil) çalışma zamanında Bun'a çevirir. Arayüz gerçekte çalışan aracı gösterir (ör. `bun 1.3.14`).
+
+### `init` seçenekleri
+
+- Varsayılan: `setup.config.json` + `kurulum.bat/sh` yazılır; `package.json` değiştirilmez.
+- `--copy-tools` (`--offline`, `--tools`): setup çekirdeğini projeye `tools/setup/` olarak kopyalar. İç geliştirme notları (`docs/superpowers`, `bilgi-notu.md`) kopyalanmaz.
+- `--refresh-launchers`: mevcut başlatıcıları `.bak` olarak yedekleyip yeniler; ayarlara dokunmaz.
+- `--no-launchers`: başlatıcı üretmez. `--update-package-json`: `package.json` içine `setup` betiği ekler. `--force`: mevcut dosyaların üzerine yazar.
+- `--root <yol>`: hedef proje klasörü. Komutu proje klasöründe çalıştırıyorsanız gerekmez.
+- Yapılandırma zaten varsa `init` yalnızca eksik başlatıcıları ekler; hiçbir şey yazılmadıysa çıkış kodu 1'dir.
+- Başlatıcıdaki `npx/bunx github:…` çağrısı, `init` sırasında setup'ın uzaktaki bir commit'ine bağlanır. `SETUP_LAUNCHER_REF=<etiket|sha>` ile değiştirilir, `none` ile kapatılır.
+
+### Masaüstü uygulamaları
+
+Masaüstü uygulamaları port açmadığı için sihirbaz bitişte "Masaüstü uygulamasını başlat" düğmesi gösterir; `/api/start-app` uygulamayı ayrı süreç olarak açar ve **portu değil süreci** denetler. Paketlenmiş uygulamada kullanıcı veri dizinini (`app.getPath('userData')`) `dataDir` (IPC) veya `--data-dir` (sidecar) ile verin; setup bu dizini tahmin etmez.
+
+### Gömülü kullanımda güvenlik
+
+- **CSRF + Origin:** `ipcMode: true` olmayan her çekirdek (`mountSetupGuard`, Next/Fastify/Hono route'ları) değiştirici isteklerde `x-setup-csrf` başlığı ister; değer sihirbaz sayfasına gömülür (`core.csrfToken`). `Origin` varsa `Host` ile veya `allowedOrigins` ile eşleşmelidir.
+- **Anahtar:** `token` verilmezse her çekirdek örneği rastgele bir anahtar üretir. Sunucusuz veya çok süreçli dağıtımlarda `token: process.env.SETUP_TOKEN` verin.
+- **Arayüz tabanı:** Gömülü sayfa API'ye `apiBase` altından gider (`mountSetupGuard` için `/api/setup`; kendi route'unuzda `apiBase: "/api/setup", embedded: true`).
+- **Kurulum sonrası:** `/setup` ve sihirbaz uçları 404 döner; `/api/status` yalnızca sade durum verir. `.env` değerlerine ve parola özetine yalnızca sunucu tarafında `readSetupRuntimeConfig()` ile erişin.
+
 ---
-
-## Masaüstü Uygulamaları: Başlatma ve Durum
-
-- **Başlatma ve durum (CLI/Sidecar):** Masaüstü uygulamaları port açmadığından sihirbaz bitişte "Masaüstü uygulamasını başlat" düğmesi gösterir. `/api/start-app` uygulamayı ayrı bir süreç olarak açar ve **portu değil süreci** denetler: 3 sn içinde kapanırsa 409 ve çıkış koduyla hata döner, ayaktaysa PID bildirir; `/api/app-health` aynı süreç durumunu verir. Başlatma komutu `setup.config.json` içindeki `start` alanından gelir (`init` bunu Electron için `scripts.start` veya `npx electron .`, Tauri için `scripts.tauri` → `<pm> run tauri dev` olarak yazar).
-- **Veri dizini:** Kurulum verileri varsayılan olarak proje dizinine yazılır. Paketlenmiş uygulamada kullanıcı verisi dizinini (`app.getPath('userData')`) `dataDir` ile (IPC) veya `--data-dir` ile (Sidecar) verin; `setup` bu dizini tahmin etmez.
-
-## `setup init` Seçenekleri
-
-- Varsayılan: `setup.config.json` + `kurulum.bat` / `kurulum.sh` yazılır; `package.json` değiştirilmez.
-- `--no-launchers`: başlatıcı üretilmez. `--update-package-json`: `package.json` içine `setup` (ve gömülü kurulumlarda `wizard`) script'i eklenir. `--force`: mevcut dosyaların üzerine yazar.
-- `--copy-tools` (`--offline` / `--tools`): `setup` çekirdek klasörünü hedef projenin içine `tools/setup` olarak kopyalar. Başlatıcının setup çekirdeğini GitHub'dan indirmeden çalışmasını sağlar. Hedef projenin bağımlılıkları için internet veya hazır paket önbelleği gerekebilir.
-- `--root <yol>`: Hedef proje kökünü belirler. **Komut hedef projenin kendi dizininde çalıştırılıyorsa `--root .` yazılmasına gerek yoktur**, varsayılan olarak bulunulan dizin alınır. Yalnızca farklı bir dizinden çağrılıyorsa `--root /hedef/dizin` verilmelidir.
-- Yapılandırma zaten varsa `init` yalnız eksik başlatıcıları ekler; hiçbir şey yazılmadıysa çıkış kodu 1'dir.
-- `bin/kurulum.sh|bat` (eklentinin kendi ön kontrol betiği) çağrıldığı dizindeki projeyi kurar: `cd /proje && /yol/setup/bin/kurulum.sh`.
-- **Kurumsal ve Kısıtlı Ortamlarda Bun / bunx Desteği:** İş ortamlarında `npx` ve `npm` kısıtlı veya bulunmadığında, `bunx github:sirrakadembasti/setup init` komutu kullanılabilir. Üretilen `kurulum.bat` / `kurulum.sh` başlatıcıları sistemde `npx` yoksa otomatik olarak `bunx`'e geri düşer; sonraki paket kurulumu (`install`), derleme (`build`), migration ve başlatma (`start`) aşamaları da otomatik olarak Bun üzerinden kesintisiz yürütülür.
-- **Çalışma Zamanı (Runtime) Paket Yöneticisi Fallback ve Shims Mimarisi:**
-  - Proje ister `pnpm-workspace.yaml` monorepo, ister `yarn`, ister `npm` olsun; hedef bilgisayarda ilgili paket yöneticisi yüklü değilse ve `bun` mevcutsa sistem çalışma zamanında otomatik `bun`'a geçer.
-  - Arayüzde sahte gösterim (`pnpm 1.3.14 ✓` gibi) yapılmaz; gerçekte çalışan araç ve sürüm (`bun 1.3.14 ✓`) ile kurulum adımı (`bun install`) gösterilir.
-  - `bin/shims/` katmanı sayesinde `package.json` içindeki `pnpm --filter ...` veya `postinstall` içindeki `npm --prefix ../alt-paket ci --ignore-scripts` gibi alt script çağrıları da alt süreç PATH'i üzerinden şeffaf şekilde uygun çalışma dizini (`cwd`) ile Bun'a yönlendirilir. Ayrıca `package-lock.json` ve `overrides` içeren projelerde `prepareBunLockFromNpmLock` ön hazırlığı ile çevrimdışı Bun önbelleğinden (`~/.bun/install/cache`) kesintisiz kurulum yapılır.
-
-## Güvenlik Notları (Gömülü Kullanım)
-
-- **CSRF + Origin:** `ipcMode: true` olmayan her çekirdek (`mountSetupGuard`, Next/Fastify/Hono route'ları) mutasyon isteklerinde `x-setup-csrf` başlığı ister; değer sihirbaz sayfasına gömülür (`core.csrfToken`). `Origin` başlığı varsa `Host` ile veya `allowedOrigins` seçeneğiyle eşleşmelidir.
-- **Anahtar:** `token` verilmezse her çekirdek örneği rastgele bir anahtar üretir. Sunucusuz veya birden çok süreçli dağıtımlarda `token: process.env.SETUP_TOKEN` verin.
-- **Arayüz tabanı:** Gömülü sayfa API'ye `apiBase` altından gider (`mountSetupGuard` için `/api/setup`; kendi route'unuzda `apiBase: "/api/setup", embedded: true` verin).
-- **Kurulum sonrası:** `/setup` ve sihirbaz uçları 404 döner; `/api/status` yalnız sade durum verir. `runtime-config` ucu `.env` değerlerini veya parola özetini döndürmez; bunlara yalnız `readSetupRuntimeConfig()` ile sunucu tarafında erişin.
 
 ## İçindekiler
 
@@ -122,7 +91,7 @@ node tools/setup/bin/setup.mjs init --force
 Bu komut hedef repoyu tarar ve:
 - Paket yöneticisini (`npm`, `pnpm`, `yarn`, `bun`),
 - Proje yapısını (`node-package`, `node-webapp`, `node-fullstack`, `workspace-fullstack`, `desktop-app`, `static-web`, `python-server`, `go-server`, `dotnet-server`, `rust-server`),
-- Varsa `.env.example` değişkenlerini ve dizin yollarını (`.env` veya `server/.env`) algılayarak hedef dizinde **`setup.config.json`** dosyasını oluşturur ve `package.json` içine `"setup": "setup"` betiğini ekler.
+- Varsa `.env.example` değişkenlerini ve dizin yollarını (`.env` veya `server/.env`) algılayarak hedef dizinde **`setup.config.json`** dosyasını oluşturur ve (yalnızca `--update-package-json` verilirse) `package.json` içine `setup` betiğini ekler.
 
 ### Teknoloji algılama nasıl çalışır?
 
