@@ -290,8 +290,11 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
       const fPkg = readJsonFileSafe(path.join(fPath, "package.json"));
       const fPm = resolveEffectivePackageManager(cfg?.packageManager || detectPackageManager(fPath, fPkg));
 
-      // 1. Hibrit Yaklaşım: Eğer frontend'de derlenmiş statik çıktı varsa
-      for (const relStatic of ["dist", "build", "public", "."]) {
+      // 1. Hibrit Yaklaşım: Eğer frontend'de derlenmiş statik çıktı varsa.
+      // Kök ("."), yalnızca çalıştırılabilir bir dev/start/preview betiği YOKSA statik sayılır; aksi halde
+      // Vite/CRA gibi projelerin kaynak index.html dosyası derlenmiş çıktı sanılırdı.
+      const frontendIsSource = Boolean(fPkg?.scripts?.dev || fPkg?.scripts?.start || fPkg?.scripts?.preview);
+      for (const relStatic of frontendIsSource ? ["dist", "build", "public"] : ["dist", "build", "public", "."]) {
         const candidateDir = path.resolve(fPath, relStatic);
         if (fs.existsSync(path.join(candidateDir, "index.html"))) {
           return {

@@ -11,7 +11,7 @@ import {
   getSetupPaths, inspectInstallationState, isLocalPortOpen, readConfiguredPort, resetInstallation,
   resolveDesktopDataDir, resolveEffectivePackageManager, stopPortProcess, validateRuntime,
 } from "./setup-bootstrap-lib.mjs";
-import { resolveLanguageProfile } from "./polyglot.mjs";
+import { checkToolchain, resolveLanguageProfile } from "./polyglot.mjs";
 import { createProcessRunner, PACKAGE_MANAGERS, resolveCommandInvocation as invocation } from "./process-runner.mjs";
 import { runSteps } from "./run-steps.mjs";
 import { resolveProjectTarget, resolveWizardPort } from "./cli-options.mjs";
@@ -270,7 +270,7 @@ export function createTerminalBootstrap(options = {}) {
         const content = hasPortLine ? templateContent : `${templateContent.trimEnd()}\nPORT=${defaultPort}\n`;
         writeMaterialized(paths.env, content);
       } else {
-        const exampleItems = parseEnvExample(root);
+        const exampleItems = parseEnvExample(root).variables || [];
         const lines = [];
         let hasPort = false;
         for (const item of exampleItems) {
@@ -397,8 +397,24 @@ export function createTerminalBootstrap(options = {}) {
       return { ok: true, url: targetUrl, port: appPort, mode: "static" };
     }
 
-    const finalInv = withApplicationPort(inv, appPort);
-    const targetUrl = `http://127.0.0.1:${appPort}`;
+    // Derlenmiş frontend + ayrı backend: frontend statik sunucuyla, backend ayrı süreçle başlatılır.
+    let singleInv = inv;
+    let browserPort = appPort;
+    if (inv.type === "dual-static") {
+      activeStaticServer = createStaticAppServer(inv.staticDir);
+      await new Promise((resolve, reject) => {
+        activeStaticServer.once("error", reject);
+        activeStaticServer.listen(frontendPort, "127.0.0.1", resolve);
+      });
+      log(`[setup] Derlenmiş frontend statik olarak sunuluyor: http://127.0.0.1:${frontendPort}`);
+      singleInv = inv.backend || inv;
+      browserPort = frontendPort;
+    }
+    const finalInv = withApplicationPort(singleInv, appPort);
+    const toolName = path.basename(String(finalInv.command || "")).replace(/\.(exe|cmd|bat)$/i, "").toLowerCase();
+    const toolchain = checkToolchain(finalInv.cwd || root, { command: toolName, args: finalInv.args });
+    if (!toolchain.ok) throw new Error(toolchain.message);
+    const targetUrl = `http://127.0.0.1:${browserPort}`;
     log(`[setup] Hedef uygulama başlatılıyor (${targetUrl})...`);
     let browserOpened = false;
     const probeLoop = (async () => {

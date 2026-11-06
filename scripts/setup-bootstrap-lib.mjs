@@ -311,7 +311,10 @@ export function checkDependencies(projectRoot, options = {}) {
     ? fs.existsSync(path.join(root, "go.sum")) || fs.existsSync(path.join(root, "vendor"))
     : true;
 
-  const isPolyglot = hasPython || hasRust || hasGo;
+  const hasCpp = fs.existsSync(path.join(root, "CMakeLists.txt"));
+  const cppReady = hasCpp ? fs.existsSync(path.join(root, "build")) : true;
+
+  const isPolyglot = hasPython || hasRust || hasGo || hasCpp;
   const rootHasDeps = hasPackageDependencies(root);
   const serverModules = serverEntry ? fs.existsSync(path.join(root, "server", "node_modules")) : true;
   const clientModules = clientEntry ? fs.existsSync(path.join(root, "client", "node_modules")) : true;
@@ -323,7 +326,7 @@ export function checkDependencies(projectRoot, options = {}) {
     : true;
   const nodeReady = !hasAnyPackageJson ? true : rootPackages && subprojectsModules;
 
-  const ready = nodeReady && pythonReady && rustReady && goReady;
+  const ready = nodeReady && pythonReady && rustReady && goReady && cppReady;
 
   return {
     ready,
@@ -335,6 +338,7 @@ export function checkDependencies(projectRoot, options = {}) {
     python: hasPython ? { ready: pythonReady, hasVenv } : null,
     rust: hasRust ? { ready: rustReady } : null,
     go: hasGo ? { ready: goReady } : null,
+    cpp: hasCpp ? { ready: cppReady } : null,
   };
 }
 

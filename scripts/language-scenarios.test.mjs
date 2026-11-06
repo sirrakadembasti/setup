@@ -92,3 +92,33 @@ test("bağımlılığı olmayan Node projesi kurulu sayılır; workspaces olan k
   const workspaces = tree({ "package.json": JSON.stringify({ name: "mono", workspaces: ["packages/*"] }) });
   assert.equal(checkDependencies(workspaces).ready, false, "workspaces kökü kurulum gerektirir");
 });
+
+test(".env.example olmayan projede Seçenek 6 hazırlığı çökmez ve varsayılan PORT yazar", () => {
+  for (const files of [{ "index.html": "<h1>x</h1>" }, { "package.json": JSON.stringify({ name: "d", scripts: { start: "node s.js" } }), "s.js": "" }]) {
+    const root = tree(files);
+    const t = createTerminalBootstrap({ root, log: () => {}, noOpen: true });
+    const { envPath } = t.ensureDefaultEnvironment();
+    assert.match(fs.readFileSync(envPath, "utf8"), /^PORT=\d+/m);
+  }
+});
+
+test("Vite benzeri frontend kaynağındaki index.html derlenmiş çıktı sayılmaz (dual), dist varsa dual-static olur", () => {
+  const files = {
+    "backend/package.json": JSON.stringify({ name: "be", scripts: { start: "node server.js" } }),
+    "backend/server.js": "",
+    "frontend/package.json": JSON.stringify({ name: "fe", scripts: { dev: "vite" } }),
+    "frontend/index.html": "<script type=module src=/src/main.js></script>",
+  };
+  const source = tree(files);
+  assert.equal(resolveAppStartInvocation(source, null)?.type, "dual");
+  const built = tree({ ...files, "frontend/dist/index.html": "<h1>build</h1>" });
+  assert.equal(resolveAppStartInvocation(built, null)?.type, "dual-static");
+});
+
+test("CMake projesi build/ yokken kurulu sayılmaz", async () => {
+  const { checkDependencies } = await import("./setup-bootstrap-lib.mjs");
+  const root = tree({ "CMakeLists.txt": "cmake_minimum_required(VERSION 3.10)\nproject(x)\n", "main.cpp": "" });
+  assert.equal(checkDependencies(root).ready, false);
+  fs.mkdirSync(path.join(root, "build"));
+  assert.equal(checkDependencies(root).ready, true);
+});
