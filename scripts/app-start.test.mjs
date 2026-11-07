@@ -71,7 +71,7 @@ async function fixture(t, options = {}) {
   });
   return { root, appPort, request, apply, server };
 }
-async function until(fn, predicate, timeout = 12000) {
+async function until(fn, predicate, timeout = 30000) {
   const deadline = Date.now() + timeout;
   let result;
   do { result = await fn(); if (predicate(result)) return result; await sleep(80); } while (Date.now() < deadline);

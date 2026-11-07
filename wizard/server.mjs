@@ -177,6 +177,8 @@ export function createStaticAppServer(staticDir) {
         res.destroy();
       }
     });
+    // pipe() istemci yarıda koparsa kaynağı kapatmaz; sızan dosya tutamacı Windows'ta silmeyi engeller.
+    res.once("close", () => stream.destroy());
     stream.pipe(res);
   });
 }

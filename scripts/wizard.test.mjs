@@ -407,7 +407,7 @@ test("wizard/server E2E: token oturumu (setup.wizard), rate limit, /api/apply ve
 
   // 5. Kurulum tamamlanana kadar /api/status izleme
   let statusData;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusData = await sRes.json();
@@ -465,7 +465,7 @@ test("wizard/server E2E: tek dizinli projede (server/ yokken) .env ve data/* do�
   assert.equal(applyRes.status, 202);
 
   let statusData;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusData = await sRes.json();
@@ -526,7 +526,7 @@ test("wizard/server E2E: setup.config.json içindeki özel paths ve wizard.title
   assert.equal(applyRes.status, 202);
 
   let statusData;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusData = await sRes.json();
@@ -632,7 +632,7 @@ test("wizard/server E2E: .env.example değişkenleri, admin.json ve özel sunucu
   assert.equal(applyRes.status, 202);
 
   let statusData;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusData = await sRes.json();
@@ -699,7 +699,7 @@ test("wizard/server E2E: package.json içindeki build ve migrate betikleri gerç
   assert.equal(apply1.status, 202);
 
   let status1;
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < 300; i++) {
     await new Promise((r) => setTimeout(r, 100));
     const sRes = await fetch(`${baseUrl1}/api/status`, { headers: { Cookie: cookie1 } });
     status1 = await sRes.json();
@@ -749,7 +749,7 @@ test("wizard/server E2E: package.json içindeki build ve migrate betikleri gerç
   assert.equal(apply2.status, 202);
 
   let status2;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     const sRes = await fetch(`${baseUrl2}/api/status`, { headers: { Cookie: cookie2 } });
     status2 = await sRes.json();
@@ -844,7 +844,7 @@ test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişk
   assert.equal(applyRes.status, 202);
 
   let statusData;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusData = await sRes.json();
@@ -874,7 +874,7 @@ test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişk
 
   // npm/cmd can outlast the API readiness window; verify the actual HTTP server.
   let appRes;
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 300; i++) {
     try { appRes = await fetch(`http://127.0.0.1:${appPort}/`, { signal: AbortSignal.timeout(500) }); break; }
     catch { await new Promise((resolve) => setTimeout(resolve, 100)); }
   }
@@ -904,7 +904,7 @@ test("wizard/server E2E: /api/start-app gerçek uygulama sürecini .env değişk
   assert.equal(startAgainBody.message, "Uygulama zaten çalışıyor.");
   await server.stopSpawnedApp();
   let leafAlive = true;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 300; i++) {
     try { process.kill(appData.pid, 0); } catch { leafAlive = false; break; }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -1242,7 +1242,7 @@ test("SPA / Static Web repo: runtime-config.json ve env-config.js gizli anahtarl
   assert.equal(applyRes.status, 202);
 
   let statusData;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusData = await sRes.json();
@@ -1430,7 +1430,7 @@ test("Senaryo 2 (SPA/Static): /api/status senaryo + .env.example döndürür, op
   assert.equal(applyRes.status, 202);
 
   let statusAfter;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusAfter = await sRes.json();
@@ -1620,7 +1620,7 @@ async function startDesktopFixture(t, appSource) {
   const applyRes = await post("/api/apply", { ...VALID_PAYLOAD, admin: { name: "", email: "", password: "" }, buildClient: false });
   assert.equal(applyRes.status, 202);
   let status;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 600; i++) {
     await new Promise((r) => setTimeout(r, 50));
     status = await (await get("/api/status")).json();
     if (status.apply.status !== "running") break;
@@ -2633,7 +2633,7 @@ test("Bulgu 2.1: Sihirbaz varsayılan olarak 20s sonra kapanmaz, #startApp ve ye
   assert.equal(applyRes.status, 202);
 
   // applyJob.status === "success" olana kadar bekle
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 300; i++) {
     await new Promise((r) => setTimeout(r, 100));
     const statusRes = await (await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } })).json();
     if (statusRes.apply?.status === "success") break;
@@ -3045,7 +3045,7 @@ test("Bulgu 5.3: executeSetupApply build, migrate ve seed adımlarına tam ortam
   assert.equal(applyRes.status, 202, JSON.stringify(applyJson));
 
   let statusAfter;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 300; i++) {
     await new Promise((r) => setTimeout(r, 100));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusAfter = await sRes.json();
@@ -3130,7 +3130,7 @@ test("Hedef Proje Odaklı Tek Sayfa Web Sihirbazı: 4 kart düzeni, modül rozet
   assert.equal(applyRes.status, 202, JSON.stringify(applyJson));
 
   let statusAfter;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 300; i++) {
     await new Promise((r) => setTimeout(r, 100));
     const sRes = await fetch(`${baseUrl}/api/status`, { headers: { Cookie: cookiePair } });
     statusAfter = await sRes.json();

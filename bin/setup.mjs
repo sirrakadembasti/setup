@@ -208,7 +208,13 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-if (import.meta.url && process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
+function sameFile(a, b) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(a) === real(b);
+}
+
+// Sembolik bağlı yollarda (macOS /var -> /private/var) düz karşılaştırma eşleşmez ve program sessizce çıkardı.
+if (import.meta.url && process.argv[1] && sameFile(process.argv[1], fileURLToPath(import.meta.url))) {
   main().catch((error) => {
     console.error(`[setup] ${error.message}`);
     process.exitCode = 1;

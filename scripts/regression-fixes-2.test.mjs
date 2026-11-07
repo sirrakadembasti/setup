@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import { detectProject, loadSetupConfig } from "./detect-project.mjs";
 import { createProcessRunner } from "./process-runner.mjs";
 import { initProject } from "./setup-api.mjs";
@@ -118,4 +119,22 @@ test("init başlatıcıları npx/bunx çağrısını sabit sürüme bağlar; 'no
   } finally {
     if (prev === undefined) delete process.env.SETUP_LAUNCHER_REF; else process.env.SETUP_LAUNCHER_REF = prev;
   }
+});
+
+test("bin/setup.mjs sembolik bağlı yoldan çalıştırılınca da çıktı üretir (macOS /var -> /private/var)", (t) => {
+  const holder = tmp("setup-symlink-");
+  t.after(() => fs.rmSync(holder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  const link = path.join(holder, "link");
+  try {
+    fs.symlinkSync(process.cwd(), link, "junction");
+  } catch {
+    return t.skip("sembolik bağ oluşturulamadı");
+  }
+  const project = path.join(holder, "project");
+  fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, "index.html"), "x");
+  const result = spawnSync(process.execPath, [path.join(link, "bin", "setup.mjs"), "--check-only", "--no-open", "--root", project, "--port", "58731"], { encoding: "utf8", timeout: 30000, windowsHide: true });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.trim(), "sembolik bağlı yoldan çalıştırılan CLI sessizce çıktı: " + result.stderr);
+  assert.equal(JSON.parse(result.stdout).wizardPort, 58731);
 });
