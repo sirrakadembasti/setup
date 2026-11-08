@@ -47,6 +47,7 @@ export const TOOLCHAIN_HINTS = Object.freeze({
   lazbuild: "Lazarus / Free Pascal: https://www.lazarus-ide.org/",
   qmake: "Qt: https://www.qt.io/download",
   make: "make (Linux: build-essential, macOS: Xcode Command Line Tools)",
+  "mingw32-make": "mingw32-make (Qt ile gelen MinGW araç zinciri; Qt kurulumundaki Tools/mingw… dizinini PATH'e ekleyin)",
 });
 
 const VENV_DIR = ".venv";
@@ -342,6 +343,23 @@ function cppProfile(root, port = 5000) {
         args: ["--build", "build", "--target", "run"],
         fallbackCommand: isWin ? `build/Release/${targetName}${binExt}` : `build/${targetName}`,
       },
+      port,
+    };
+  }
+
+  // Qt (qmake): .pro dosyası var, hazır Makefile yok → önce qmake Makefile üretir, sonra make derler.
+  const proFile = !exists(root, "Makefile") ? fs.readdirSync(root).find((f) => /\.pro$/i.test(f)) : null;
+  if (proFile) {
+    const declared = readText(path.join(root, proFile)).match(/^\s*TARGET\s*=\s*([A-Za-z0-9._-]+)/m)?.[1];
+    const name = declared || proFile.replace(/\.pro$/i, "");
+    const binary = process.platform === "darwin" ? `./${name}.app/Contents/MacOS/${name}` : isWin ? `./release/${name}.exe` : `./${name}`;
+    return {
+      language: "cpp",
+      steps: [
+        { label: `Qt yapılandırması (qmake ${proFile})`, command: "qmake", args: [proFile] },
+        { label: "Derleme ve doğrulama (make)", command: isWin ? "mingw32-make" : "make", args: [] },
+      ],
+      start: { command: binary, args: [] },
       port,
     };
   }

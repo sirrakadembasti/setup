@@ -54,17 +54,20 @@ jobs:
           - { os: macos-latest,   name: java,         cases: "java-spring" }
           - { os: macos-latest,   name: go-rust,      cases: "go-http,rust-http" }
           - { os: macos-latest,   name: swift,        cases: "swift-cli" }
+          - { os: windows-latest, name: desktop-win,  cases: "dotnet-winforms,dotnet-wpf,dotnet-legacy,py-tkinter" }
+          - { os: ubuntu-latest,  name: desktop-linux, cases: "py-tkinter,qt-qmake", prefix: "xvfb-run -a" }
+          - { os: ubuntu-latest,  name: gradle,       cases: "gradle-app" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - uses: actions/setup-dotnet@v4
-        if: matrix.name == 'dotnet'
+        if: matrix.name == 'dotnet' || matrix.name == 'desktop-win'
         with:
           dotnet-version: 8.0.x
       - uses: actions/setup-java@v4
-        if: matrix.name == 'java'
+        if: matrix.name == 'java' || matrix.name == 'gradle'
         with:
           distribution: temurin
           java-version: 17
@@ -76,6 +79,11 @@ jobs:
         if: matrix.name == 'php-ruby' || matrix.name == 'rails-laravel'
         with:
           ruby-version: "3.3"
+      - name: Linux masaüstü bağımlılıkları (xvfb, Tk, Qt, derleyici)
+        if: matrix.name == 'desktop-linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb python3-tk qtbase5-dev qt5-qmake g++ make
       - name: Rails kur
         if: matrix.name == 'rails-laravel'
         run: gem install rails --no-document
@@ -87,4 +95,4 @@ jobs:
             if command -v "$tool" >/dev/null 2>&1; then echo "--- $tool"; { if [ "$tool" = go ]; then go version; else "$tool" --version; fi; } 2>&1 | head -2 || true; else echo "--- $tool: yok"; fi
           done
       - name: E2E
-        run: node scripts/e2e/real-projects.mjs "${{ matrix.cases }}"
+        run: ${{ matrix.prefix }} node scripts/e2e/real-projects.mjs "${{ matrix.cases }}"

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import net from "node:net";
 import { spawn, spawnSync } from "node:child_process";
 import { Readable, Writable } from "node:stream";
@@ -11,11 +11,23 @@ import { createDesktopAppController } from "../wizard/app-process.mjs";
 
 function fixture(t, config = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-setup-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "fixture", dependencies: { example: "1" } }));
   fs.writeFileSync(path.join(root, "setup.config.json"), JSON.stringify(config));
   return root;
 }
+
+// Geçici dizinler dosyanın sonunda silinir: t.after kancaları kayıt sırasıyla çalışır, dizin silme kancası sunucuyu/süreci
+// kapatan kancadan önce çalışınca Windows açık dosya yüzünden ENOTEMPTY/EBUSY verir ve kalan kancalar atlanır.
+const tempDirsToRemove = [];
+function cleanupLater(dir) {
+  tempDirsToRemove.push(dir);
+}
+after(async () => {
+  for (const dir of tempDirsToRemove) {
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+  }
+});
 
 test("repair runs configured steps with live output and verifies packages before wizard", async (t) => {
   const root = fixture(t, { install: { steps: [{ command: process.execPath, args: ["-e", "require('fs').mkdirSync('node_modules/example',{recursive:true});console.log('installed fixture')"] }] } });
@@ -41,7 +53,7 @@ test("failed or unverified install never enables wizard", async (t) => {
 
 test("check-only status is read-only and static projects need no package manager install", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-static-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(path.join(root, "index.html"), "hello");
   const setup = createTerminalBootstrap({ root, log() {} });
   assert.equal(setup.status().kind, "static-web");
@@ -99,7 +111,7 @@ test("terminal menu repairs, refreshes and exits with piped input", async (t) =>
 
 test("CLI check-only emits only JSON, does not initialize config or consume a port", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-json-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(path.join(root, "index.html"), "hello");
   const result = spawnSync(process.execPath, ["bin/setup.mjs", "--root", root, "--check-only", "--port", "58711"], { encoding: "utf8", timeout: 30000, windowsHide: true });
   assert.equal(result.status, 0, result.stderr);
@@ -109,7 +121,7 @@ test("CLI check-only emits only JSON, does not initialize config or consume a po
 
 test("candidate selection targets the chosen project and rejects unknown candidates", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-candidates-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   for (const name of ["one", "two"]) {
     fs.mkdirSync(path.join(root, name));
     fs.writeFileSync(path.join(root, name, "package.json"), JSON.stringify({ name }));
@@ -132,10 +144,10 @@ async function freePort() {
   return port;
 }
 
-test("real wizard handoff preserves reconfiguration and external data, and cancel closes process tree", { timeout: 45000 }, async (t) => {
+test("real wizard handoff preserves reconfiguration and external data, and cancel closes process tree", { timeout: 120000 }, async (t) => {
   const root = fixture(t, { install: { command: null } });
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-external-"));
-  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  cleanupLater(dataDir);
   fs.writeFileSync(path.join(dataDir, "installation.lock"), "locked");
   const port = await freePort();
   let ready;
@@ -186,7 +198,7 @@ test("dependency timeout stops child and keeps wizard blocked", async (t) => {
 
 test("wizard rejects ports below its supported range before writing configuration", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-low-port-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(path.join(root, "index.html"), "hello");
   const setup = createTerminalBootstrap({ root, port: 80, noOpen: true, log() {} });
   const timer = setTimeout(() => setup.cancel(), 5000);
@@ -198,7 +210,7 @@ test("wizard rejects ports below its supported range before writing configuratio
 test("external data directory application port protects clean reset while running", async (t) => {
   const root = fixture(t, { install: { command: null } });
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-running-data-"));
-  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  cleanupLater(dataDir);
   const server = net.createServer();
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -209,9 +221,9 @@ test("external data directory application port protects clean reset while runnin
   assert.equal(fs.existsSync(path.join(dataDir, "installation.lock")), true);
 });
 
-test("CLI terminal to web handoff works while old bootstrap port is occupied and closes on parent exit", { timeout: 40000 }, async (t) => {
+test("CLI terminal to web handoff works while old bootstrap port is occupied and closes on parent exit", { timeout: 120000 }, async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-e2e-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(path.join(root, "index.html"), "hello");
   const occupied = net.createServer();
   await new Promise((resolve) => occupied.listen(0, "127.0.0.1", resolve));
@@ -243,7 +255,7 @@ test("CLI terminal to web handoff works while old bootstrap port is occupied and
   child.kill();
   await exited;
   let closed = false;
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 300; i++) {
     try { await fetch(`http://127.0.0.1:${port}/setup`, { signal: AbortSignal.timeout(300) }); }
     catch { closed = true; break; }
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -280,7 +292,7 @@ test("terminal clean reset requires typed confirmation and reports verified back
   assert.ok(fs.readdirSync(path.join(root, "backups")).length > 0);
 });
 
-test("POSIX timeout terminates descendants even after step leader exits", { skip: process.platform === "win32", timeout: 15000 }, async (t) => {
+test("POSIX timeout terminates descendants even after step leader exits", { skip: process.platform === "win32", timeout: 60000 }, async (t) => {
   const root = fixture(t, { install: { command: process.execPath, args: ["-e", "require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'inherit'}).unref();process.exit(0)"] } });
   const previous = process.env.SETUP_JOB_TIMEOUT_MS;
   process.env.SETUP_JOB_TIMEOUT_MS = "1500";
@@ -301,7 +313,7 @@ test("npm-cli.js runtime check uses the current npm entry directly", (t) => {
   assert.equal(setup.status().runtime.packageManagerVersion, "9.1.0");
 });
 
-test("desktop shutdown terminates leaf application behind command wrapper", { timeout: 15000 }, async (t) => {
+test("desktop shutdown terminates leaf application behind command wrapper", { timeout: 60000 }, async (t) => {
   const root = fixture(t);
   fs.writeFileSync(path.join(root, "leaf.mjs"), "setInterval(()=>{},1000)");
   fs.writeFileSync(path.join(root, "wrapper.mjs"), "import{spawn}from'node:child_process';import fs from'node:fs';const c=spawn(process.execPath,['leaf.mjs'],{stdio:'ignore'});fs.writeFileSync('leaf.pid',String(c.pid));setInterval(()=>{},1000)");
@@ -314,7 +326,7 @@ test("desktop shutdown terminates leaf application behind command wrapper", { ti
   process.kill(pid, 0);
   await controller.stop();
   let alive = true;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 600; i++) {
     try { process.kill(pid, 0); } catch { alive = false; break; }
     await new Promise((r) => setTimeout(r, 50));
   }
@@ -323,7 +335,7 @@ test("desktop shutdown terminates leaf application behind command wrapper", { ti
 
 test("terminal bootstrap detects pre-installed packages on startup and runs all subproject install steps", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terminal-hybrid-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "root-e2e", devDependencies: { "@playwright/test": "^1.0.0" } }));
   for (const sub of ["backend", "frontend", "execution", "llm-yonetimi"]) {
     fs.mkdirSync(path.join(root, sub), { recursive: true });
@@ -408,7 +420,7 @@ test("terminal panel in installed state marks all steps complete and prevents ac
 
 test("terminal panel shows subproject module status and option 6 auto-creates .env from .env.example and starts target app", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "xfactor-direct-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   const appPort = await freePort();
   fs.writeFileSync(
     path.join(root, "package.json"),

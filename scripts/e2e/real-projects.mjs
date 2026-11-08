@@ -75,6 +75,46 @@ fn main() {
 }
 `;
 
+const LEGACY_CSPROJ = String.raw`<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>LegacyApp</AssemblyName>
+    <TargetFrameworkVersion>v4.0</TargetFrameworkVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <OutputPath>bin\Debug\</OutputPath>
+  </PropertyGroup>
+  <ItemGroup><Reference Include="System" /><Compile Include="Program.cs" /></ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
+`;
+
+const TK_MAIN = `import tkinter as tk
+root = tk.Tk()
+root.after(6000, root.destroy)
+print('tk ok', flush=True)
+root.mainloop()
+`;
+
+const QT_MAIN = `#include <QApplication>
+#include <QLabel>
+#include <QTimer>
+#include <cstdio>
+
+int main(int argc, char** argv) {
+  QApplication app(argc, argv);
+  QLabel label("qt ok");
+  label.show();
+  std::puts("qt ok");
+  std::fflush(stdout);
+  QTimer::singleShot(4000, &app, &QApplication::quit);
+  return app.exec();
+}
+`;
+
 // port: uygulamanın dinleyeceği adres (.env.example ile aynı). mode "process": HTTP yok, süreç/çıktı denetlenir.
 export const CASES = {
   "node-express": { title: "Node + Express (gerçek npm bağımlılığı)", port: 4101, files: {
@@ -112,6 +152,19 @@ export const CASES = {
   "swift-cli": { title: "Swift paketi (swift run, çalıştırılabilir hedef)", mode: "process", marker: "swift ok", waitMs: 120000, files: {
     "Package.swift": "// swift-tools-version:5.5\nimport PackageDescription\nlet package = Package(name: \"demo\", targets: [.executableTarget(name: \"demo\", path: \"Sources/demo\")])\n",
     "Sources/demo/main.swift": "print(\"swift ok\")\n" } },
+  // --- Masaüstü / pencere uygulamaları: HTTP yok; aracın "süreç yaşam döngüsü izlenir" akışı ve sürecin ayakta kalması denetlenir.
+  "dotnet-winforms": { title: "Windows Forms (dotnet new winforms)", mode: "process", expect: "Masaüstü/yerel uygulama", waitMs: 30000, prepare: dotnetNew("winforms"), files: {} },
+  "dotnet-wpf": { title: "WPF (dotnet new wpf)", mode: "process", expect: "Masaüstü/yerel uygulama", waitMs: 30000, prepare: dotnetNew("wpf"), files: {} },
+  "dotnet-legacy": { title: "Klasik .NET Framework konsol (SDK'sız csproj, MSBuild)", mode: "process", marker: "legacy ok", waitMs: 90000, files: {
+    "LegacyApp.csproj": LEGACY_CSPROJ, "Program.cs": "using System; class P { static void Main() { Console.WriteLine(\"legacy ok\"); System.Threading.Thread.Sleep(10000); } }\n" } },
+  "gradle-app": { title: "Java Gradle (application eklentisi, gradle run)", mode: "process", marker: "gradle ok", waitMs: 240000, files: {
+    "settings.gradle": "rootProject.name = 'demo'\n",
+    "build.gradle": "plugins { id 'application' }\nrepositories { mavenCentral() }\napplication { mainClass = 'demo.App' }\n",
+    "src/main/java/demo/App.java": "package demo;\npublic class App { public static void main(String[] a) { System.out.println(\"gradle ok\"); } }\n" } },
+  "py-tkinter": { title: "Python Tkinter penceresi", mode: "process", marker: "tk ok", waitMs: 90000, files: {
+    "requirements.txt": "# bağımlılık yok\n", "main.py": TK_MAIN } },
+  "qt-qmake": { title: "Qt Widgets (qmake + make)", mode: "process", marker: "qt ok", waitMs: 240000, files: {
+    "demo.pro": "QT += widgets\nTARGET = demoapp\nCONFIG += c++17\nSOURCES += main.cpp\n", "main.cpp": QT_MAIN } },
   "docker-compose": { title: "Docker Compose (nginx)", port: 4312, startTimeoutMs: 180000, files: {
     "docker-compose.yml": "services:\n  web:\n    image: nginx:alpine\n    ports: ['4312:80']\n", ".env.example": "PORT=4312\n" } },
 };
@@ -169,11 +222,22 @@ async function runCase(id, testCase) {
     const from = out.length;
     child.stdin.write("6\n");
     if (testCase.mode === "process") {
-      await sleep(testCase.waitMs || 20000);
+      // İşaret (marker) görününce ya da hata çıkınca beklemeyi bırak; pencere uygulamalarında (expect) süre dolana dek bekle.
+      const processDeadline = Date.now() + (testCase.waitMs || 20000);
+      while (Date.now() < processDeadline) {
+        const seen = out.slice(from);
+        if (errorsSince(from).length) break;
+        if (testCase.marker && seen.includes(testCase.marker)) break;
+        if (child.exitCode !== null) break;
+        await sleep(500);
+      }
       const tail = out.slice(from);
       result.startErrors = errorsSince(from);
       result.marker = testCase.marker ? tail.includes(testCase.marker) : null;
-      result.verdict = result.startErrors.length ? "BASLATMA-BASARISIZ" : (result.marker || child.exitCode === null ? "CALISTI" : "SUREC-ERKEN-KAPANDI");
+      result.expected = testCase.expect ? tail.includes(testCase.expect) : null;
+      const alive = child.exitCode === null;
+      const ok = !result.startErrors.length && (testCase.expect ? result.expected && alive : (result.marker || alive));
+      result.verdict = result.startErrors.length ? "BASLATMA-BASARISIZ" : (ok ? "CALISTI" : "SUREC-ERKEN-KAPANDI");
       if (result.verdict !== "CALISTI") result.tail = tail.slice(-1200);
       return result;
     }

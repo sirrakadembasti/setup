@@ -380,3 +380,14 @@ test("Ruby: Gemfile.lock tek başına yetmez, vendor/bundle yoksa `bundle check`
   fs.mkdirSync(path.join(dir, "vendor", "bundle"), { recursive: true });
   assert.equal(ecosystemReadiness(dir, { bundleCheck: () => false }).ready, true, "vendor/bundle varsa check gerekmez");
 });
+
+test("Qt qmake: Makefile yoksa profil qmake + make adımlarını ve platforma uygun ikiliyi üretir", () => {
+  const qt = tree({ "demo.pro": "QT += widgets\nTARGET = demoapp\nSOURCES += main.cpp", "main.cpp": "int main(){}" });
+  const profile = resolveLanguageProfile(qt, "cpp-desktop", 5000);
+  assert.deepEqual(profile.steps[0], { label: "Qt yapılandırması (qmake demo.pro)", command: "qmake", args: ["demo.pro"] });
+  assert.equal(profile.steps[1].command, process.platform === "win32" ? "mingw32-make" : "make");
+  const expected = process.platform === "darwin" ? "./demoapp.app/Contents/MacOS/demoapp" : process.platform === "win32" ? "./release/demoapp.exe" : "./demoapp";
+  assert.equal(profile.start.command, expected);
+  const withMakefile = tree({ "demo.pro": "QT += widgets", Makefile: "all:", "main.cpp": "int main(){}" });
+  assert.equal(resolveLanguageProfile(withMakefile, "cpp-desktop", 5000).steps[0].command, "make", "hazır Makefile varsa qmake çalıştırılmaz");
+});

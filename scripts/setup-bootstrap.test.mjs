@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
   CLEAN_INSTALL_CONFIRMATION,
   checkDependencies,
@@ -37,6 +37,18 @@ function fixture() {
   fs.writeFileSync(path.join(paths.uploadsRoot, ".gitkeep"), "", "utf8");
   return { root, paths, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
+
+// Geçici dizinler dosyanın sonunda silinir: t.after kancaları kayıt sırasıyla çalışır, dizin silme kancası sunucuyu/süreci
+// kapatan kancadan önce çalışınca Windows açık dosya yüzünden ENOTEMPTY/EBUSY verir ve kalan kancalar atlanır.
+const tempDirsToRemove = [];
+function cleanupLater(dir) {
+  tempDirsToRemove.push(dir);
+}
+after(async () => {
+  for (const dir of tempDirsToRemove) {
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+  }
+});
 
 test("Node.js LTS (18/20/22/24) ve paket yöneticisi sürümleri doğrulanır", () => {
   assert.equal(validateRuntime("v18.20.4", "10.2.0").nodeSupported, true);
@@ -239,7 +251,7 @@ test("stopPortProcess dinleyen süreci durdurur", async (t) => {
 test("setup-bootstrap --check-only static-web (Senaryo 2) dizininde packagesReady=true döndürür", async (t) => {
   const { spawnSync } = await import("node:child_process");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-static-web-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(path.join(root, "index.html"), "<!doctype html><html><body>Hello</body></html>\n", "utf8");
 
   const bootstrapScript = path.join(process.cwd(), "scripts", "setup-bootstrap.mjs");
@@ -259,7 +271,7 @@ test("setup-bootstrap --check-only static-web (Senaryo 2) dizininde packagesRead
 test("setup-bootstrap --check-only python-server (Senaryo 4) dizininde senaryo ve Python kurulum planını döndürür", async (t) => {
   const { spawnSync } = await import("node:child_process");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-python-srv-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(path.join(root, "requirements.txt"), "fastapi==0.115.0\n", "utf8");
   fs.writeFileSync(path.join(root, "app.py"), "print('ok')\n", "utf8");
 
@@ -313,7 +325,7 @@ test("bin/shims dizinindeki yönlendiriciler pnpm, npm, npx, yarn ve bunx komutl
 test("setup-bootstrap --check-only pnpm projesinde sistemde yalnız bun varsa bun olarak raporlar", async (t) => {
   const { spawnSync } = await import("node:child_process");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-pnpm-monorepo-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
   fs.writeFileSync(
     path.join(root, "package.json"),
     JSON.stringify({ name: "pnpm-app", private: true, packageManager: "pnpm@10.32.0" }),
@@ -351,7 +363,7 @@ test("setup-bootstrap --check-only pnpm projesinde sistemde yalnız bun varsa bu
 
 test("checkDependencies: çok dilli (Python, Rust, Go) bağımlılık varlığını doğru denetler", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-polyglot-deps-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
 
   // 1. Python projesi: requirements.txt var ama .venv yok -> hazır değil
   fs.writeFileSync(path.join(root, "requirements.txt"), "fastapi==0.115.0\n", "utf8");
@@ -372,7 +384,7 @@ test("checkDependencies: çok dilli (Python, Rust, Go) bağımlılık varlığı
 
   // 2. Rust projesi: Cargo.toml var ama Cargo.lock/target yok -> hazır değil
   const rustRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kur-rust-deps-"));
-  t.after(() => fs.rmSync(rustRoot, { recursive: true, force: true }));
+  cleanupLater(rustRoot);
   fs.writeFileSync(path.join(rustRoot, "Cargo.toml"), "[package]\nname = \"test\"\nversion = \"0.1.0\"\n", "utf8");
   const rustCheck1 = checkDependencies(rustRoot);
   assert.equal(rustCheck1.ready, false);
@@ -385,13 +397,13 @@ test("checkDependencies: çok dilli (Python, Rust, Go) bağımlılık varlığı
 
   // 3a. Bağımlılığı olmayan Go modülü: go.sum hiç oluşmaz, indirilecek bir şey yok -> hazır
   const goPlain = fs.mkdtempSync(path.join(os.tmpdir(), "kur-go-plain-"));
-  t.after(() => fs.rmSync(goPlain, { recursive: true, force: true }));
+  cleanupLater(goPlain);
   fs.writeFileSync(path.join(goPlain, "go.mod"), "module test\n\ngo 1.22\n", "utf8");
   assert.equal(checkDependencies(goPlain).go?.ready, true);
 
   // 3b. Bağımlılığı olan Go projesi: go.mod `require` içerir ama go.sum/vendor yok -> hazır değil
   const goRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kur-go-deps-"));
-  t.after(() => fs.rmSync(goRoot, { recursive: true, force: true }));
+  cleanupLater(goRoot);
   fs.writeFileSync(path.join(goRoot, "go.mod"), "module test\n\ngo 1.22\n\nrequire github.com/google/uuid v1.6.0\n", "utf8");
   const goCheck1 = checkDependencies(goRoot);
   assert.equal(goCheck1.ready, false);
@@ -406,7 +418,7 @@ test("checkDependencies: çok dilli (Python, Rust, Go) bağımlılık varlığı
 test("setup-bootstrap: kurulu projede (installation.lock) --check-only installed döner ve UI reconfigure seçeneği hazırdır", async (t) => {
   const { spawnSync } = await import("node:child_process");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-installed-check-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
 
   fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "installed-app" }), "utf8");
   fs.mkdirSync(path.join(root, "data"), { recursive: true });
@@ -488,7 +500,7 @@ test("setup-bootstrap-lib: harici dataDir (--data-dir / SETUP_DATA_DIR) ile crea
 test("hibrit projeler: package.json + Python projesinde initProject ve checkDependencies deadlock oluşturmaz", async (t) => {
   const { initProject } = await import("./setup-api.mjs");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "kur-hybrid-test-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  cleanupLater(root);
 
   fs.writeFileSync(path.join(root, "requirements.txt"), "fastapi==0.115.0\n", "utf8");
   fs.writeFileSync(path.join(root, "main.py"), "print('hello')\n", "utf8");
