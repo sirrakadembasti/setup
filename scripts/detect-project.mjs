@@ -601,7 +601,7 @@ function detectStack(root, usage, workspaces = {}) {
     go: exists(root, "go.mod") || exists(root, "main.go"),
     dotnet: hasFileWithSuffix(root, [".csproj", ".vbproj", ".fsproj", ".sln", ".slnx"]),
     rust: exists(root, "Cargo.toml") && !exists(root, "src-tauri", "tauri.conf.json") && !exists(root, "tauri.conf.json"),
-    cpp: exists(root, "CMakeLists.txt") || exists(root, "Makefile") || exists(root, "meson.build"),
+    cpp: exists(root, "CMakeLists.txt") || exists(root, "Makefile") || exists(root, "meson.build") || hasQmakeProject(root),
     unity: exists(root, "ProjectSettings", "ProjectVersion.txt") || (exists(root, "Assets") && exists(root, "Packages", "manifest.json")),
     unreal: hasFileWithSuffix(root, [".uproject"]),
     godot: exists(root, "project.godot"),
@@ -839,6 +839,15 @@ export function isPythonDesktopProject(root) {
   scan(root, 0);
 
   return hasGuiImport && !hasServerImport;
+}
+
+/** Kökte Qt qmake (.pro) projesi var mı? (`QT +=` içeren .pro dosyası) */
+export function hasQmakeProject(root) {
+  try {
+    return fs.readdirSync(root, { withFileTypes: true }).some((ent) => ent.isFile() && /\.pro$/i.test(ent.name) && /^\s*QT\s*\+?=/m.test(fs.readFileSync(path.join(root, ent.name), "utf8")));
+  } catch {
+    return false;
+  }
 }
 
 export function isCppDesktopProject(root) {
@@ -1282,6 +1291,7 @@ export function detectProject(root = process.cwd(), options = {}) {
     exists(resolved, "go.mod") ||
     exists(resolved, "Cargo.toml") ||
     exists(resolved, "CMakeLists.txt") ||
+    hasQmakeProject(resolved) ||
     Boolean(eco) ||
     exists(resolved, "project.godot") ||
     exists(resolved, "ProjectSettings", "ProjectVersion.txt");
@@ -1518,7 +1528,7 @@ export function buildInstallPlan(detection) {
   } else if (detection.stack?.rust) {
     steps.push({ id: "dependencies", label: "Bağımlılık kurulumu (cargo fetch) + derleme doğrulaması (cargo check)", required: true });
   } else if (detection.stack?.cpp || detection.kind === "cpp-desktop") {
-    steps.push({ id: "dependencies", label: "CMake yapılandırması (cmake -B build) + derleme doğrulaması (cmake --build build)", required: true });
+    steps.push({ id: "dependencies", label: "C/C++ yapılandırması ve derleme doğrulaması (CMake: cmake -B build / Qt: qmake + make)", required: true });
   } else if (detection.stack?.godot) {
     steps.push({ id: "dependencies", label: "Godot oyun projesi doğrulaması", required: false });
   } else if (detection.stack?.unity) {

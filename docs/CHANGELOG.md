@@ -4,7 +4,14 @@ Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallar
 
 ## [Yayınlanmamış]
 
-Henüz yayınlanmamış değişiklik yok.
+### Düzeltmeler
+
+- Qt (qmake): yalnızca `.pro` içeren projeler "Tanımlı proje bulunamadı" ile reddediliyordu ve Makefile yokken `make` çalıştırılıyordu; artık `qmake` + `make` adımları, platforma uygun çalıştırma yolu (Linux, macOS `.app`, Windows `release/*.exe`) ve hazırlık denetimi (Makefile) var.
+- Testler: geçici dizin silme dosya sonuna ertelendi ve yeniden deneme eklendi, dar zaman pencereleri genişletildi (Windows'ta nadir `EBUSY`/`ENOTEMPTY` kararsızlıkları).
+
+### CI
+
+- E2E'ye masaüstü ve pencere uygulamaları eklendi: Windows Forms, WPF, klasik .NET Framework, Tkinter (Windows ve xvfb'li Linux), Qt (xvfb'li Linux) ve Gradle.
 
 ## [v1.1.0] - 2026-11-08
 

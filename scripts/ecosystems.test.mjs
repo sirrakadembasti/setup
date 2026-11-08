@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { detectProject } from "./detect-project.mjs";
+import { buildInstallPlan, detectProject } from "./detect-project.mjs";
 import { analyzeDotnet, detectEcosystem, ecosystemReadiness, parseDotnetProject } from "./ecosystems.mjs";
 import { checkToolchain, resolveLanguageProfile } from "./polyglot.mjs";
 import { checkDependencies } from "./setup-bootstrap-lib.mjs";
@@ -390,4 +390,16 @@ test("Qt qmake: Makefile yoksa profil qmake + make adımlarını ve platforma uy
   assert.equal(profile.start.command, expected);
   const withMakefile = tree({ "demo.pro": "QT += widgets", Makefile: "all:", "main.cpp": "int main(){}" });
   assert.equal(resolveLanguageProfile(withMakefile, "cpp-desktop", 5000).steps[0].command, "make", "hazır Makefile varsa qmake çalıştırılmaz");
+});
+
+test("Qt qmake: yalnızca .pro içeren proje kurulabilir sayılır; Makefile üretilince hazır olur", () => {
+  const qt = tree({ "demo.pro": "QT += widgets\nSOURCES += main.cpp", "main.cpp": "int main(){}" });
+  const detection = detectProject(qt);
+  assert.equal(detection.kind, "cpp-desktop");
+  assert.equal(buildInstallPlan(detection).canInstall, true, "Tanımlı proje bulunamadı hatası vermemeli");
+  assert.equal(checkDependencies(qt).ready, false, "qmake çalışmadan hazır sayılmamalı");
+  fs.writeFileSync(path.join(qt, "Makefile"), "all:\n");
+  assert.equal(checkDependencies(qt).ready, true, "qmake Makefile üretince hazır sayılmalı");
+  const notQt = tree({ "notes.pro": "% prolog dosyası\nfoo(bar).\n", "README.md": "x" });
+  assert.notEqual(detectProject(notQt).kind, "cpp-desktop", "Qt olmayan .pro dosyası Qt projesi sayılmamalı");
 });

@@ -320,8 +320,11 @@ export function checkDependencies(projectRoot, options = {}) {
     ? fs.existsSync(path.join(root, "go.sum")) || fs.existsSync(path.join(root, "vendor")) || !goHasRequirements
     : true;
 
-  const hasCpp = fs.existsSync(path.join(root, "CMakeLists.txt"));
-  const cppReady = hasCpp ? fs.existsSync(path.join(root, "build")) : true;
+  const hasCmake = fs.existsSync(path.join(root, "CMakeLists.txt"));
+  // qmake projesi: qmake çalışınca Makefile üretilir; CMake projesi: build/ dizini.
+  const hasQmake = !hasCmake && fs.readdirSync(root).some((f) => /\.pro$/i.test(f) && /^\s*QT\s*\+?=/m.test(fs.readFileSync(path.join(root, f), "utf8")));
+  const hasCpp = hasCmake || hasQmake;
+  const cppReady = hasCmake ? fs.existsSync(path.join(root, "build")) : hasQmake ? fs.existsSync(path.join(root, "Makefile")) : true;
 
   const isPolyglot = hasPython || hasRust || hasGo || hasCpp;
   const rootHasDeps = hasPackageDependencies(root);
