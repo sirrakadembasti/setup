@@ -2,7 +2,7 @@
   "name": "setup",
   "version": "1.0.0",
   "private": false,
-  "description": "Herhangi bir GitHub reposundaki Node.js uygulamasını kullanıcı dostu web arayüzüyle kurup çalıştıran bağımsız kurulum eklentisi",
+  "description": "Herhangi bir projeyi (Node.js, Python, .NET, Java, PHP, Ruby, Go, Rust, Flutter, Docker …) algılayıp tek komutla kuran, ayarlayan ve başlatan bağımsız, bağımlılıksız kurulum aracı",
   "repository": {
     "type": "git",
     "url": "https://github.com/sirrakadembasti/setup.git"
@@ -45,8 +45,13 @@
     "installer",
     "bootstrap",
     "wizard",
-    "github",
-    "plugin"
+    "project-detection",
+    "dotnet",
+    "java",
+    "php",
+    "ruby",
+    "docker",
+    "github"
   ],
   "license": "MIT"
 }

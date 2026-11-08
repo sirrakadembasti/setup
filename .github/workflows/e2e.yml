@@ -38,12 +38,17 @@ jobs:
           - { os: ubuntu-latest,  name: java,         cases: "java-spring" }
           - { os: ubuntu-latest,  name: php-ruby,     cases: "php-plain,ruby-rack" }
           - { os: ubuntu-latest,  name: docker,       cases: "docker-compose" }
+          - { os: ubuntu-latest,  name: rails-laravel, cases: "rails-app,laravel-app" }
+          - { os: ubuntu-latest,  name: go-rust,      cases: "go-http,rust-http" }
           - { os: windows-latest, name: node-python,  cases: "static-html,node-express,python-flask,fullstack" }
           - { os: windows-latest, name: dotnet,       cases: "dotnet-web,dotnet-console" }
           - { os: windows-latest, name: java,         cases: "java-spring" }
+          - { os: windows-latest, name: go-rust,      cases: "go-http,rust-http" }
           - { os: macos-latest,   name: node-python,  cases: "static-html,node-express,python-flask,fullstack" }
           - { os: macos-latest,   name: dotnet,       cases: "dotnet-web,dotnet-console" }
           - { os: macos-latest,   name: java,         cases: "java-spring" }
+          - { os: macos-latest,   name: go-rust,      cases: "go-http,rust-http" }
+          - { os: macos-latest,   name: swift,        cases: "swift-cli" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,14 +64,17 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: ruby/setup-ruby@v1
-        if: matrix.name == 'php-ruby'
+        if: matrix.name == 'php-ruby' || matrix.name == 'rails-laravel'
         with:
           ruby-version: "3.3"
+      - name: Rails kur
+        if: matrix.name == 'rails-laravel'
+        run: gem install rails --no-document
       - name: Araç sürümleri
         shell: bash
         run: |
           node -v
-          for tool in python3 python dotnet java mvn php composer ruby bundle docker; do
+          for tool in python3 python dotnet java mvn php composer ruby bundle rails docker go cargo swift; do
             if command -v "$tool" >/dev/null 2>&1; then echo "--- $tool"; "$tool" --version 2>&1 | head -2; else echo "--- $tool: yok"; fi
           done
       - name: E2E

@@ -150,7 +150,7 @@ npm test
 
 290'dan fazla test; algılama, terminal akışı, web ekranı, rollback ve dil senaryolarını kapsar. Windows'ta çalışmayan birkaç POSIX testi atlanır; Linux/macOS'ta ek olarak çalışır.
 
-**Sürekli entegrasyon:** her push ve pull request'te testler Ubuntu, Windows ve macOS üzerinde Node 18, 20 ve 22 ile çalışır ([`ci.yml`](.github/workflows/ci.yml)). Ayrıca [`e2e.yml`](.github/workflows/e2e.yml) küçük örnek projeleri gerçek araçlarla kurup başlatır ve uygulamanın yanıt verdiğini doğrular (Node, Python, .NET, Java/Maven, PHP, Ruby, Docker). Aynı denetimi yerelde çalıştırmak için:
+**Sürekli entegrasyon:** her push ve pull request'te testler Ubuntu, Windows ve macOS üzerinde Node 18, 20 ve 22 ile çalışır ([`ci.yml`](.github/workflows/ci.yml)). Ayrıca [`e2e.yml`](.github/workflows/e2e.yml) küçük örnek projeleri gerçek araçlarla kurup başlatır ve uygulamanın yanıt verdiğini doğrular (Node, Python, .NET, Java/Maven, PHP/Laravel, Ruby/Rails, Go, Rust, Swift, Docker). Aynı denetimi yerelde çalıştırmak için:
 
 ```bash
 node scripts/e2e/real-projects.mjs node-express,static-html   # ya da: all

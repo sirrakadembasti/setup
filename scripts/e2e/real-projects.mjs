@@ -40,6 +40,41 @@ const SPRING_POM = `<?xml version="1.0" encoding="UTF-8"?>
 </project>
 `;
 
+// Çerçeve iskeleti üreten komut (rails new, composer create-project…); hata verirse vaka başlamadan düşer.
+const scaffold = (command, args) => (dir) => {
+  const result = spawnSync(command, args, { cwd: dir, encoding: "utf8", shell: isWin, timeout: 900000 });
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} başarısız: ${result.stdout}${result.stderr}`);
+};
+
+const GO_MAIN = `package main
+
+import (
+	"fmt"
+	"net/http"
+	"os"
+)
+
+func main() {
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "go ok") })
+	http.ListenAndServe("127.0.0.1:"+os.Getenv("PORT"), nil)
+}
+`;
+
+const RUST_MAIN = String.raw`use std::io::{Read, Write};
+use std::net::TcpListener;
+
+fn main() {
+    let port = std::env::var("PORT").unwrap_or_else(|_| "3000".into());
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port)).unwrap();
+    for stream in listener.incoming() {
+        let mut s = stream.unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = s.read(&mut buf);
+        let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nrust ok");
+    }
+}
+`;
+
 // port: uygulamanın dinleyeceği adres (.env.example ile aynı). mode "process": HTTP yok, süreç/çıktı denetlenir.
 export const CASES = {
   "node-express": { title: "Node + Express (gerçek npm bağımlılığı)", port: 4101, files: {
@@ -69,6 +104,14 @@ export const CASES = {
   "java-spring": { title: "Java Spring Boot (Maven)", port: 4303, startTimeoutMs: 240000, files: {
     "pom.xml": SPRING_POM, ".env.example": "PORT=4303\n",
     "src/main/java/demo/App.java": "package demo;\nimport org.springframework.boot.SpringApplication;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\nimport org.springframework.web.bind.annotation.GetMapping;\nimport org.springframework.web.bind.annotation.RestController;\n@SpringBootApplication\n@RestController\npublic class App {\n  public static void main(String[] a) { SpringApplication.run(App.class, a); }\n  @GetMapping(\"/\") String home() { return \"spring ok\"; }\n}\n" } },
+  "rails-app": { title: "Ruby on Rails (rails new --minimal)", port: null, startTimeoutMs: 300000, prepare: scaffold("rails", ["new", ".", "--minimal", "--skip-git", "--skip-bundle", "--skip-test", "-d", "sqlite3"]), files: {} },
+  "laravel-app": { title: "PHP Laravel (composer create-project)", port: null, startTimeoutMs: 300000, prepare: scaffold("composer", ["create-project", "laravel/laravel", ".", "--no-interaction", "--prefer-dist"]), files: {} },
+  "go-http": { title: "Go HTTP sunucusu (go run)", port: 4402, files: { "go.mod": "module demo\n\ngo 1.21\n", ".env.example": "PORT=4402\n", "main.go": GO_MAIN } },
+  "rust-http": { title: "Rust HTTP sunucusu (cargo run)", port: 4403, startTimeoutMs: 240000, files: {
+    "Cargo.toml": "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n", ".env.example": "PORT=4403\n", "src/main.rs": RUST_MAIN } },
+  "swift-cli": { title: "Swift paketi (swift run, çalıştırılabilir hedef)", mode: "process", marker: "swift ok", waitMs: 120000, files: {
+    "Package.swift": "// swift-tools-version:5.5\nimport PackageDescription\nlet package = Package(name: \"demo\", targets: [.executableTarget(name: \"demo\", path: \"Sources/demo\")])\n",
+    "Sources/demo/main.swift": "print(\"swift ok\")\n" } },
   "docker-compose": { title: "Docker Compose (nginx)", port: 4312, startTimeoutMs: 180000, files: {
     "docker-compose.yml": "services:\n  web:\n    image: nginx:alpine\n    ports: ['4312:80']\n", ".env.example": "PORT=4312\n" } },
 };
