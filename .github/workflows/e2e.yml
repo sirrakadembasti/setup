@@ -75,7 +75,7 @@ jobs:
         run: |
           node -v
           for tool in python3 python dotnet java mvn php composer ruby bundle rails docker go cargo swift; do
-            if command -v "$tool" >/dev/null 2>&1; then echo "--- $tool"; "$tool" --version 2>&1 | head -2; else echo "--- $tool: yok"; fi
+            if command -v "$tool" >/dev/null 2>&1; then echo "--- $tool"; { if [ "$tool" = go ]; then go version; else "$tool" --version; fi; } 2>&1 | head -2 || true; else echo "--- $tool: yok"; fi
           done
       - name: E2E
         run: node scripts/e2e/real-projects.mjs "${{ matrix.cases }}"
