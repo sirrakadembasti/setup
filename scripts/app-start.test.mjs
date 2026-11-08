@@ -61,7 +61,7 @@ async function fixture(t, options = {}) {
     try { await server.stopSpawnedApp(); } finally {
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(resolve));
-      fs.rmSync(root, { recursive: true, force: true });
+      await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
     }
   });
   const apply = (deployment = {}) => request('/api/apply', {
@@ -384,8 +384,8 @@ test('original terminal observes automatic application startup, masked output an
   t.after(async () => {
     setup.cancel();
     await running;
-    fs.rmSync(root, { recursive: true, force: true });
-    fs.rmSync(dataDir, { recursive: true, force: true });
+    await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+    await fs.promises.rm(dataDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
   });
   await until(async () => wizardUrl, Boolean);
   const base = `http://127.0.0.1:${wizardPort}`;
