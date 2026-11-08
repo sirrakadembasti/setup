@@ -3,7 +3,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { buildDatabaseUrl, buildServerEnv, hashAdminPassword, setupPayloadSchema, toDeploymentConfig, verifyAdminPassword } from "../wizard/config.mjs";
 import {
   detectRequiredToolchain,
@@ -67,6 +67,18 @@ const VALID_PAYLOAD = {
   buildClient: false,
   overwriteExistingEnv: false,
 };
+
+// Geçici dizinler dosyanın sonunda silinir: t.after kancaları kayıt sırasıyla çalışır, dizin silme kancası sunucuyu
+// kapatan kancadan önce çalışınca Windows (Node <= 20) açık dosya yüzünden ENOTEMPTY verir ve kalan kancalar atlanır.
+const tempDirsToRemove = [];
+function cleanupLater(dir) {
+  tempDirsToRemove.push(dir);
+}
+after(async () => {
+  for (const dir of tempDirsToRemove) {
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+  }
+});
 
 test("wizard/config: retention ayarları ve app.db varsayılanı .env çıktısına eksiksiz yazılır", () => {
   const parsed = setupPayloadSchema.parse(VALID_PAYLOAD);
@@ -359,7 +371,7 @@ test("wizard/server E2E: token oturumu (setup.wizard), rate limit, /api/apply ve
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-e2e-"));
   fs.mkdirSync(path.join(tmpRoot, "prisma"), { recursive: true });
   fs.writeFileSync(path.join(tmpRoot, "prisma", "schema.prisma"), "// SQLite/Prisma kullanan proje\n", "utf8");
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   const token = "wizard_secret_token_1234567890_abcdef";
   const server = createSetupServer(token, { projectRoot: tmpRoot, forceServerSubdir: true });
@@ -436,7 +448,7 @@ test("wizard/server E2E: tek dizinli projede (server/ yokken) .env ve data/* do�
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-singledir-"));
   fs.mkdirSync(path.join(tmpRoot, "prisma"), { recursive: true });
   fs.writeFileSync(path.join(tmpRoot, "prisma", "schema.prisma"), "// SQLite/Prisma kullanan proje\n", "utf8");
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "single-dir-app" }), "utf8");
 
   const token = "wizard_secret_token_singledir_123456";
@@ -483,7 +495,7 @@ test("wizard/server E2E: tek dizinli projede (server/ yokken) .env ve data/* do�
 
 test("wizard/server E2E: setup.config.json içindeki özel paths ve wizard.title ayarlarına uyulur", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-customcfg-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(
     path.join(tmpRoot, "setup.config.json"),
     JSON.stringify({
@@ -540,7 +552,7 @@ test("wizard/server E2E: setup.config.json içindeki özel paths ve wizard.title
 
   // Dizin dışına çıkma (path traversal) girişimi engellenmeli
   const unsafeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-unsafe-"));
-  t.after(() => fs.rmSync(unsafeRoot, { recursive: true, force: true }));
+  cleanupLater(unsafeRoot);
   fs.writeFileSync(
     path.join(unsafeRoot, "setup.config.json"),
     JSON.stringify({ paths: { env: "../outside.env" } }),
@@ -589,7 +601,7 @@ test("wizard/config ve deployment-config: extraEnvVars çekirdek anahtarları ez
 
 test("wizard/server E2E: .env.example değişkenleri, admin.json ve özel sunucu portu (3000) kurulum çıktısına yazılır", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-envmerge-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "env-merge-app" }), "utf8");
   fs.writeFileSync(
     path.join(tmpRoot, ".env.example"),
@@ -661,7 +673,7 @@ test("wizard/server E2E: .env.example değişkenleri, admin.json ve özel sunucu
 test("wizard/server E2E: package.json içindeki build ve migrate betikleri gerçekte çalıştırılır ve eksik betikler skipped olarak işaretlenir", async (t) => {
   // 1. Senaryo: build ve migrate betikleri olan proje
   const tmpWithScripts = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-scripts-"));
-  t.after(() => fs.rmSync(tmpWithScripts, { recursive: true, force: true }));
+  cleanupLater(tmpWithScripts);
   fs.writeFileSync(
     path.join(tmpWithScripts, "package.json"),
     JSON.stringify({
@@ -718,7 +730,7 @@ test("wizard/server E2E: package.json içindeki build ve migrate betikleri gerç
 
   // 2. Senaryo: build ve migrate betikleri olmayan proje -> adımlar skipped olmalı
   const tmpNoScripts = fs.mkdtempSync(path.join(os.tmpdir(), "setup-wizard-noscripts-"));
-  t.after(() => fs.rmSync(tmpNoScripts, { recursive: true, force: true }));
+  cleanupLater(tmpNoScripts);
   fs.writeFileSync(
     path.join(tmpNoScripts, "package.json"),
     JSON.stringify({ name: "no-scripts-app", scripts: {} }),
@@ -1056,7 +1068,7 @@ test("wizard/core: createSetupWizardCore (Next.js Route Handler / Electron IPC +
 
 test("wizard/core: mountSetupGuard kurulum öncesi 302/503 döner, gömülü /api/setup/* uçlarını sunar ve kurulum sonrası next() çağırır", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-guard-e2e-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "express-guarded-app" }), "utf8");
 
   let mountedMiddleware = null;
@@ -1174,7 +1186,7 @@ test("wizard/core: mountSetupGuard kurulum öncesi 302/503 döner, gömülü /ap
 
 test("SPA / Static Web repo: runtime-config.json ve env-config.js gizli anahtarları sızdırmadan üretilir ve yerleşik statik sunucu ile sunulur", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-spa-static-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   fs.writeFileSync(
     path.join(tmpRoot, "index.html"),
@@ -1309,7 +1321,7 @@ test("SETUP_ALLOWED_ORIGINS (Tauri/Sidecar CORS + Origin izni) ve CLI --port / -
   assert.equal(parsedCli.dataDir, path.resolve("./custom-data"));
 
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-cors-sidecar-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "sidecar-app" }), "utf8");
 
   const token = "wizard_secret_token_sidecar_12345678";
@@ -1366,7 +1378,7 @@ test("Senaryo 2 (SPA/Static): /api/status senaryo + .env.example döndürür, op
   assert.match(html, /id="customEnvSection"/);
 
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-scenario2-ux-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   fs.writeFileSync(path.join(tmpRoot, "index.html"), "<!doctype html><html><body>SPA</body></html>\n", "utf8");
   fs.writeFileSync(
@@ -1452,7 +1464,7 @@ test("Senaryo 2 (SPA/Static): /api/status senaryo + .env.example döndürür, op
 
 test("createSetupWizardCore: Senaryo 2 (SPA/Static) handle('/api/status') senaryo döndürür ve /api/apply opsiyonel admin ile başarıyla tamamlanır", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-core-scenario2-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   fs.writeFileSync(path.join(tmpRoot, "index.html"), "<!doctype html><html><body>SPA Core</body></html>\n", "utf8");
   fs.writeFileSync(
@@ -1501,7 +1513,7 @@ test("createSetupWizardCore: Senaryo 2 (SPA/Static) handle('/api/status') senary
 
 test("güvenlik: gömülü çekirdek CSRF/Origin ister, runtime-config sır sızdırmaz ve kurulum sonrası kapanır", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-core-sec-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "sec-app", scripts: { start: "node index.js" } }), "utf8");
 
   const core = createSetupWizardCore({ projectRoot: tmpRoot, runBuildCommands: async () => {} });
@@ -1558,7 +1570,7 @@ test("güvenlik: publicRuntimeConfig env ve parola özetini çıkarır", async (
 
 test("gömülü arayüz: mountSetupGuard sayfası /api/setup tabanını ve embedded bayrağını taşır, bağımsız sunucu /api kullanır", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-embed-ui-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "embed-ui", scripts: { start: "node index.js" } }), "utf8");
 
   const { core } = mountSetupGuard({ use() {} }, { projectRoot: tmpRoot });
@@ -1874,7 +1886,7 @@ test("masaüstü IPC: core hemen kapanan uygulama için 409 döner; masaüstü o
   assert.equal(health.body.exitCode, 3);
 
   const plain = fs.mkdtempSync(path.join(os.tmpdir(), "setup-ipc-plain-"));
-  t.after(() => fs.rmSync(plain, { recursive: true, force: true }));
+  cleanupLater(plain);
   fs.writeFileSync(path.join(plain, "package.json"), JSON.stringify({ name: "plain", scripts: { start: "node x.js" } }), "utf8");
   const other = createSetupWizardCore({ projectRoot: plain, dataDir: path.join(plain, "d"), ipcMode: true });
   const res = await other.handle({ method: "GET", path: "/api/app-health" });
@@ -1910,7 +1922,7 @@ test("readSetupRuntimeConfig: masaüstü senaryosunda dataDir verilmezse kullan�
 
 test("polyglot: resolvePolyglotMigration Python Django, Alembic, .NET, Rust ve özel komutları doğru belirler", (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-polyglot-mig-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   // 1. Python Django
   fs.writeFileSync(path.join(tmpRoot, "manage.py"), "#!/usr/bin/env python\n", "utf8");
@@ -1954,7 +1966,7 @@ test("polyglot: resolvePolyglotMigration Python Django, Alembic, .NET, Rust ve �
 
 test("wizard/apply: çok dilli projede migration adımı otomatik çalıştırılır", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-polyglot-apply-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   // Mock migration betiği
   fs.writeFileSync(path.join(tmpRoot, "dummy-migrate.mjs"), "console.log('Migration OK'); process.exit(0);\n", "utf8");
@@ -2371,7 +2383,7 @@ test("wizard/shared: testSmtpConnection mock SMTP sunucusunun 220 greeting yanı
 
 test("wizard/shared: testDatabaseConnection SQLite ve PostgreSQL yapılandırmalarını sınar", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-test-db-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   const sqliteRes = await testDatabaseConnection({ provider: "sqlite", url: "data/my_app.db" }, tmpRoot);
   assert.equal(sqliteRes.ok, true);
@@ -2393,7 +2405,7 @@ test("wizard/shared: testDatabaseConnection SQLite ve PostgreSQL yapılandırmal
 
 test("wizard/shared: detectRequiredToolchain ve /api/status araç zinciri ön kontrolünü raporlar", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-test-toolchain-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "toolchain-app" }), "utf8");
 
   const token = "toolchain_test_token_123456";
@@ -2420,7 +2432,7 @@ test("wizard/shared: detectRequiredToolchain ve /api/status araç zinciri ön ko
 
 test("wizard/server E2E: /api/test-database ve /api/test-email uç noktaları canlı denetim yapar", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-test-endpoints-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(path.join(tmpRoot, "package.json"), JSON.stringify({ name: "endpoints-app" }), "utf8");
 
   const token = "endpoints_test_token_123456";
@@ -2538,7 +2550,7 @@ test("Bulgu 2.4: resolveAppStartInvocation setup.config.json olmadan çok dilli 
 
   // Python projesi
   const pyDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-py-"));
-  t.after(() => fs.rmSync(pyDir, { recursive: true, force: true }));
+  cleanupLater(pyDir);
   fs.writeFileSync(path.join(pyDir, "main.py"), "from fastapi import FastAPI\napp = FastAPI()\n", "utf8");
   fs.writeFileSync(path.join(pyDir, "requirements.txt"), "fastapi\nuvicorn\n", "utf8");
   const pyInv = resolveAppStartInvocation(pyDir);
@@ -2548,7 +2560,7 @@ test("Bulgu 2.4: resolveAppStartInvocation setup.config.json olmadan çok dilli 
 
   // Go projesi
   const goDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-go-"));
-  t.after(() => fs.rmSync(goDir, { recursive: true, force: true }));
+  cleanupLater(goDir);
   fs.writeFileSync(path.join(goDir, "go.mod"), "module example.com/demo\ngo 1.22\n", "utf8");
   fs.writeFileSync(path.join(goDir, "main.go"), "package main\nfunc main() {}\n", "utf8");
   const goInv = resolveAppStartInvocation(goDir);
@@ -2558,7 +2570,7 @@ test("Bulgu 2.4: resolveAppStartInvocation setup.config.json olmadan çok dilli 
 
   // Rust projesi
   const rsDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-rs-"));
-  t.after(() => fs.rmSync(rsDir, { recursive: true, force: true }));
+  cleanupLater(rsDir);
   fs.writeFileSync(path.join(rsDir, "Cargo.toml"), '[package]\nname = "demo"\nversion = "0.1.0"\n', "utf8");
   fs.mkdirSync(path.join(rsDir, "src"));
   fs.writeFileSync(path.join(rsDir, "src", "main.rs"), "fn main() {}\n", "utf8");
@@ -2587,7 +2599,7 @@ test("Bulgu 2.3: bin/shims pnpm monorepo bayraklarını (--filter, -r, --paralle
 test("Bulgu 2.1: Sihirbaz varsayılan olarak 20s sonra kapanmaz, #startApp ve yerleşik statik sunucu korunur", async (t) => {
   const { createSetupServer } = await import("../wizard/server.mjs");
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-autoclose-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.mkdirSync(path.join(tmpRoot, "public"), { recursive: true });
   fs.writeFileSync(path.join(tmpRoot, "public", "index.html"), "<h1>Static App</h1>\n", "utf8");
 
@@ -2663,7 +2675,7 @@ test("Bulgu 2.1: Sihirbaz varsayılan olarak 20s sonra kapanmaz, #startApp ve ye
 
 test("Bulgu 3.3: parseDotEnvFile ve parseEnvExample export öneki, satır içi yorumlar ve çok satırlı tırnaklı değerleri destekler", async (t) => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-env-parse-"));
-  t.after(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  cleanupLater(tmpDir);
 
   const envContent = [
     'export PORT=4000',
@@ -2736,7 +2748,7 @@ test("Bulgu 3.2: Go ve Rust profilleri portu iletir ve kaynak koddan dinleme por
 
   // Go projesi: main.go içinde :8080 dinleniyor
   const goDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-go-port-"));
-  t.after(() => fs.rmSync(goDir, { recursive: true, force: true }));
+  cleanupLater(goDir);
   fs.writeFileSync(path.join(goDir, "go.mod"), "module demo\ngo 1.22\n", "utf8");
   fs.writeFileSync(path.join(goDir, "main.go"), 'package main\nimport "net/http"\nfunc main() { http.ListenAndServe(":8080", nil) }\n', "utf8");
 
@@ -2748,7 +2760,7 @@ test("Bulgu 3.2: Go ve Rust profilleri portu iletir ve kaynak koddan dinleme por
 
   // Rust projesi: main.rs içinde 8080 portu
   const rsDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-poly-rs-port-"));
-  t.after(() => fs.rmSync(rsDir, { recursive: true, force: true }));
+  cleanupLater(rsDir);
   fs.writeFileSync(path.join(rsDir, "Cargo.toml"), '[package]\nname = "rsapp"\nversion = "0.1.0"\n', "utf8");
   fs.mkdirSync(path.join(rsDir, "src"));
   fs.writeFileSync(path.join(rsDir, "src", "main.rs"), 'fn main() { let addr = "127.0.0.1:8080"; }\n', "utf8");
@@ -2763,7 +2775,7 @@ test("Bulgu 3.1: Monorepo pnpm-workspace.yaml ve apps/* / packages/* paketlerini
   const { executeSetupApply } = await import("../wizard/shared.mjs");
 
   const monoDir = fs.mkdtempSync(path.join(os.tmpdir(), "setup-monorepo-"));
-  t.after(() => fs.rmSync(monoDir, { recursive: true, force: true }));
+  cleanupLater(monoDir);
 
   // Root package.json + pnpm-workspace.yaml
   fs.writeFileSync(path.join(monoDir, "package.json"), JSON.stringify({ name: "my-monorepo", private: true }), "utf8");
@@ -2858,7 +2870,7 @@ test("Bulgu 4.1: createStaticAppServer akış ile yanıt verir ve symlink ile d�
 
 test("Bulgu 4.2: wizard/core ve wizard/server Origin başlığı yokken veya yabancı origin varken POST isteklerini 403 ile reddeder", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "core-origin-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   const core = createSetupWizardCore({ projectRoot: tmpRoot });
 
@@ -2977,7 +2989,7 @@ test("Bulgu 5.2: setupPayloadSchema ve buildServerEnv frontendPort desteği suna
 
 test("Bulgu 5.3: executeSetupApply build, migrate ve seed adımlarına tam ortam değişkenlerini ve sahnelenen .env dosyasını aktarır", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-env-prop-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
 
   fs.writeFileSync(
     path.join(tmpRoot, "migrate.mjs"),
@@ -3057,7 +3069,7 @@ test("Bulgu 5.3: executeSetupApply build, migrate ve seed adımlarına tam ortam
 
 test("Hedef Proje Odaklı Tek Sayfa Web Sihirbazı: 4 kart düzeni, modül rozetleri ve opsiyonel yönetici ile tek tıkla kurulum", async (t) => {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setup-target-centric-"));
-  t.after(() => fs.rmSync(tmpRoot, { recursive: true, force: true }));
+  cleanupLater(tmpRoot);
   fs.writeFileSync(
     path.join(tmpRoot, "package.json"),
     JSON.stringify({ name: "xfactor-e2e", devDependencies: { "@playwright/test": "^1.0.0" } }),
