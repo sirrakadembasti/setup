@@ -1,0 +1,69 @@
+name: E2E (gerçek araç zincirleri)
+
+# Küçük örnek projeleri gerçek araçlarla (npm, pip, dotnet, Maven, PHP, Ruby, Docker) kurup başlatır ve
+# uygulamanın gerçekten HTTP yanıtı verdiğini doğrular. Yavaş olduğu için ana CI'dan ayrıdır.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/ecosystems.mjs"
+      - "scripts/polyglot.mjs"
+      - "scripts/detect-project.mjs"
+      - "scripts/terminal-bootstrap.mjs"
+      - "scripts/e2e/**"
+      - "wizard/app-process.mjs"
+      - ".github/workflows/e2e.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: ${{ matrix.os }} / ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  name: node-python,  cases: "static-html,node-zero,node-express,python-flask,fullstack" }
+          - { os: ubuntu-latest,  name: dotnet,       cases: "dotnet-web,dotnet-mvc,dotnet-console" }
+          - { os: ubuntu-latest,  name: java,         cases: "java-spring" }
+          - { os: ubuntu-latest,  name: php-ruby,     cases: "php-plain,ruby-rack" }
+          - { os: ubuntu-latest,  name: docker,       cases: "docker-compose" }
+          - { os: windows-latest, name: node-python,  cases: "static-html,node-express,python-flask,fullstack" }
+          - { os: windows-latest, name: dotnet,       cases: "dotnet-web,dotnet-console" }
+          - { os: windows-latest, name: java,         cases: "java-spring" }
+          - { os: macos-latest,   name: node-python,  cases: "static-html,node-express,python-flask,fullstack" }
+          - { os: macos-latest,   name: dotnet,       cases: "dotnet-web,dotnet-console" }
+          - { os: macos-latest,   name: java,         cases: "java-spring" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-dotnet@v4
+        if: matrix.name == 'dotnet'
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-java@v4
+        if: matrix.name == 'java'
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Araç sürümleri
+        shell: bash
+        run: |
+          node -v
+          for tool in python3 python dotnet java mvn php composer ruby bundle docker; do
+            if command -v "$tool" >/dev/null 2>&1; then echo "--- $tool"; "$tool" --version 2>&1 | head -2; else echo "--- $tool: yok"; fi
+          done
+      - name: E2E
+        run: node scripts/e2e/real-projects.mjs "${{ matrix.cases }}"
