@@ -96,6 +96,17 @@ Birden fazla bağımsız uygulama içeren repolarda hedef, menüden, web ekranı
 
 ---
 
+### Doğrulama durumu
+
+Hangi türlerin gerçekten çalıştığı CI'da ölçülür ([`e2e.yml`](.github/workflows/e2e.yml)): küçük örnek proje üretilir, aracın kendi akışıyla kurulup başlatılır ve uygulamanın HTTP yanıtı verdiği doğrulanır.
+
+| Durum | Türler |
+|---|---|
+| **Gerçek araçlarla doğrulandı** (Linux, Windows, macOS'un tümünde değil; ayrıntı için iş akışı matrisine bakın) | Node (Express, Vite, tam yığın), statik HTML, Python/Flask, .NET (minimal API, MVC, konsol), Java/Spring Boot (Maven), PHP ve Laravel, Ruby (Rack) ve Rails, Go, Rust, Swift paketi, Docker Compose |
+| **Yalnızca algılama ve komut üretimi birim testlerle sınandı** | WinForms/WPF/MAUI ve diğer .NET masaüstü türleri, klasik .NET Framework, Gradle, Flutter, Go/Rust GUI (Wails, Fyne, egui), Lazarus/Delphi, Qt, Unity/Unreal/Godot, Tkinter ve diğer Python GUI'leri |
+
+İkinci gruptaki bir proje çalışmazsa, aracın gösterdiği başlatma komutunu ve hata çıktısını inceleyin; sorun bildirimleri memnuniyetle karşılanır.
+
 ## Komut Satırı
 
 ```bash
