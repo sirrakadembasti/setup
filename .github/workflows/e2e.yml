@@ -71,7 +71,7 @@ jobs:
       - uses: actions/setup-go@v5
         if: matrix.name == 'go-rust'
         with:
-          go-version: "1.22"
+          go-version: stable
       - uses: ruby/setup-ruby@v1
         if: matrix.name == 'php-ruby' || matrix.name == 'rails-laravel'
         with:
