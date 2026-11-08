@@ -5,6 +5,7 @@
  *   Flutter, Swift, Go/Rust masaüstü, Lazarus/Delphi, Docker/Compose.
  * Bu modül yalnızca yerleşik Node modüllerine bağlıdır; polyglot.mjs ve detect-project.mjs onu kullanır.
  */
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -739,13 +740,23 @@ export function buildEcosystemProfile(root, kind, port, options = {}) {
 }
 
 /** Ek ekosistemler için kurulum hazır mı? (checkDependencies tarafından kullanılır) */
-export function ecosystemReadiness(root) {
+/** Bundler gem'leri sisteme kurar (vendor/bundle ya da .bundle şart değil); doğru ölçüt `bundle check`'tir. */
+function bundleCheckPasses(root) {
+  try {
+    const result = spawnSync("bundle", ["check"], { cwd: root, encoding: "utf8", timeout: 20000, windowsHide: true, shell: process.platform === "win32" });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+export function ecosystemReadiness(root, options = {}) {
   if (exists(root, "pom.xml") || ["build.gradle", "build.gradle.kts"].some((f) => exists(root, f))) {
     const ready = exists(root, "target") || exists(root, "build") || exists(root, ".gradle");
     return { id: "java", ready };
   }
   if (exists(root, "composer.json")) return { id: "php", ready: exists(root, "vendor", "autoload.php") };
-  if (exists(root, "Gemfile")) return { id: "ruby", ready: exists(root, "Gemfile.lock") && (exists(root, "vendor", "bundle") || exists(root, ".bundle")) };
+  if (exists(root, "Gemfile")) return { id: "ruby", ready: exists(root, "Gemfile.lock") && (exists(root, "vendor", "bundle") || exists(root, ".bundle") || (options.bundleCheck || bundleCheckPasses)(root)) };
   if (analyzeFlutter(root)) return { id: "flutter", ready: exists(root, ".dart_tool", "package_config.json") };
   if (exists(root, "Package.swift")) return { id: "swift", ready: exists(root, ".build") };
   const dotnet = analyzeDotnet(root);

@@ -368,3 +368,15 @@ test("yalnızca index.php olan basit proje PHP olarak algılanır ve php yoksa k
   assert.deepEqual(profile.start.args, ["-S", "127.0.0.1:8000"]);
   assert.equal(profile.steps[0].command, "php");
 });
+
+test("Ruby: Gemfile.lock tek başına yetmez, vendor/bundle yoksa `bundle check` sonucu belirler", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eco-ruby-ready-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  fs.writeFileSync(path.join(dir, "Gemfile"), "source 'https://rubygems.org'\ngem 'rackup'\n");
+  assert.equal(ecosystemReadiness(dir, { bundleCheck: () => true }).ready, false, "lock yokken hazır sayılmamalı");
+  fs.writeFileSync(path.join(dir, "Gemfile.lock"), "GEM\n");
+  assert.equal(ecosystemReadiness(dir, { bundleCheck: () => false }).ready, false, "gem'ler kurulu değilse (check başarısız) hazır sayılmamalı");
+  assert.equal(ecosystemReadiness(dir, { bundleCheck: () => true }).ready, true, "sistem gem'leriyle kurulmuşsa (check başarılı) hazır sayılmalı");
+  fs.mkdirSync(path.join(dir, "vendor", "bundle"), { recursive: true });
+  assert.equal(ecosystemReadiness(dir, { bundleCheck: () => false }).ready, true, "vendor/bundle varsa check gerekmez");
+});
