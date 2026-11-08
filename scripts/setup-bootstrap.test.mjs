@@ -383,10 +383,16 @@ test("checkDependencies: çok dilli (Python, Rust, Go) bağımlılık varlığı
   assert.equal(rustCheck2.ready, true);
   assert.equal(rustCheck2.rust?.ready, true);
 
-  // 3. Go projesi: go.mod var ama go.sum/vendor yok -> hazır değil
+  // 3a. Bağımlılığı olmayan Go modülü: go.sum hiç oluşmaz, indirilecek bir şey yok -> hazır
+  const goPlain = fs.mkdtempSync(path.join(os.tmpdir(), "kur-go-plain-"));
+  t.after(() => fs.rmSync(goPlain, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(goPlain, "go.mod"), "module test\n\ngo 1.22\n", "utf8");
+  assert.equal(checkDependencies(goPlain).go?.ready, true);
+
+  // 3b. Bağımlılığı olan Go projesi: go.mod `require` içerir ama go.sum/vendor yok -> hazır değil
   const goRoot = fs.mkdtempSync(path.join(os.tmpdir(), "kur-go-deps-"));
   t.after(() => fs.rmSync(goRoot, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(goRoot, "go.mod"), "module test\n\ngo 1.22\n", "utf8");
+  fs.writeFileSync(path.join(goRoot, "go.mod"), "module test\n\ngo 1.22\n\nrequire github.com/google/uuid v1.6.0\n", "utf8");
   const goCheck1 = checkDependencies(goRoot);
   assert.equal(goCheck1.ready, false);
   assert.equal(goCheck1.go?.ready, false);

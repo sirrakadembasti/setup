@@ -40,6 +40,7 @@ Ayrıntılı geçmiş için `git log` kullanın; burada kullanıcıya görünen 
 - `bin/setup.mjs` sembolik bağlı bir yoldan çalıştırılınca (ör. macOS `/var` → `/private/var`) sessizce 0 ile çıkıyordu; yollar artık gerçek konumlarına çözülerek karşılaştırılıyor.
 - Yerleşik statik sunucu, istemci bağlantıyı yarıda kesince dosya tutamacını sızdırıyordu (Windows'ta Node 18/20 ile dosya silmeyi engelliyordu); akış artık bağlantı kapanınca yok ediliyor.
 - Ruby: `bundle install` gem'leri sisteme kurduğunda (`vendor/bundle` oluşmadan) kurulum "doğrulama eksik" sayılıyordu; hazırlık artık `bundle check` ile belirleniyor.
+- Go: bağımlılığı olmayan modülde `go.sum` hiç oluşmadığı için proje hiç "kurulu" sayılmıyordu; `go.mod` içinde `require` yoksa hazır kabul ediliyor.
 
 ### Güvenlik
 

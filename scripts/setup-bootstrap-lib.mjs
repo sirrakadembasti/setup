@@ -310,8 +310,14 @@ export function checkDependencies(projectRoot, options = {}) {
     : true;
 
   const hasGo = fs.existsSync(path.join(root, "go.mod"));
+  // Bağımlılığı olmayan modülde go.sum hiç oluşmaz; go.mod içinde `require` yoksa indirilecek bir şey yoktur.
+  let goMod = "";
+  if (hasGo) {
+    try { goMod = fs.readFileSync(path.join(root, "go.mod"), "utf8"); } catch { goMod = ""; }
+  }
+  const goHasRequirements = hasGo && /^\s*require\b/m.test(goMod);
   const goReady = hasGo
-    ? fs.existsSync(path.join(root, "go.sum")) || fs.existsSync(path.join(root, "vendor"))
+    ? fs.existsSync(path.join(root, "go.sum")) || fs.existsSync(path.join(root, "vendor")) || !goHasRequirements
     : true;
 
   const hasCpp = fs.existsSync(path.join(root, "CMakeLists.txt"));
