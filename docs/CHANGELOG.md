@@ -21,6 +21,7 @@ Ayrıntılı geçmiş için `git log` kullanın; burada kullanıcıya görünen 
 - **Çok dilli destek:** Python, Go, C# .NET, Rust, C/C++ (CMake, Makefile, Meson) ve oyun motorları (Unity, Unreal, Godot); dile özgü kurulum, doğrulama ve migration adımları.
 - **Kurumsal ortam:** genel SMTP, esnek veritabanı sağlayıcıları (SQLite, PostgreSQL, MySQL, özel), `--reconfigure`, yedekli temiz kurulum.
 - **Başlatıcı sürüm sabitleme:** `init`, `npx/bunx` çağrısını uzaktaki bir commit'e bağlar (`SETUP_LAUNCHER_REF` ile değiştirilir/kapatılır).
+- **Sürekli entegrasyon (GitHub Actions):** `ci.yml` testleri Ubuntu, Windows ve macOS üzerinde Node 18/20/22 ile çalıştırır (9 kombinasyon). `e2e.yml` küçük örnek projeleri gerçek araçlarla (npm, pip, dotnet, Maven, PHP, Ruby, Docker) kurup başlatır ve uygulamanın HTTP yanıtı verdiğini doğrular; `scripts/e2e/real-projects.mjs` elle de çalıştırılabilir.
 
 ### Düzeltmeler
 
@@ -36,6 +37,9 @@ Ayrıntılı geçmiş için `git log` kullanın; burada kullanıcıya görünen 
 - Terminal günlükleri `.env` sırlarını maskeliyor; seed çalışmadıysa özet hesabın veritabanında oluşturulmadığını söylüyor.
 - Seçenek 6'da bekleme süresi 60 sn (`SETUP_APP_START_TIMEOUT_MS`); menü numaralandırması, Windows `PATH` ve dosya kilitleme sorunları giderildi.
 - `init --copy-tools` iç geliştirme notlarını hedef repoya kopyalamıyor.
+- `bin/setup.mjs` sembolik bağlı bir yoldan çalıştırılınca (ör. macOS `/var` → `/private/var`) sessizce 0 ile çıkıyordu; yollar artık gerçek konumlarına çözülerek karşılaştırılıyor.
+- Yerleşik statik sunucu, istemci bağlantıyı yarıda kesince dosya tutamacını sızdırıyordu (Windows'ta Node 18/20 ile dosya silmeyi engelliyordu); akış artık bağlantı kapanınca yok ediliyor.
+- Ruby: `bundle install` gem'leri sisteme kurduğunda (`vendor/bundle` oluşmadan) kurulum "doğrulama eksik" sayılıyordu; hazırlık artık `bundle check` ile belirleniyor.
 
 ### Güvenlik
 

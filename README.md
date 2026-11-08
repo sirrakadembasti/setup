@@ -1,5 +1,7 @@
 # setup — Evrensel Uygulama Kurulum Aracı
 
+[![CI](https://github.com/sirrakadembasti/setup/actions/workflows/ci.yml/badge.svg)](https://github.com/sirrakadembasti/setup/actions/workflows/ci.yml) [![E2E](https://github.com/sirrakadembasti/setup/actions/workflows/e2e.yml/badge.svg)](https://github.com/sirrakadembasti/setup/actions/workflows/e2e.yml)
+
 İndirdiğiniz bir projeyi (GitHub ya da şirket içi repo) **tek komutla kurup çalıştırır**. Bağımlılık yüklemesini terminaldeki bir menüden, `.env` / veritabanı / port ayarlarını ise tarayıcıdaki tek sayfalık bir ekrandan yapar. Hiçbir ek paket gerektirmez; yalnızca **Node.js 18+** (ya da **Bun**) yeterlidir.
 
 ---
@@ -146,7 +148,13 @@ setup [komut] [seçenekler]
 npm test
 ```
 
-240'tan fazla test; algılama, terminal akışı, web ekranı, rollback ve dil senaryolarını kapsar. Windows'ta çalışmayan birkaç POSIX testi atlanır; Linux/macOS'ta ek olarak çalışır.
+290'dan fazla test; algılama, terminal akışı, web ekranı, rollback ve dil senaryolarını kapsar. Windows'ta çalışmayan birkaç POSIX testi atlanır; Linux/macOS'ta ek olarak çalışır.
+
+**Sürekli entegrasyon:** her push ve pull request'te testler Ubuntu, Windows ve macOS üzerinde Node 18, 20 ve 22 ile çalışır ([`ci.yml`](.github/workflows/ci.yml)). Ayrıca [`e2e.yml`](.github/workflows/e2e.yml) küçük örnek projeleri gerçek araçlarla kurup başlatır ve uygulamanın yanıt verdiğini doğrular (Node, Python, .NET, Java/Maven, PHP, Ruby, Docker). Aynı denetimi yerelde çalıştırmak için:
+
+```bash
+node scripts/e2e/real-projects.mjs node-express,static-html   # ya da: all
+```
 
 ## Daha Fazla Bilgi
 
