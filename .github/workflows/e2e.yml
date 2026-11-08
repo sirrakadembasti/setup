@@ -9,12 +9,17 @@ on:
   push:
     branches: [main]
     paths:
+      - "bin/**"
       - "scripts/ecosystems.mjs"
       - "scripts/polyglot.mjs"
       - "scripts/detect-project.mjs"
       - "scripts/terminal-bootstrap.mjs"
+      - "scripts/setup-bootstrap-lib.mjs"
+      - "scripts/setup-api.mjs"
+      - "scripts/process-runner.mjs"
+      - "scripts/run-steps.mjs"
       - "scripts/e2e/**"
-      - "wizard/app-process.mjs"
+      - "wizard/**"
       - ".github/workflows/e2e.yml"
 
 permissions:
@@ -63,6 +68,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: actions/setup-go@v5
+        if: matrix.name == 'go-rust'
+        with:
+          go-version: "1.22"
       - uses: ruby/setup-ruby@v1
         if: matrix.name == 'php-ruby' || matrix.name == 'rails-laravel'
         with:
