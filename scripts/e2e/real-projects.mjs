@@ -202,7 +202,8 @@ async function runCase(id, testCase) {
     }
     const frontendOk = !testCase.frontendPort || result.frontend?.ok;
     result.verdict = reply && frontendOk ? "CALISTI" : "YANIT-YOK";
-    if (result.verdict !== "CALISTI") result.tail = out.slice(from).slice(-1500);
+    // Menü çıktısı sonda olduğundan uygulamanın kendi hata satırları başta aranır.
+    if (result.verdict !== "CALISTI") result.startOutput = out.slice(from, from + 4000);
     return result;
   } finally {
     killTree(child);
@@ -229,6 +230,7 @@ async function main() {
     console.log(`<<< ${id}: ${result.verdict} (${result.seconds ?? "?"} sn)${result.detected ? ` | ${result.detected}` : ""}`);
     if (result.verdict !== "CALISTI") {
       for (const line of [...(result.installErrors || []), ...(result.startErrors || [])]) console.log(`    ${line}`);
+      if (result.startOutput) console.log(`--- başlatma çıktısı ---\n${result.startOutput.split("\n").slice(0, 40).join("\n")}\n--- /başlatma çıktısı ---`);
       console.log((result.log || result.tail || result.error || "").split("\n").slice(-25).join("\n"));
     }
     if (outFile) fs.writeFileSync(outFile, json(results));
