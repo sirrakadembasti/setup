@@ -58,6 +58,10 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      - uses: ruby/setup-ruby@v1
+        if: matrix.name == 'php-ruby'
+        with:
+          ruby-version: "3.3"
       - name: Araç sürümleri
         shell: bash
         run: |

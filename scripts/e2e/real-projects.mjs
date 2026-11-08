@@ -184,7 +184,10 @@ async function main() {
     try { result = await runCase(id, CASES[id]); } catch (error) { result = { id, verdict: "HARNESS-HATASI", error: String(error?.stack || error) }; }
     results.push(result);
     console.log(`<<< ${id}: ${result.verdict} (${result.seconds ?? "?"} sn)${result.detected ? ` | ${result.detected}` : ""}`);
-    if (result.verdict !== "CALISTI") console.log((result.log || result.tail || result.error || "").split("\n").slice(-25).join("\n"));
+    if (result.verdict !== "CALISTI") {
+      for (const line of [...(result.installErrors || []), ...(result.startErrors || [])]) console.log(`    ${line}`);
+      console.log((result.log || result.tail || result.error || "").split("\n").slice(-25).join("\n"));
+    }
     if (outFile) fs.writeFileSync(outFile, json(results));
   }
   console.log("\n=== ÖZET ===");
