@@ -4,6 +4,10 @@ Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallar
 
 ## [Yayınlanmamış]
 
+Henüz yayınlanmamış değişiklik yok.
+
+## [v1.1.0] - 2026-11-08
+
 Ayrıntılı geçmiş için `git log` kullanın; burada kullanıcıya görünen değişiklikler konu başlıklarıyla özetlenmiştir.
 
 ### Yeni özellikler

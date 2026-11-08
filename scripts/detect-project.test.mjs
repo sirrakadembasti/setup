@@ -120,7 +120,7 @@ test("initProject setupBin seçeneği ile gömülü (submodule) kurulum betikler
   assert.equal(updatedPkg.scripts.wizard, "node tools/setup/bin/setup.mjs wizard");
 });
 
-test("kurulum artıkları evidence alanına yazılır ve sürümleme v1.0.0 çalışır", (t) => {
+test("kurulum artıkları evidence alanına yazılır ve sürümleme çalışır", (t) => {
   const { dir, cleanup } = mkTemp();
   t.after(cleanup);
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "x" }), "utf8");
@@ -130,7 +130,9 @@ test("kurulum artıkları evidence alanına yazılır ve sürümleme v1.0.0 çal
   const d = detectProject(dir);
   assert.equal(d.runtime.installationLock, true);
 
-  assert.equal(getVersion(), "1.0.0");
+  const repoVersion = fs.readFileSync(path.join(process.cwd(), "VERSION"), "utf8").trim();
+  assert.equal(getVersion(), repoVersion);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(process.cwd(), "package.json"), "utf8")).version, repoVersion, "VERSION ve package.json sürümü aynı olmalı");
   assert.equal(parseSemver("v1.0").shortTag, "v1.0");
   assert.equal(parseSemver("1.0.0").fullTag, "v1.0.0");
   assert.equal(bumpSemver("1.0.0", "patch"), "1.0.1");
