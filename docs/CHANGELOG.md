@@ -4,6 +4,10 @@ Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallar
 
 ## [Yayınlanmamış]
 
+Henüz yayınlanmamış değişiklik yok.
+
+## [v1.1.1] - 2026-11-09
+
 ### Düzeltmeler
 
 - Qt (qmake): yalnızca `.pro` içeren projeler "Tanımlı proje bulunamadı" ile reddediliyordu ve Makefile yokken `make` çalıştırılıyordu; artık `qmake` + `make` adımları, platforma uygun çalıştırma yolu (Linux, macOS `.app`, Windows `release/*.exe`) ve hazırlık denetimi (Makefile) var.
