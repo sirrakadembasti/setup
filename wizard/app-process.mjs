@@ -192,6 +192,12 @@ export function withApplicationPort(invocation, port) {
   return { ...invocation, args: [...invocation.args, ...separator, '--host', '127.0.0.1', '--port', String(port), '--strictPort'] };
 }
 
+/** Başlatma tanımındaki (fallbackCommand / fallbackCommands) derlenmiş ikililerden diskte var olan ilkini döndürür. */
+function existingFallback(root, start) {
+  const candidates = [start?.fallbackCommand, ...(Array.isArray(start?.fallbackCommands) ? start.fallbackCommands : [])].filter(Boolean);
+  return candidates.find((rel) => fs.existsSync(path.join(root, rel))) || null;
+}
+
 /** Dil/ekosistem profilinden (Java, PHP, .NET, Flutter …) çalıştırılabilir başlatma çağrısı üretir. */
 function invocationFromProfile(profile, root) {
   if (!profile) return null;
@@ -199,8 +205,9 @@ function invocationFromProfile(profile, root) {
     return { blocked: profile.blocked, command: null, args: [], cwd: root, note: profile.note };
   }
   if (!profile.start?.command) return null;
-  if (profile.start.fallbackCommand && fs.existsSync(path.join(root, profile.start.fallbackCommand))) {
-    return { command: path.resolve(root, profile.start.fallbackCommand), args: [], cwd: root, note: profile.note };
+  const builtBinary = existingFallback(root, profile.start);
+  if (builtBinary) {
+    return { command: path.resolve(root, builtBinary), args: [], cwd: root, note: profile.note };
   }
   let startCmd = resolveStepCommand(root, profile.start);
   if (["pnpm", "yarn", "bun", "npm"].includes(String(startCmd).toLowerCase().trim())) {
@@ -226,6 +233,9 @@ export function resolveAppStartInvocation(projectRoot, setupConfig = null) {
         staticDir: path.resolve(root, cfg.start.args?.[0] || "."),
       };
     }
+    // Derlenmiş ikili varsa (ör. CMake `build/app`) hedef komut yerine o çalıştırılır; çoğu CMake projesinde `run` hedefi yoktur.
+    const builtBinary = existingFallback(root, cfg.start);
+    if (builtBinary) return { command: path.resolve(root, builtBinary), args: [], cwd: root };
     // python için proje içi .venv varsa onun yorumlayıcısı kullanılır
     let startCmd = resolveStepCommand(root, cfg.start);
     if (["pnpm", "yarn", "bun", "npm"].includes(String(startCmd).toLowerCase().trim())) {

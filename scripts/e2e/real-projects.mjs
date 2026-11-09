@@ -307,6 +307,20 @@ function probe(url, timeout = 1500) {
   });
 }
 
+// Başarısız vakada oluşan/oluşmayan dosyaları görmek için dizin ağacı (derinlik sınırlı, gürültülü dizinler atlanır).
+function listTree(dir, depth, prefix = "") {
+  const lines = [];
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return lines; }
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if ([".git", "node_modules", "obj", ".dart_tool"].includes(entry.name)) continue;
+    lines.push(`${prefix}${entry.name}${entry.isDirectory() ? "/" : ""}`);
+    if (entry.isDirectory() && depth > 0) lines.push(...listTree(path.join(dir, entry.name), depth - 1, `${prefix}  `));
+    if (lines.length > 80) break;
+  }
+  return lines;
+}
+
 function killTree(child) {
   if (!child.pid) return;
   if (isWin) spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
@@ -343,6 +357,7 @@ async function runCase(id, testCase) {
       const done = await waitPrompt(2, 600000);
       result.installOk = done && /\[BAŞARILI\]/.test(out.slice(from));
       result.installErrors = errorsSince(from).slice(-3);
+      result.installOutput = out.slice(from);
       if (!result.installOk) { result.verdict = "KURULUM-BASARISIZ"; result.tail = out.slice(-1200); return result; }
     } else result.installOk = true;
 
@@ -365,7 +380,8 @@ async function runCase(id, testCase) {
       const alive = child.exitCode === null;
       const ok = !result.startErrors.length && (testCase.expect ? result.expected && alive : (result.marker || alive));
       result.verdict = result.startErrors.length ? "BASLATMA-BASARISIZ" : (ok ? "CALISTI" : "SUREC-ERKEN-KAPANDI");
-      if (result.verdict !== "CALISTI") result.tail = tail.slice(-1200);
+      // Menü çıktısı sonda olduğundan uygulamanın kendi hata satırları başta aranır.
+      if (result.verdict !== "CALISTI") result.startOutput = tail.slice(0, 4000);
       return result;
     }
     const findTarget = () => (testCase.port ? `http://127.0.0.1:${testCase.port}/` : (out.slice(from).match(/(http:\/\/127\.0\.0\.1:\d+)/) || [])[1]);
@@ -400,6 +416,7 @@ async function runCase(id, testCase) {
     killTree(child);
     await sleep(2000);
     result.seconds = Math.round((Date.now() - t0) / 100) / 10;
+    if (result.verdict !== "CALISTI") result.listing = listTree(dir, 2);
     if (result.verdict !== "CALISTI") result.log = out.slice(-4000);
   }
 }
@@ -421,6 +438,8 @@ async function main() {
     console.log(`<<< ${id}: ${result.verdict} (${result.seconds ?? "?"} sn)${result.detected ? ` | ${result.detected}` : ""}`);
     if (result.verdict !== "CALISTI") {
       for (const line of [...(result.installErrors || []), ...(result.startErrors || [])]) console.log(`    ${line}`);
+      if (result.installOutput) console.log(`--- kurulum çıktısı (son 40 satır) ---\n${result.installOutput.split("\n").slice(-40).join("\n")}\n--- /kurulum çıktısı ---`);
+      if (result.listing) console.log(`--- proje dizini ---\n${result.listing.join("\n")}\n--- /proje dizini ---`);
       if (result.startOutput) console.log(`--- başlatma çıktısı ---\n${result.startOutput.split("\n").slice(0, 40).join("\n")}\n--- /başlatma çıktısı ---`);
       console.log((result.log || result.tail || result.error || "").split("\n").slice(-25).join("\n"));
     }

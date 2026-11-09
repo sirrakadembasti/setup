@@ -6,6 +6,7 @@ import test from "node:test";
 import { buildInstallPlan, detectProject } from "./detect-project.mjs";
 import { analyzeDotnet, detectEcosystem, ecosystemReadiness, parseDotnetProject } from "./ecosystems.mjs";
 import { checkToolchain, resolveLanguageProfile } from "./polyglot.mjs";
+import { resolveAppStartInvocation } from "../wizard/app-process.mjs";
 import { checkDependencies } from "./setup-bootstrap-lib.mjs";
 import { materializeEnvTemplate } from "../wizard/config.mjs";
 
@@ -390,6 +391,17 @@ test("Qt qmake: Makefile yoksa profil qmake + make adımlarını ve platforma uy
   assert.equal(profile.start.command, expected);
   const withMakefile = tree({ "demo.pro": "QT += widgets", Makefile: "all:", "main.cpp": "int main(){}" });
   assert.equal(resolveLanguageProfile(withMakefile, "cpp-desktop", 5000).steps[0].command, "make", "hazır Makefile varsa qmake çalıştırılmaz");
+});
+
+test("CMake: derlenmiş ikili varsa kayıtlı `--target run` yerine o çalıştırılır (çoğu projede run hedefi yoktur)", () => {
+  const root = tree({ "CMakeLists.txt": "project(demoqt)\nadd_executable(demoqt main.cpp)\n", "main.cpp": "int main(){}" });
+  const start = { command: "cmake", args: ["--build", "build", "--target", "run"], fallbackCommand: "build/demoqt", fallbackCommands: ["build/alt/demoqt"] };
+  assert.match(String(resolveAppStartInvocation(root, { start }).command), /cmake/i, "ikili yokken kayıtlı komut kullanılır");
+  fs.mkdirSync(path.join(root, "build", "alt"), { recursive: true });
+  fs.writeFileSync(path.join(root, "build", "alt", "demoqt"), "");
+  assert.equal(resolveAppStartInvocation(root, { start }).command, path.resolve(root, "build", "alt", "demoqt"), "yedek komutlardan var olan seçilir");
+  fs.writeFileSync(path.join(root, "build", "demoqt"), "");
+  assert.equal(resolveAppStartInvocation(root, { start }).command, path.resolve(root, "build", "demoqt"), "ana yedek komut önceliklidir");
 });
 
 test("Qt qmake: yalnızca .pro içeren proje kurulabilir sayılır; Makefile üretilince hazır olur", () => {

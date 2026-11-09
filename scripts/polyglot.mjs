@@ -342,6 +342,8 @@ function cppProfile(root, port = 5000) {
         command: "cmake",
         args: ["--build", "build", "--target", "run"],
         fallbackCommand: isWin ? `build/Release/${targetName}${binExt}` : `build/${targetName}`,
+        // Windows'ta MSVC çok yapılandırmalı (Release/Debug), MinGW/Ninja tek yapılandırmalı (build/app.exe) üretir.
+        fallbackCommands: isWin ? [`build/Debug/${targetName}${binExt}`, `build/${targetName}${binExt}`] : [],
       },
       port,
     };
