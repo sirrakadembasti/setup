@@ -338,14 +338,20 @@ function killTree(child) {
   else { try { child.kill("SIGINT"); } catch { /* süreç zaten bitmiş */ } }
 }
 
-async function runCase(id, testCase) {
+// Vakanın örnek projesini geçici bir dizinde üretir (iskelet komutu + dosyalar) ve dizin yolunu döndürür.
+function materialize(id, testCase) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `e2e-${id}-`));
-  const result = { id, title: testCase.title, platform: process.platform, dir };
   testCase.prepare?.(dir);
   for (const [name, content] of Object.entries(testCase.files || {})) {
     fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
     fs.writeFileSync(path.join(dir, name), content);
   }
+  return dir;
+}
+
+async function runCase(id, testCase) {
+  const dir = materialize(id, testCase);
+  const result = { id, title: testCase.title, platform: process.platform, dir };
   const child = spawn(process.execPath, [path.join(SETUP_ROOT, "bin", "setup.mjs"), "--root", dir, "--no-open"], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, FORCE_COLOR: "0" } });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
@@ -438,6 +444,14 @@ async function runCase(id, testCase) {
 
 async function main() {
   const args = process.argv.slice(2);
+  // --scaffold <vaka>: yalnızca örnek projeyi üretir ve dizin yolunu yazdırır (aracı çalıştırmadan elle denemek için).
+  const scaffoldIndex = args.indexOf("--scaffold");
+  if (scaffoldIndex >= 0) {
+    const id = args[scaffoldIndex + 1];
+    if (!CASES[id]) { console.error(`Bilinmeyen vaka: ${id}`); process.exit(2); }
+    console.log(materialize(id, CASES[id]));
+    process.exit(0);
+  }
   const outIndex = args.indexOf("--out");
   const outFile = outIndex >= 0 ? args.splice(outIndex, 2)[1] : null;
   const wanted = (args[0] || "all").split(",").filter(Boolean);
