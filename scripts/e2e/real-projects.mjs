@@ -75,6 +75,121 @@ fn main() {
 }
 `;
 
+const QT_CMAKE = `cmake_minimum_required(VERSION 3.16)
+project(demoqt)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
+add_executable(demoqt main.cpp)
+target_link_libraries(demoqt Qt5::Widgets)
+`;
+
+const GODOT_PROJECT = `config_version=5
+
+[application]
+config/name="demo"
+run/main_scene="res://main.tscn"
+`;
+const GODOT_SCENE = `[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://main.gd" id="1"]
+
+[node name="Main" type="Node"]
+script = ExtResource("1")
+`;
+const GODOT_SCRIPT = `extends Node
+
+func _ready():
+\tprint("godot ok")
+\tget_tree().quit()
+`;
+
+const LAZARUS_LPI = `<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12"/>
+    <General>
+      <Flags><MainUnitHasCreateFormStatements Value="False"/><MainUnitHasTitleStatement Value="False"/><MainUnitHasScaledStatement Value="False"/></Flags>
+      <SessionStorage Value="InProjectDir"/>
+      <Title Value="demo"/>
+      <UseAppBundle Value="False"/>
+      <ResourceType Value="res"/>
+    </General>
+    <BuildModes Count="1"><Item1 Name="Default" Default="True"/></BuildModes>
+    <PublishOptions><Version Value="2"/></PublishOptions>
+    <RunParams><FormatVersion Value="2"/></RunParams>
+    <Units Count="1"><Unit0><Filename Value="demo.lpr"/><IsPartOfProject Value="True"/></Unit0></Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Version Value="11"/>
+    <Target><Filename Value="demo"/></Target>
+    <SearchPaths><UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/></SearchPaths>
+  </CompilerOptions>
+</CONFIG>
+`;
+const LAZARUS_LPR = `program demo;
+uses SysUtils;
+begin
+  WriteLn('lazarus ok');
+  Sleep(8000);
+end.
+`;
+
+const FYNE_MAIN = `package main
+
+import (
+	"fmt"
+	"time"
+
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/widget"
+)
+
+func main() {
+	a := app.New()
+	w := a.NewWindow("demo")
+	w.SetContent(widget.NewLabel("hello"))
+	go func() {
+		time.Sleep(3 * time.Second)
+		fmt.Println("fyne ok")
+		a.Quit()
+	}()
+	w.ShowAndRun()
+}
+`;
+
+const EGUI_MAIN = `use eframe::egui;
+
+struct DemoApp {
+    start: std::time::Instant,
+    said: bool,
+}
+
+impl eframe::App for DemoApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label("hello");
+        });
+        if !self.said {
+            println!("egui ok");
+            self.said = true;
+        }
+        if self.start.elapsed().as_secs() > 3 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        ctx.request_repaint();
+    }
+}
+
+fn main() -> eframe::Result {
+    eframe::run_native(
+        "demo",
+        eframe::NativeOptions::default(),
+        Box::new(|_cc| Ok(Box::new(DemoApp { start: std::time::Instant::now(), said: false }))),
+    )
+}
+`;
+
 const LEGACY_CSPROJ = String.raw`<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
@@ -165,6 +280,18 @@ export const CASES = {
     "requirements.txt": "# bağımlılık yok\n", "main.py": TK_MAIN } },
   "qt-qmake": { title: "Qt Widgets (qmake + make)", mode: "process", marker: "qt ok", waitMs: 240000, files: {
     "demo.pro": "QT += widgets\nTARGET = demoapp\nCONFIG += c++17\nSOURCES += main.cpp\n", "main.cpp": QT_MAIN } },
+  // --- Linux'ta xvfb altında denenen ek masaüstü türleri
+  "qt-cmake": { title: "Qt Widgets (CMake)", mode: "process", marker: "qt ok", waitMs: 300000, files: { "CMakeLists.txt": QT_CMAKE, "main.cpp": QT_MAIN } },
+  avalonia: { title: "Avalonia (dotnet new avalonia.app)", mode: "process", expect: "Masaüstü/yerel uygulama", waitMs: 120000, files: {},
+    prepare: (dir) => { scaffold("dotnet", ["new", "install", "Avalonia.Templates"])(dir); dotnetNew("avalonia.app")(dir); } },
+  godot: { title: "Godot projesi (godot --path .)", mode: "process", marker: "godot ok", waitMs: 120000, files: { "project.godot": GODOT_PROJECT, "main.tscn": GODOT_SCENE, "main.gd": GODOT_SCRIPT } },
+  lazarus: { title: "Lazarus / Free Pascal (lazbuild, konsol projesi)", mode: "process", marker: "lazarus ok", waitMs: 180000, files: { "demo.lpi": LAZARUS_LPI, "demo.lpr": LAZARUS_LPR } },
+  "flutter-linux": { title: "Flutter masaüstü (flutter run -d linux)", mode: "process", marker: "Dart VM Service", waitMs: 900000, files: {},
+    prepare: scaffold("flutter", ["create", ".", "--platforms=linux", "--project-name", "demo"]) },
+  "go-fyne": { title: "Go GUI (Fyne)", mode: "process", marker: "fyne ok", waitMs: 600000, files: {},
+    prepare: (dir) => { fs.writeFileSync(path.join(dir, "go.mod"), "module demo\n\ngo 1.21\n"); fs.writeFileSync(path.join(dir, "main.go"), FYNE_MAIN); scaffold("go", ["mod", "tidy"])(dir); } },
+  "rust-egui": { title: "Rust GUI (egui / eframe)", mode: "process", marker: "egui ok", waitMs: 900000, files: {
+    "Cargo.toml": "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\neframe = \"0.29\"\n", "src/main.rs": EGUI_MAIN } },
   "docker-compose": { title: "Docker Compose (nginx)", port: 4312, startTimeoutMs: 180000, files: {
     "docker-compose.yml": "services:\n  web:\n    image: nginx:alpine\n    ports: ['4312:80']\n", ".env.example": "PORT=4312\n" } },
 };

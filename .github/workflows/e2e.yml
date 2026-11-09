@@ -57,13 +57,16 @@ jobs:
           - { os: windows-latest, name: desktop-win,  cases: "dotnet-winforms,dotnet-wpf,dotnet-legacy,py-tkinter" }
           - { os: ubuntu-latest,  name: desktop-linux, cases: "py-tkinter,qt-qmake", prefix: "xvfb-run -a" }
           - { os: ubuntu-latest,  name: gradle,       cases: "gradle-app" }
+          - { os: ubuntu-latest,  name: desktop-linux-2, cases: "qt-cmake,avalonia,godot,lazarus", prefix: "xvfb-run -a" }
+          - { os: ubuntu-latest,  name: flutter,      cases: "flutter-linux", prefix: "xvfb-run -a" }
+          - { os: ubuntu-latest,  name: gui-native,   cases: "go-fyne,rust-egui", prefix: "xvfb-run -a" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - uses: actions/setup-dotnet@v4
-        if: matrix.name == 'dotnet' || matrix.name == 'desktop-win'
+        if: matrix.name == 'dotnet' || matrix.name == 'desktop-win' || matrix.name == 'desktop-linux-2'
         with:
           dotnet-version: 8.0.x
       - uses: actions/setup-java@v4
@@ -72,7 +75,7 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: actions/setup-go@v5
-        if: matrix.name == 'go-rust'
+        if: matrix.name == 'go-rust' || matrix.name == 'gui-native'
         with:
           go-version: stable
       - uses: ruby/setup-ruby@v1
@@ -84,6 +87,34 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb python3-tk qtbase5-dev qt5-qmake g++ make
+      - name: Linux masaüstü bağımlılıkları 2 (Qt/CMake, Lazarus, Avalonia)
+        if: matrix.name == 'desktop-linux-2'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb qtbase5-dev cmake g++ make lazarus-ide-gtk2 fpc libfontconfig1 libice6 libsm6
+      - name: Godot kur (başsız sarmalayıcı)
+        if: matrix.name == 'desktop-linux-2'
+        run: |
+          curl -fsSL -o godot.zip https://github.com/godotengine/godot/releases/download/4.3-stable/Godot_v4.3-stable_linux.x86_64.zip
+          unzip -q godot.zip -d "$RUNNER_TEMP/godot"
+          chmod +x "$RUNNER_TEMP/godot/Godot_v4.3-stable_linux.x86_64"
+          mkdir -p "$HOME/bin"
+          printf '#!/bin/sh\nexec "%s" --headless "$@"\n' "$RUNNER_TEMP/godot/Godot_v4.3-stable_linux.x86_64" > "$HOME/bin/godot"
+          chmod +x "$HOME/bin/godot"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+      - name: Flutter kur
+        if: matrix.name == 'flutter'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+          git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$HOME/flutter"
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          "$HOME/flutter/bin/flutter" config --no-analytics --enable-linux-desktop
+      - name: Go ve Rust GUI bağımlılıkları (Fyne, egui)
+        if: matrix.name == 'gui-native'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgtk-3-dev
       - name: Rails kur
         if: matrix.name == 'rails-laravel'
         run: gem install rails --no-document
@@ -91,7 +122,7 @@ jobs:
         shell: bash
         run: |
           node -v
-          for tool in python3 python dotnet java mvn php composer ruby bundle rails docker go cargo swift; do
+          for tool in python3 python dotnet java mvn php composer ruby bundle rails docker go cargo swift lazbuild godot flutter cmake qmake; do
             if command -v "$tool" >/dev/null 2>&1; then echo "--- $tool"; { if [ "$tool" = go ]; then go version; else "$tool" --version; fi; } 2>&1 | head -2 || true; else echo "--- $tool: yok"; fi
           done
       - name: E2E
