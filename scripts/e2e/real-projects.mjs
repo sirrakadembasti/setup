@@ -307,6 +307,14 @@ function probe(url, timeout = 1500) {
   });
 }
 
+// "6" seçildikten sonraki çıktıdan, menü panelinin başladığı satıra kadar olan kısım uygulamanın kendi çıktısıdır.
+// Hata genellikle sonda olduğundan uzun çıktılarda baştan ve sondan parçalar alınır (derleyici hataları kaybolmasın).
+function appOutputOf(text) {
+  const banner = text.search(/\n={20,}\n/);
+  const app = banner > 0 ? text.slice(0, banner) : text;
+  return app.length > 5000 ? `${app.slice(0, 1000)}\n[... ${app.length - 5000} karakter atlandı ...]\n${app.slice(-4000)}` : app;
+}
+
 // Başarısız vakada oluşan/oluşmayan dosyaları görmek için dizin ağacı (derinlik sınırlı, gürültülü dizinler atlanır).
 function listTree(dir, depth, prefix = "") {
   const lines = [];
@@ -381,7 +389,7 @@ async function runCase(id, testCase) {
       const ok = !result.startErrors.length && (testCase.expect ? result.expected && alive : (result.marker || alive));
       result.verdict = result.startErrors.length ? "BASLATMA-BASARISIZ" : (ok ? "CALISTI" : "SUREC-ERKEN-KAPANDI");
       // Menü çıktısı sonda olduğundan uygulamanın kendi hata satırları başta aranır.
-      if (result.verdict !== "CALISTI") result.startOutput = tail.slice(0, 4000);
+      if (result.verdict !== "CALISTI") result.startOutput = appOutputOf(tail);
       return result;
     }
     const findTarget = () => (testCase.port ? `http://127.0.0.1:${testCase.port}/` : (out.slice(from).match(/(http:\/\/127\.0\.0\.1:\d+)/) || [])[1]);
@@ -410,7 +418,7 @@ async function runCase(id, testCase) {
     const frontendOk = !testCase.frontendPort || result.frontend?.ok;
     result.verdict = reply && frontendOk ? "CALISTI" : "YANIT-YOK";
     // Menü çıktısı sonda olduğundan uygulamanın kendi hata satırları başta aranır.
-    if (result.verdict !== "CALISTI") result.startOutput = out.slice(from, from + 4000);
+    if (result.verdict !== "CALISTI") result.startOutput = appOutputOf(out.slice(from));
     return result;
   } finally {
     killTree(child);

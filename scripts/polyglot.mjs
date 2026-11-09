@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { analyzeDotnet, buildEcosystemProfile, dotnetProfile, ECOSYSTEM_KINDS, PYTHON_GUI_PATTERN } from "./ecosystems.mjs";
+import { analyzeDotnet, buildEcosystemProfile, dotnetProfile, ECOSYSTEM_KINDS, pascalBinary, PYTHON_GUI_PATTERN } from "./ecosystems.mjs";
 
 export const LANGUAGE_KINDS = Object.freeze({
   ...ECOSYSTEM_KINDS,
@@ -417,11 +417,9 @@ function pascalProfile(root, language, options = {}) {
   const files = safeReaddir(root).filter((e) => e.isFile()).map((e) => e.name);
   const exe = platform === "win32" ? ".exe" : "";
   if (language === "lazarus") {
-    const project = files.find((n) => /\.lpi$/i.test(n));
-    if (!project) return null;
-    const base = project.replace(/\.lpi$/i, "");
-    const target = readText(path.join(root, project)).match(/<Target>\s*<Filename\s+Value="([^"]+)"/i)?.[1];
-    const binary = path.resolve(root, target ? `${target}${exe}` : `${base}${exe}`);
+    const built = pascalBinary(root, platform);
+    if (!built || built.kind !== "lazarus") return null;
+    const { project, binary } = built;
     return {
       language,
       steps: [{ label: `Lazarus projesini derle (lazbuild ${project})`, command: "lazbuild", args: [project] }],

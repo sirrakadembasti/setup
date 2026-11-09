@@ -404,6 +404,16 @@ test("CMake: derlenmiş ikili varsa kayıtlı `--target run` yerine o çalışt�
   assert.equal(resolveAppStartInvocation(root, { start }).command, path.resolve(root, "build", "demoqt"), "ana yedek komut önceliklidir");
 });
 
+test("Lazarus: derlenmiş ikili yoksa kurulum hazır sayılmaz; lazbuild sonrası hazır olur", () => {
+  const root = tree({ "demo.lpi": '<?xml version="1.0"?><CONFIG><CompilerOptions><Target><Filename Value="demo"/></Target></CompilerOptions></CONFIG>', "demo.lpr": "program demo;\nbegin\nend.\n" });
+  assert.equal(detectProject(root).kind, "lazarus-desktop");
+  assert.equal(ecosystemReadiness(root).ready, false, "ikili yokken hazır sayılmamalı");
+  assert.equal(checkDependencies(root).ready, false, "terminal akışı kurulum adımını atlamamalı");
+  fs.writeFileSync(path.join(root, process.platform === "win32" ? "demo.exe" : "demo"), "");
+  assert.equal(ecosystemReadiness(root).ready, true, "ikili oluşunca hazır sayılmalı");
+  assert.equal(checkDependencies(root).ready, true);
+});
+
 test("Qt qmake: yalnızca .pro içeren proje kurulabilir sayılır; Makefile üretilince hazır olur", () => {
   const qt = tree({ "demo.pro": "QT += widgets\nSOURCES += main.cpp", "main.cpp": "int main(){}" });
   const detection = detectProject(qt);

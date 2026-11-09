@@ -626,6 +626,21 @@ function detectSwift(dir) {
 
 // =============================================================== Lazarus / Delphi
 
+/** Lazarus (.lpi) için derlenmiş ikilinin beklenen mutlak yolu; Delphi (.dproj) için Win32/Debug çıktısı. Yoksa null. */
+export function pascalBinary(dir, platform = process.platform) {
+  const files = listDir(dir).filter((e) => e.isFile()).map((e) => e.name);
+  const exe = platform === "win32" ? ".exe" : "";
+  const lpi = files.find((n) => /\.lpi$/i.test(n));
+  if (lpi) {
+    const base = lpi.replace(/\.lpi$/i, "");
+    const target = read(path.join(dir, lpi)).match(/<Target>\s*<Filename\s+Value="([^"]+)"/i)?.[1];
+    return { kind: "lazarus", project: lpi, binary: path.resolve(dir, target ? `${target}${exe}` : `${base}${exe}`) };
+  }
+  const dproj = files.find((n) => /\.dproj$/i.test(n));
+  if (dproj) return { kind: "delphi", project: dproj, binary: path.join(dir, "Win32", "Debug", `${dproj.replace(/\.dproj$/i, "")}.exe`) };
+  return null;
+}
+
 function detectPascal(dir) {
   const files = listDir(dir).filter((e) => e.isFile()).map((e) => e.name);
   const lpi = files.find((n) => /\.lpi$/i.test(n));
@@ -766,5 +781,8 @@ export function ecosystemReadiness(root, options = {}) {
     const ready = p.legacy ? exists(dir, "bin") || exists(root, "packages") : exists(dir, "obj", "project.assets.json");
     return { id: "dotnet", ready };
   }
+  // Lazarus/Delphi: derlenmiş ikili yoksa kurulum (lazbuild/msbuild) henüz yapılmamıştır.
+  const pascal = pascalBinary(root);
+  if (pascal) return { id: pascal.kind, ready: fs.existsSync(pascal.binary) };
   return null;
 }
