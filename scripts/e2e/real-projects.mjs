@@ -384,6 +384,9 @@ async function runCase(id, testCase) {
         if (child.exitCode !== null) break;
         await sleep(500);
       }
+      // [HATA] stderr'den, uygulama çıktısı stdout'tan gelir; iki boru arasında varış sırası garanti değildir.
+      // Hata görüldüyse stdout'ta bekleyen çıktının (ör. derleyici hataları) okunması için kısa bir süre beklenir.
+      if (errorsSince(from).length) await sleep(4000);
       const tail = out.slice(from);
       result.startErrors = errorsSince(from);
       result.marker = testCase.marker ? tail.includes(testCase.marker) : null;
@@ -410,6 +413,7 @@ async function runCase(id, testCase) {
     }
     result.url = target || null;
     result.http = reply;
+    if (!reply && errorsSince(from).length) await sleep(4000); // stderr/stdout varış sırası: bekleyen çıktının okunmasını sağla
     result.startErrors = errorsSince(from);
     if (reply && testCase.frontendPort) {
       while (Date.now() < deadline) {
