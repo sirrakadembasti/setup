@@ -310,8 +310,11 @@ function probe(url, timeout = 1500) {
 // "6" seçildikten sonraki çıktıdan, menü panelinin başladığı satıra kadar olan kısım uygulamanın kendi çıktısıdır.
 // Hata genellikle sonda olduğundan uzun çıktılarda baştan ve sondan parçalar alınır (derleyici hataları kaybolmasın).
 function appOutputOf(text) {
-  const banner = text.search(/\n={20,}\n/);
-  const app = banner > 0 ? text.slice(0, banner) : text;
+  // Panel başlığı hata satırından önce de basılabilir; bu yüzden kesme noktası son [HATA] satırından sonra aranır.
+  const lastError = text.lastIndexOf("[HATA]");
+  const banner = text.slice(lastError >= 0 ? lastError : 0).search(/\n={20,}\n/);
+  const cut = banner >= 0 ? (lastError >= 0 ? lastError : 0) + banner : -1;
+  const app = cut > 0 ? text.slice(0, cut) : text;
   return app.length > 5000 ? `${app.slice(0, 1000)}\n[... ${app.length - 5000} karakter atlandı ...]\n${app.slice(-4000)}` : app;
 }
 

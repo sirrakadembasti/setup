@@ -7,6 +7,8 @@ Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallar
 ### Düzeltmeler
 
 - Qt (qmake): yalnızca `.pro` içeren projeler "Tanımlı proje bulunamadı" ile reddediliyordu ve Makefile yokken `make` çalıştırılıyordu; artık `qmake` + `make` adımları, platforma uygun çalıştırma yolu (Linux, macOS `.app`, Windows `release/*.exe`) ve hazırlık denetimi (Makefile) var.
+- CMake: kayıtlı başlatma komutu `cmake --build build --target run` çoğu projede (çalıştırma hedefi olmadığı için) 2 koduyla düşüyordu; derlenmiş ikili (`build/uygulama`, Windows'ta Release/Debug ve MinGW/Ninja yolları dahil) varsa o çalıştırılıyor.
+- Lazarus/Delphi: derlenmemiş proje "hazır" sayılıyordu, `lazbuild`/`msbuild` hiç çalışmadan olmayan ikili başlatılmaya çalışılıyordu; derlenmiş ikili yoksa kurulum adımı çalışıyor.
 - Testler: geçici dizin silme dosya sonuna ertelendi ve yeniden deneme eklendi, dar zaman pencereleri genişletildi (Windows'ta nadir `EBUSY`/`ENOTEMPTY` kararsızlıkları).
 
 ### CI
