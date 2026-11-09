@@ -13,7 +13,7 @@ Bu projedeki tüm önemli değişiklikler Semantik Sürümleme (SemVer) kurallar
 
 ### CI
 
-- E2E'ye masaüstü ve pencere uygulamaları eklendi: Windows Forms, WPF, klasik .NET Framework, Tkinter (Windows ve xvfb'li Linux), Qt (xvfb'li Linux) ve Gradle.
+- E2E'ye masaüstü ve pencere uygulamaları eklendi: Windows Forms, WPF, klasik .NET Framework, Tkinter (Windows ve xvfb'li Linux), Qt (qmake ve CMake, xvfb'li Linux), Gradle, Avalonia, Godot (başsız), Lazarus (`lazbuild`), Flutter (Linux), Go/Fyne ve Rust/egui. Toplam 22 iş.
 
 ## [v1.1.0] - 2026-11-08
 

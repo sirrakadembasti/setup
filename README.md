@@ -102,8 +102,8 @@ Hangi türlerin gerçekten çalıştığı CI'da ölçülür ([`e2e.yml`](.githu
 
 | Durum | Türler |
 |---|---|
-| **Gerçek araçlarla doğrulandı** (Linux, Windows, macOS'un tümünde değil; ayrıntı için iş akışı matrisine bakın) | Node (Express, Vite, tam yığın), statik HTML, Python/Flask, .NET (minimal API, MVC, konsol, Windows Forms, WPF, klasik .NET Framework), Java (Spring Boot/Maven, Gradle), PHP ve Laravel, Ruby (Rack) ve Rails, Go, Rust, Swift paketi, Python Tkinter, Qt (qmake), Docker Compose |
-| **Yalnızca algılama ve komut üretimi birim testlerle sınandı** | MAUI, WinUI ve diğer .NET masaüstü türleri (Avalonia, Uno), Flutter, Go/Rust GUI (Wails, Fyne, egui), Lazarus/Delphi, Qt/CMake, Unity/Unreal/Godot ve diğer Python GUI'leri (Kivy, pygame, wx) |
+| **Gerçek araçlarla doğrulandı** (Linux, Windows, macOS'un tümünde değil; ayrıntı için iş akışı matrisine bakın) | Node (Express, Vite, tam yığın), statik HTML, Python/Flask, .NET (minimal API, MVC, konsol, Windows Forms, WPF, Avalonia, klasik .NET Framework), Java (Spring Boot/Maven, Gradle), PHP ve Laravel, Ruby (Rack) ve Rails, Go ve Go GUI (Fyne), Rust ve Rust GUI (egui), Swift paketi, Flutter (Linux), Python Tkinter, Qt (qmake ve CMake), Lazarus (`lazbuild`, konsol projesi), Godot (başsız), Docker Compose |
+| **Yalnızca algılama ve komut üretimi birim testlerle sınandı** | MAUI, WinUI, Uno, Go/Wails, Delphi, Unity, Unreal, Lazarus/LCL pencere projeleri ve diğer Python GUI'leri (Kivy, pygame, wx). Ücretsiz CI'da derleyici/lisans/SDK yükü nedeniyle çalıştırılamıyorlar |
 
 İkinci gruptaki bir proje çalışmazsa, aracın gösterdiği başlatma komutunu ve hata çıktısını inceleyin; sorun bildirimleri memnuniyetle karşılanır.
 
