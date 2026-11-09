@@ -98,12 +98,12 @@ Birden fazla bağımsız uygulama içeren repolarda hedef, menüden, web ekranı
 
 ### Doğrulama durumu
 
-Hangi türlerin gerçekten çalıştığı CI'da ölçülür ([`e2e.yml`](.github/workflows/e2e.yml)): küçük örnek proje üretilir, aracın kendi akışıyla kurulup başlatılır ve uygulamanın HTTP yanıtı verdiği doğrulanır.
+Hangi türlerin gerçekten çalıştığı CI'da ölçülür ([`e2e.yml`](.github/workflows/e2e.yml)): küçük örnek proje üretilir, aracın kendi akışıyla kurulup başlatılır ve uygulamanın HTTP yanıtı verdiği doğrulanır (pencere uygulamalarında aracın süreç izleme akışı çalışır ve süreç ayakta kalır).
 
 | Durum | Türler |
 |---|---|
-| **Gerçek araçlarla doğrulandı** (Linux, Windows, macOS'un tümünde değil; ayrıntı için iş akışı matrisine bakın) | Node (Express, Vite, tam yığın), statik HTML, Python/Flask, .NET (minimal API, MVC, konsol), Java/Spring Boot (Maven), PHP ve Laravel, Ruby (Rack) ve Rails, Go, Rust, Swift paketi, Docker Compose |
-| **Yalnızca algılama ve komut üretimi birim testlerle sınandı** | WinForms/WPF/MAUI ve diğer .NET masaüstü türleri, klasik .NET Framework, Gradle, Flutter, Go/Rust GUI (Wails, Fyne, egui), Lazarus/Delphi, Qt, Unity/Unreal/Godot, Tkinter ve diğer Python GUI'leri |
+| **Gerçek araçlarla doğrulandı** (Linux, Windows, macOS'un tümünde değil; ayrıntı için iş akışı matrisine bakın) | Node (Express, Vite, tam yığın), statik HTML, Python/Flask, .NET (minimal API, MVC, konsol, Windows Forms, WPF, klasik .NET Framework), Java (Spring Boot/Maven, Gradle), PHP ve Laravel, Ruby (Rack) ve Rails, Go, Rust, Swift paketi, Python Tkinter, Qt (qmake), Docker Compose |
+| **Yalnızca algılama ve komut üretimi birim testlerle sınandı** | MAUI, WinUI ve diğer .NET masaüstü türleri (Avalonia, Uno), Flutter, Go/Rust GUI (Wails, Fyne, egui), Lazarus/Delphi, Qt/CMake, Unity/Unreal/Godot ve diğer Python GUI'leri (Kivy, pygame, wx) |
 
 İkinci gruptaki bir proje çalışmazsa, aracın gösterdiği başlatma komutunu ve hata çıktısını inceleyin; sorun bildirimleri memnuniyetle karşılanır.
 
